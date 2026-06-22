@@ -379,8 +379,6 @@ function checkFloorUnlock() {
     document.getElementById('fuText').textContent = 'Этаж ' + next.n + ': ' + next.name + ' · Зайди через Этажи';
     fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
     setTimeout(function() { fu.classList.remove('show'); }, 3500);
-    // Сохраняем при открытии нового этажа
-    if (typeof triggerSave === 'function') triggerSave('floor');
   }
 }
 
@@ -396,8 +394,6 @@ function gameOverSequence() {
       : 'Вы погибли в бою';
   }
   if (modal) modal.classList.remove('hidden');
-  // Сохраняем при смерти
-  if (typeof triggerSave === 'function') triggerSave('death');
 }
 
 function revivePlayer() {

@@ -381,7 +381,7 @@ let _csSelected      = null;
 let _csParticleTimer = null;
 let _csSpriteTimers  = {};
 let _csIdleImgs      = {};
-var G_CHAR           = null;  // задаётся после выбора (window.G_CHAR для api.js)
+let G_CHAR           = null;  // задаётся после выбора
 
 function selectChar(id) {
   _csSelected = id;
@@ -401,8 +401,6 @@ function confirmChar() {
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
-  // Запускаем автосохранение после старта игры
-  if (typeof startAutoSave === 'function') startAutoSave();
 }
 
 function applyCharacter(ch) {
@@ -484,7 +482,6 @@ function initCsParticles() {
 window.addEventListener('load', function() {
   initCharSelectSprites();
   initCsParticles();
-  _initWithAuth();
 });
 
 // ── resize и Telegram SDK ──
@@ -492,37 +489,4 @@ window.addEventListener('resize', resize);
 if (window.Telegram && window.Telegram.WebApp) {
   Telegram.WebApp.ready();
   Telegram.WebApp.expand();
-}
-
-// ═══════════════════════════════════════════
-//  ИНИЦИАЛИЗАЦИЯ: авторизация + загрузка сохранения
-// ═══════════════════════════════════════════
-async function _initWithAuth() {
-  var loadEl = document.getElementById('authLoader');
-  if (loadEl) loadEl.style.display = 'flex';
-
-  try {
-    // 1. Авторизация через Telegram
-    var profile = await apiAuth();
-
-    // 2. Есть сохранение — загружаем и пропускаем экран выбора
-    if (profile.hasSave && profile.charType && CHARS[profile.charType]) {
-      var saved = await apiLoad();
-      if (saved.hasSave && saved.saveData) {
-        applyLoadedSave(saved.saveData);
-        if (loadEl) loadEl.style.display = 'none';
-        _csSelected = profile.charType;
-        G_CHAR = CHARS[profile.charType];
-        applyCharacter(G_CHAR);
-        document.getElementById('charSelect').classList.add('hidden');
-        startGame();
-        startAutoSave();
-        return;
-      }
-    }
-  } catch (e) {
-    console.warn('[auth/load] error:', e.message);
-  }
-
-  if (loadEl) loadEl.style.display = 'none';
 }

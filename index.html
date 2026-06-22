@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Pixel Runner RPG</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <!--
   ══════════════════════════════════════════════════════
   index.html — Точка входа
@@ -26,16 +25,6 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<!-- Лоадер авторизации Telegram -->
-<div id="authLoader" style="
-  display:none;position:fixed;inset:0;z-index:9999;
-  background:#0d0d1a;flex-direction:column;
-  align-items:center;justify-content:center;gap:16px;">
-  <div style="width:48px;height:48px;border:4px solid #5e60ce;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
-  <div style="color:#a0a0c0;font-family:monospace;font-size:13px;letter-spacing:1px;">ЗАГРУЗКА...</div>
-</div>
-<style>@keyframes spin{to{transform:rotate(360deg)}}</style>
-
 <div id="app">
 
   <!-- ══════════════════════════════════
@@ -496,7 +485,6 @@
      ══════════════════════════════════ -->
 <script src="data.js"></script>       <!-- Игровые данные: персонажи, этажи, предметы -->
 <script src="state.js"></script>      <!-- Состояние игры (объект G) и расчёт CP -->
-<script src="api.js"></script>        <!-- Telegram авторизация + сохранение/загрузка -->
 <script src="render.js"></script>     <!-- Canvas-движок: небо, земля, спрайты, частицы -->
 <script src="skills.js"></script>     <!-- Система навыков: баффы, кулдауны, HUD скиллов -->
 <script src="game.js"></script>       <!-- Игровая логика: update, монстры, боёвка, XP -->
