@@ -2,13 +2,6 @@
   ══════════════════════════════════════════════════════
   server.js — Полный бэкенд для Pixel Runner Telegram Mini App
   ══════════════════════════════════════════════════════
-  
-  🔐 Авторизация через Telegram WebApp
-  💾 Сохранение прогресса в MongoDB
-  ⏱️ Авто-сохранение каждые 30 секунд
-  🏆 Рейтинг игроков
-  🔄 Полный снепшот состояния
-  🛡️ 4 уровня защиты данных
 */
 
 require('dotenv').config();
@@ -21,10 +14,40 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ── Middleware ──
+
+// CORS настройки
 app.use(cors({
   origin: ['https://ghz-production.up.railway.app', 'http://localhost:3000', '*'],
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-Telegram-Init-Data', 'Authorization']
 }));
+
+// ── ЯВНАЯ ОБРАБОТКА OPTIONS (ВАЖНО ДЛЯ TELEGRAM) ──
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400');
+  return res.sendStatus(204);
+});
+
+// ── Глобальный middleware для CORS ──
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Если OPTIONS — сразу отвечаем
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -40,7 +63,6 @@ mongoose.connect(MONGODB_URI, {
 
 // ── Models ──
 
-// Схема пользователя
 const UserSchema = new mongoose.Schema({
   telegramId: {
     type: String,
@@ -48,37 +70,15 @@ const UserSchema = new mongoose.Schema({
     unique: true,
     index: true
   },
-  username: {
-    type: String,
-    default: ''
-  },
-  firstName: {
-    type: String,
-    default: ''
-  },
-  lastName: {
-    type: String,
-    default: ''
-  },
-  photoUrl: {
-    type: String,
-    default: ''
-  },
-  authDate: {
-    type: Date,
-    default: Date.now
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  lastSaveAt: {
-    type: Date,
-    default: Date.now
-  }
+  username: { type: String, default: '' },
+  firstName: { type: String, default: '' },
+  lastName: { type: String, default: '' },
+  photoUrl: { type: String, default: '' },
+  authDate: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now },
+  lastSaveAt: { type: Date, default: Date.now }
 });
 
-// Схема игрового прогресса
 const UserStatsSchema = new mongoose.Schema({
   telegramId: {
     type: String,
@@ -87,7 +87,6 @@ const UserStatsSchema = new mongoose.Schema({
     index: true
   },
   
-  // Основные характеристики
   level: { type: Number, default: 1 },
   xp: { type: Number, default: 0 },
   xpNeeded: { type: Number, default: 100 },
@@ -95,12 +94,10 @@ const UserStatsSchema = new mongoose.Schema({
   maxFloor: { type: Number, default: 1 },
   killCount: { type: Number, default: 0 },
   
-  // Валюта
   gold: { type: Number, default: 0 },
   pixr: { type: Number, default: 0 },
   gram: { type: Number, default: 0 },
   
-  // Характеристики
   stats: {
     atk: { type: Number, default: 10 },
     def: { type: Number, default: 5 },
@@ -111,11 +108,9 @@ const UserStatsSchema = new mongoose.Schema({
     atkSpd: { type: Number, default: 1.0 }
   },
   
-  // Текущее HP
   hp: { type: Number, default: 100 },
   maxHp: { type: Number, default: 100 },
   
-  // Базовые статы (для пересчёта)
   baseStats: {
     atk: { type: Number, default: 10 },
     def: { type: Number, default: 5 },
@@ -126,7 +121,6 @@ const UserStatsSchema = new mongoose.Schema({
     atkSpd: { type: Number, default: 1.0 }
   },
   
-  // Улучшения
   upg: {
     atk: { type: Number, default: 0 },
     def: { type: Number, default: 0 },
@@ -137,20 +131,14 @@ const UserStatsSchema = new mongoose.Schema({
     atkSpd: { type: Number, default: 0 }
   },
   
-  // Выбранный персонаж
   character: {
     type: String,
     enum: ['fire', 'light', 'water'],
     default: 'fire'
   },
   
-  // Инвентарь (массив предметов)
-  inventory: {
-    type: Array,
-    default: []
-  },
+  inventory: { type: Array, default: [] },
   
-  // Экипировка
   equipped: {
     weapon: { type: Object, default: null },
     body: { type: Object, default: null },
@@ -162,43 +150,31 @@ const UserStatsSchema = new mongoose.Schema({
     belt: { type: Object, default: null }
   },
   
-  // Навыки
-  skills: {
-    type: Object,
-    default: {}
-  },
+  skills: { type: Object, default: {} },
   
-  // Зелья
   potions: { type: Number, default: 0 },
   potionLv: { type: Number, default: 0 },
   potionThreshold: { type: Number, default: 30 },
   
-  // Battle Pass
   bp: {
     active: { type: Boolean, default: false },
     claimed: { type: Array, default: [] }
   },
   
-  // Premium
   prem: {
     tier: { type: String, default: null },
     expiresAt: { type: Number, default: 0 }
   },
   
-  // Фильтр инвентаря
   invFilter: { type: String, default: 'all' },
-  
-  // Инкремент ID для предметов
   invIdCounter: { type: Number, default: 0 },
   
-  // Последнее обновление
   updatedAt: {
     type: Date,
     default: Date.now
   }
 });
 
-// Создаём модели
 const User = mongoose.model('User', UserSchema);
 const UserStats = mongoose.model('UserStats', UserStatsSchema);
 
@@ -209,19 +185,16 @@ function verifyTelegramAuth(initData) {
     const hash = params.get('hash');
     params.delete('hash');
     
-    // Сортируем параметры
     const sortedParams = Array.from(params.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([key, value]) => `${key}=${value}`)
       .join('\n');
     
-    // Создаём секретный ключ
     const secretKey = crypto
       .createHmac('sha256', 'WebAppData')
       .update(process.env.TELEGRAM_BOT_TOKEN || '')
       .digest();
     
-    // Вычисляем хеш
     const computedHash = crypto
       .createHmac('sha256', secretKey)
       .update(sortedParams)
@@ -254,7 +227,6 @@ async function authMiddleware(req, res, next) {
     return res.status(401).json({ error: 'No init data provided' });
   }
   
-  // В режиме разработки можно пропустить проверку
   if (process.env.NODE_ENV === 'development' && process.env.SKIP_AUTH === 'true') {
     const tgUser = parseTelegramUser(initData);
     if (tgUser) {
@@ -264,7 +236,6 @@ async function authMiddleware(req, res, next) {
     }
   }
   
-  // Проверяем подпись
   const isValid = verifyTelegramAuth(initData);
   if (!isValid) {
     return res.status(401).json({ error: 'Invalid authentication' });
@@ -291,12 +262,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ── 1. AUTH — инициализация пользователя ──
+// ── 1. AUTH ──
 app.post('/api/auth/init', authMiddleware, async (req, res) => {
   try {
     const { telegramId, user } = req;
     
-    // Находим или создаём пользователя
     let userDoc = await User.findOne({ telegramId });
     let statsDoc = await UserStats.findOne({ telegramId });
     
@@ -333,7 +303,7 @@ app.post('/api/auth/init', authMiddleware, async (req, res) => {
   }
 });
 
-// ── 2. SAVE — полное сохранение прогресса ──
+// ── 2. SAVE ──
 app.post('/api/save', authMiddleware, async (req, res) => {
   try {
     const { telegramId } = req;
@@ -348,7 +318,6 @@ app.post('/api/save', authMiddleware, async (req, res) => {
       stats = new UserStats({ telegramId });
     }
     
-    // Обновляем поля (маппинг из frontend G → backend)
     const fieldMapping = {
       level: 'level',
       xp: 'xp',
@@ -369,14 +338,12 @@ app.post('/api/save', authMiddleware, async (req, res) => {
       character: 'character'
     };
     
-    // Обновляем простые поля
     Object.keys(fieldMapping).forEach(key => {
       if (data[key] !== undefined && data[key] !== null) {
         stats[fieldMapping[key]] = data[key];
       }
     });
     
-    // Обновляем stats
     if (data.stats) {
       Object.keys(data.stats).forEach(key => {
         if (data.stats[key] !== undefined) {
@@ -385,7 +352,6 @@ app.post('/api/save', authMiddleware, async (req, res) => {
       });
     }
     
-    // Обновляем baseStats
     if (data.baseStats) {
       Object.keys(data.baseStats).forEach(key => {
         if (data.baseStats[key] !== undefined) {
@@ -394,7 +360,6 @@ app.post('/api/save', authMiddleware, async (req, res) => {
       });
     }
     
-    // Обновляем upg
     if (data.upg) {
       Object.keys(data.upg).forEach(key => {
         if (data.upg[key] !== undefined) {
@@ -403,24 +368,20 @@ app.post('/api/save', authMiddleware, async (req, res) => {
       });
     }
     
-    // Обновляем инвентарь (полная замена)
     if (data.inventory && Array.isArray(data.inventory)) {
       stats.inventory = data.inventory;
     }
     
-    // Обновляем экипировку
     if (data.equipped) {
       Object.keys(data.equipped).forEach(slot => {
         stats.equipped[slot] = data.equipped[slot] || null;
       });
     }
     
-    // Обновляем навыки
     if (data.skills) {
       stats.skills = data.skills;
     }
     
-    // Обновляем Battle Pass
     if (data.bp) {
       stats.bp.active = data.bp.active || false;
       if (data.bp.claimed && Array.isArray(data.bp.claimed)) {
@@ -428,7 +389,6 @@ app.post('/api/save', authMiddleware, async (req, res) => {
       }
     }
     
-    // Обновляем Premium
     if (data.prem) {
       stats.prem.tier = data.prem.tier || null;
       stats.prem.expiresAt = data.prem.expiresAt || 0;
@@ -437,7 +397,6 @@ app.post('/api/save', authMiddleware, async (req, res) => {
     stats.updatedAt = new Date();
     await stats.save();
     
-    // Обновляем время последнего сохранения у пользователя
     await User.findOneAndUpdate(
       { telegramId },
       { lastSaveAt: new Date() }
@@ -455,7 +414,7 @@ app.post('/api/save', authMiddleware, async (req, res) => {
   }
 });
 
-// ── 3. LOAD — загрузка прогресса ──
+// ── 3. LOAD ──
 app.get('/api/load', authMiddleware, async (req, res) => {
   try {
     const { telegramId } = req;
@@ -476,13 +435,12 @@ app.get('/api/load', authMiddleware, async (req, res) => {
   }
 });
 
-// ── 4. LEADERBOARD — рейтинг игроков ──
+// ── 4. LEADERBOARD ──
 app.get('/api/leaderboard', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
     
-    // Получаем топ игроков по CP (боевая мощь)
     const leaderboard = await UserStats.aggregate([
       {
         $addFields: {
@@ -531,7 +489,6 @@ app.get('/api/leaderboard', async (req, res) => {
       { $limit: limit }
     ]);
     
-    // Получаем общее количество игроков
     const total = await UserStats.countDocuments();
     
     return res.json({
@@ -584,7 +541,7 @@ app.get('/api/user/:telegramId', async (req, res) => {
   }
 });
 
-// ── 6. RESET — сброс прогресса ──
+// ── 6. RESET ──
 app.post('/api/reset', authMiddleware, async (req, res) => {
   try {
     const { telegramId } = req;
