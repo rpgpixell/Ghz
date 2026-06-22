@@ -344,16 +344,19 @@ function flush() {
   lsSetStatus('Подключение', 10);
   initTelegram();
 
-  var local = readLocal();
+  // ВРЕМЕННО НЕ ЗАГРУЖАЕМ ИЗ LOCALSTORAGE!
+  // var local = readLocal(); // ← ЗАКОММЕНТИРОВАТЬ
 
-  // 1) Мгновенный старт из локального кеша (пока идёт запрос на сервер)
-  if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-    lsSetStatus('Загрузка данных', 40);
-    bootFromSnapshot(local);
-  }
-
-  // Таймаут: если сервер не ответил за 6 сек — скрываем экран всё равно
-  var lsTimeout = setTimeout(function () { lsHide(); }, 6000);
+  // Таймаут: если сервер не ответил за 6 сек — грузим из localStorage (офлайн)
+  var lsTimeout = setTimeout(function () {
+    // Если сервер не ответил — загружаем из localStorage как запасной вариант
+    var local = readLocal();
+    if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+      lsSetStatus('Офлайн загрузка', 40);
+      bootFromSnapshot(local);
+    }
+    lsHide();
+  }, 6000);
 
   lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
 
@@ -366,64 +369,71 @@ function flush() {
                         typeof CHARS !== 'undefined' && CHARS[server.data.charId];
 
     // =============================================
-    // НОВАЯ ЛОГИКА: если на сервере ПУСТО — сбрасываем всё
+    // ГЛАВНАЯ ЛОГИКА: сервер всегда главный
     // =============================================
-    if (r && r.ok && !hasServerData) {
-      // На сервере нет данных — удаляем localStorage
-      try {
-        localStorage.removeItem(LS_KEY);
-      } catch (e) {}
-      
-      // Если игра уже запущена — перезагружаем страницу
-      if (SYNC.started) {
-        location.reload();
+    if (r && r.ok) {
+      if (hasServerData) {
+        // На сервере ЕСТЬ данные — загружаем их
+        lsSetStatus('Загрузка с сервера', 70);
+        
+        // Сохраняем данные сервера в localStorage
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify(server.data));
+        } catch (e) {}
+        
+        // Запускаем игру из данных сервера
+        if (!SYNC.started) {
+          bootFromSnapshot(server.data);
+        } else {
+          hotApply(server.data);
+        }
+        
+        lsSetStatus('Готово', 90);
+        
+      } else {
+        // НА СЕРВЕРЕ ПУСТО — удаляем localStorage и показываем выбор персонажа
+        try {
+          localStorage.removeItem(LS_KEY);
+        } catch (e) {}
+        
+        // Если игра уже запущена — перезагружаем
+        if (SYNC.started) {
+          location.reload();
+          return;
+        }
+        
+        // Показываем экран выбора персонажа
+        lsSetStatus('Новый игрок', 50);
+        
+        stopCharSelectAnims();
+        
+        var cs = document.getElementById('charSelect');
+        if (cs) {
+          cs.classList.remove('hidden');
+          if (typeof initCharSelect === 'function') {
+            initCharSelect();
+          }
+          if (typeof window._csSelected === 'object') {
+            window._csSelected = null;
+          }
+          if (typeof updateConfirmBtn === 'function') {
+            updateConfirmBtn();
+          }
+        }
+        
+        lsHide();
         return;
-      }
-      
-      // Если игра не запущена — показываем экран выбора
-      lsSetStatus('Новый игрок', 50);
-      
-      // Останавливаем текущие анимации выбора персонажа
-      stopCharSelectAnims();
-      
-      // Показываем экран выбора персонажа
-      var cs = document.getElementById('charSelect');
-      if (cs) {
-        cs.classList.remove('hidden');
-        // Переинициализируем выбор персонажа
-        if (typeof initCharSelect === 'function') {
-          initCharSelect();
-        }
-        // Сбрасываем состояние выбора
-        if (typeof window._csSelected === 'object') {
-          window._csSelected = null;
-        }
-        // Обновляем кнопку подтверждения
-        if (typeof updateConfirmBtn === 'function') {
-          updateConfirmBtn();
-        }
-      }
-      
-      lsHide();
-      return;
-    }
-
-    // Если на сервере ЕСТЬ данные — применяем их
-    if (hasServerData) {
-      lsSetStatus('Применение данных', 85);
-      var sTs = server.updatedAt || 0;
-      var lTs = (local && local.updatedAt) || 0;
-      
-      if (!SYNC.started) {
-        bootFromSnapshot(server.data);
-      } else if (sTs > lTs + 3000) {
-        hotApply(server.data);
       }
     }
     
   }).catch(function () {
     clearTimeout(lsTimeout);
-    // Если сервер не ответил — оставляем локальные данные (офлайн режим)
+    // Если сервер не ответил — загружаем из localStorage (офлайн режим)
+    var local = readLocal();
+    if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+      lsSetStatus('Офлайн загрузка', 40);
+      bootFromSnapshot(local);
+    }
   }).then(function () {
     SYNC.booted = true;
     startSyncLoops();
