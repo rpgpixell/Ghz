@@ -239,6 +239,7 @@ function refineItem(itemId) {
     showRefineResult(false, item, false, cost);
   }
   updateHUD();
+  if (typeof API !== 'undefined') API.saveCritical();
 }
 
 // ── Оверлей результата заточки ──
@@ -312,6 +313,7 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
+  if (typeof API !== 'undefined') API.saveCritical();
 }
 
 // ═══════════════════════════════
