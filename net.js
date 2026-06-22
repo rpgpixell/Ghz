@@ -4,12 +4,11 @@
   прогресса на сервер (MongoDB), локальный кеш.
 
   Логика:
-   • При запуске: сервер главный источник данных.
-     Если сервер отвечает "пусто" — сбрасываем localStorage
-     и показываем выбор персонажа.
+   • При запуске: моментальный старт из localStorage (без
+     мигания экрана выбора), затем сверка с сервером.
    • HP / баланс / весь снапшот:
-       – localStorage каждые 1 сек,
-       – сервер каждые 15 сек,
+       – localStorage каждые 5 сек,
+       – сервер каждые 30 сек,
        – + при закрытии/сворачивании (visibilitychange + TG close event).
    • Структурные действия (покупка, экипировка, заточка,
      навыки, BP, premium, этаж, выбор персонажа) —
@@ -17,27 +16,15 @@
    • Полный снапшот, поэтому при обновлении/закрытии в
      Telegram прогресс не теряется.
 
-  Версия: 2.0.0
   Подключать ПОСЛЕ ui.js (последним скриптом).
   ══════════════════════════════════════════════════════
 */
 (function () {
   'use strict';
 
-  var API_VERSION = 'v1';
-  var API    = 'https://ghz-production.up.railway.app/api/' + API_VERSION;
+  var API    = 'https://ghz-production.up.railway.app';
   var LS_KEY = 'prrpg_save_v1';
   var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
-  var SNAPSHOT_VERSION = 1;
-
-  // Лимиты для валидации
-  var LIMITS = {
-    maxLevel: 9999,
-    maxGold: 999999999,
-    maxInventory: 500,
-    maxFloor: 9999,
-    minHp: 1
-  };
 
   var TG_INIT = '';
   var SYNC = {
@@ -47,14 +34,12 @@
     pushing: false,
     dirtyTimer: null,
     lastServerTs: 0,
-    pendingSaves: [], // очередь неудачных сохранений
-    syncIndicator: null, // DOM элемент индикатора синхронизации
   };
 
   // ───────────────────────────────
   //  ЭКРАН ЗАГРУЗКИ
   // ───────────────────────────────
-  var LS_MIN_MS = 800;
+  var LS_MIN_MS = 800; // минимальное время показа (чтоб не мелькало)
   var _lsShownAt = Date.now();
 
   function lsSetStatus(text, pct) {
@@ -78,6 +63,7 @@
     }, delay);
   }
 
+  // Генерация звёзд фона
   function lsInitStars() {
     var wrap = document.getElementById('lsStars');
     if (!wrap) return;
@@ -94,37 +80,10 @@
   }
 
   function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
-  
-  function clone(o) { 
-    try { 
-      return JSON.parse(JSON.stringify(o)); 
-    } catch (e) { 
-      console.warn('Deep clone failed, using shallow copy');
-      return Object.assign({}, o); 
-    } 
-  }
+  function clone(o)  { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
 
   // ───────────────────────────────
-  //  ВАЛИДАЦИЯ ДАННЫХ
-  // ───────────────────────────────
-  function validateSnapshot(s) {
-    if (!s || typeof s !== 'object') return false;
-    if (s.v !== SNAPSHOT_VERSION) {
-      console.warn('Unknown snapshot version:', s.v);
-      return false;
-    }
-
-    if (s.gold < 0 || s.gold > LIMITS.maxGold) return false;
-    if (s.level < 1 || s.level > LIMITS.maxLevel) return false;
-    if (s.floor < 0 || s.floor > LIMITS.maxFloor) return false;
-    if (s.hp < 0 || s.maxHp < 1) return false;
-    if (s.inventory && s.inventory.length > LIMITS.maxInventory) return false;
-
-    return true;
-  }
-
-  // ───────────────────────────────
-  //  СЕРИАЛИЗАЦИЯ СОСТОЯНИЯ
+  //  СЕРИАЛИЗАЦИЯ СОСТОЯНИЯ (полный снапшот G)
   // ───────────────────────────────
   function serializeState() {
     var eq = {};
@@ -135,12 +94,12 @@
 
     var inv = (G.inventory || []).map(function (it) {
       var c = clone(it);
-      delete c._equipped;
+      delete c._equipped; // ссылку восстанавливаем по equipped при загрузке
       return c;
     });
 
     return {
-      v: SNAPSHOT_VERSION,
+      v: 1,
       charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
 
       gold: G.gold, pixr: G.pixr, gram: G.gram,
@@ -164,7 +123,6 @@
 
       cp: (typeof calcCP === 'function') ? calcCP() : 0,
       updatedAt: Date.now(),
-      clientVersion: '2.0.0'
     };
   }
 
@@ -172,14 +130,16 @@
   //  ПРИМЕНЕНИЕ СНАПШОТА К G
   // ───────────────────────────────
   function applySnapshot(s) {
-    if (!validateSnapshot(s)) return false;
+    if (!s || typeof s !== 'object') return false;
 
+    // Персонаж (спрайты, без сброса прокачанных статов)
     if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
       G_CHAR = CHARS[s.charId];
       G.charId = s.charId;
       if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
     }
 
+    // Базовые статы и числа
     if (s.baseStats) G.baseStats = Object.assign({}, s.baseStats);
     G.gold = num(s.gold, G.gold);
     G.pixr = num(s.pixr, G.pixr);
@@ -204,15 +164,18 @@
     G.skills = s.skills || {};
     G.invFilter = s.invFilter || 'all';
 
+    // Инвентарь
     G.inventory = (s.inventory || []).map(function (it) {
       var c = clone(it); c._equipped = false; return c;
     });
 
+    // Счётчик id (не ниже максимального существующего)
     if (typeof s.invIdCounter === 'number') _invIdCounter = s.invIdCounter;
     G.inventory.forEach(function (i) {
       if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
     });
 
+    // Экипировка: восстанавливаем ССЫЛКИ на объекты инвентаря
     G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
     var eq = s.equipped || {};
     EQUIP_SLOTS.forEach(function (slot) {
@@ -222,10 +185,11 @@
       if (it) { it._equipped = true; G.equipped[slot] = it; }
     });
 
+    // Пересчёт статов от базы + экипировки, затем HP
     if (typeof recalcStats === 'function') recalcStats();
     var hp = num(s.hp, G.maxHp);
     if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
-    G.hp = Math.max(LIMITS.minHp, Math.min(hp, G.maxHp));
+    G.hp = Math.max(1, Math.min(hp, G.maxHp));
 
     return true;
   }
@@ -234,202 +198,48 @@
   //  ЛОКАЛЬНЫЙ КЕШ
   // ───────────────────────────────
   function writeLocal(snap) {
-    try { 
-      localStorage.setItem(LS_KEY, JSON.stringify(snap)); 
-    } catch (e) {
-      console.warn('Failed to write to localStorage:', e);
-      if (e.name === 'QuotaExceededError') {
-        try {
-          localStorage.clear();
-          localStorage.setItem(LS_KEY, JSON.stringify(snap));
-        } catch (e2) {
-          console.error('Failed to clear localStorage:', e2);
-        }
-      }
-    }
+    try { localStorage.setItem(LS_KEY, JSON.stringify(snap)); } catch (e) {}
   }
-  
   function readLocal() {
-    try { 
-      var s = localStorage.getItem(LS_KEY); 
-      return s ? JSON.parse(s) : null; 
-    } catch (e) { 
-      console.warn('Failed to read from localStorage:', e);
-      return null; 
-    }
+    try { var s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; }
   }
-  
-  function saveLocal() { 
-    if (SYNC.started) {
-      var snap = serializeState();
-      writeLocal(snap);
-    }
-  }
+  function saveLocal() { if (SYNC.started) writeLocal(serializeState()); }
 
   // ───────────────────────────────
   //  СЕРВЕР
   // ───────────────────────────────
+  var START_PARAM = '';
+
   function serverLoad() {
     if (!SYNC.online) return Promise.resolve(null);
-    
-    return fetch(API + '/load', {
+    return fetch(API + '/api/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT }),
-    })
-    .then(function (r) { 
-      if (!r.ok) {
-        throw new Error('Server returned ' + r.status);
-      }
-      return r.json(); 
-    });
+      body: JSON.stringify({ initData: TG_INIT, startParam: START_PARAM }),
+    }).then(function (r) { return r.json(); });
   }
 
   function serverSave(snap) {
     if (!SYNC.online) return Promise.resolve({ ok: false });
-    
-    return fetch(API + '/save', {
+    return fetch(API + '/api/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, data: snap }),
-    })
-    .then(function (r) { 
-      if (!r.ok) {
-        throw new Error('Server returned ' + r.status);
-      }
-      return r.json(); 
-    });
-  }
-
-  function sendErrorLog(errorData) {
-    if (!SYNC.online) return;
-    
-    try {
-      fetch(API + '/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          initData: TG_INIT,
-          type: 'client_error',
-          timestamp: Date.now(),
-          data: errorData,
-          userAgent: navigator.userAgent,
-          url: window.location.href
-        }),
-        keepalive: true
-      }).catch(function() {});
-    } catch (e) {}
-  }
-
-  function updateSyncIndicator(status) {
-    if (!SYNC.syncIndicator) {
-      SYNC.syncIndicator = document.getElementById('syncIndicator');
-      if (!SYNC.syncIndicator) return;
-    }
-    
-    switch(status) {
-      case 'saving':
-        SYNC.syncIndicator.className = 'sync-indicator saving';
-        SYNC.syncIndicator.title = 'Сохранение...';
-        break;
-      case 'saved':
-        SYNC.syncIndicator.className = 'sync-indicator saved';
-        SYNC.syncIndicator.title = 'Сохранено';
-        setTimeout(function() {
-          if (SYNC.syncIndicator) {
-            SYNC.syncIndicator.className = 'sync-indicator';
-          }
-        }, 2000);
-        break;
-      case 'error':
-        SYNC.syncIndicator.className = 'sync-indicator error';
-        SYNC.syncIndicator.title = 'Ошибка сохранения';
-        break;
-      default:
-        SYNC.syncIndicator.className = 'sync-indicator';
-        SYNC.syncIndicator.title = 'Ожидание';
-    }
+    }).then(function (r) { return r.json(); });
   }
 
   function pushServer() {
-    if (!SYNC.online || !SYNC.started || SYNC.pushing) { 
-      saveLocal(); 
-      return; 
-    }
-    
+    if (!SYNC.online || !SYNC.started || SYNC.pushing) { saveLocal(); return; }
     var snap = serializeState();
     writeLocal(snap);
     SYNC.pushing = true;
-    
-    updateSyncIndicator('saving');
-    
     serverSave(snap)
-      .then(function (r) { 
-        if (r && r.ok) {
-          SYNC.lastServerTs = r.updatedAt || snap.updatedAt;
-          updateSyncIndicator('saved');
-        } else {
-          updateSyncIndicator('error');
-          queueFailedSave(snap);
-        }
-      })
-      .catch(function (err) {
-        console.warn('Server save failed:', err);
-        updateSyncIndicator('error');
-        queueFailedSave(snap);
-        sendErrorLog({
-          message: 'Server save failed',
-          error: err.message
-        });
-      })
-      .then(function () { 
-        SYNC.pushing = false; 
-        processQueue();
-      });
+      .then(function (r) { if (r && r.ok) SYNC.lastServerTs = r.updatedAt || snap.updatedAt; })
+      .catch(function () {})
+      .then(function () { SYNC.pushing = false; });
   }
 
-  function queueFailedSave(snap) {
-    SYNC.pendingSaves.push({ 
-      snap: snap, 
-      retries: 0, 
-      timestamp: Date.now(),
-      maxRetries: 3
-    });
-  }
-
-  function processQueue() {
-    if (SYNC.pendingSaves.length === 0 || SYNC.pushing) return;
-    
-    var save = SYNC.pendingSaves[0];
-    if (save.retries >= save.maxRetries) {
-      console.warn('Dropping failed save after ' + save.maxRetries + ' retries');
-      SYNC.pendingSaves.shift();
-      return;
-    }
-    
-    SYNC.pushing = true;
-    updateSyncIndicator('saving');
-    
-    serverSave(save.snap)
-      .then(function (r) {
-        if (r && r.ok) {
-          SYNC.pendingSaves.shift();
-          updateSyncIndicator('saved');
-        } else {
-          save.retries++;
-          updateSyncIndicator('error');
-        }
-      })
-      .catch(function () {
-        save.retries++;
-        updateSyncIndicator('error');
-      })
-      .then(function () {
-        SYNC.pushing = false;
-        setTimeout(processQueue, 5000);
-      });
-  }
-
+  // Сохранение «сразу» после структурных действий (с коалесингом)
   function touch() {
     if (!SYNC.started) return;
     saveLocal();
@@ -438,50 +248,30 @@
     SYNC.dirtyTimer = setTimeout(pushServer, 1200);
   }
 
+  // Флаш при закрытии/сворачивании.
+  // sendBeacon не работает в Telegram WebView — используем обычный fetch.
+  // localStorage — главная страховка (синхронно, не теряется никогда).
   function flush() {
     if (!SYNC.started) return;
-    
     var snap = serializeState();
-    writeLocal(snap);
-    
+    writeLocal(snap);           // всегда в localStorage синхронно
     if (!SYNC.online) return;
-    
-    var body = JSON.stringify({ initData: TG_INIT, data: snap });
-    var useKeepalive = body.length < 60000;
-    
-    var options = {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: body
-    };
-    
-    if (useKeepalive) {
-      options.keepalive = true;
-    }
-    
-    fetch(API + '/save', options).catch(function(err) {
-      console.warn('Flush failed:', err);
-    });
+    try {
+      fetch(API + '/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData: TG_INIT, data: snap }),
+      });
+    } catch (e) {}
   }
 
   // ───────────────────────────────
   //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
   // ───────────────────────────────
   function stopCharSelectAnims() {
-    try { 
-      if (typeof _csSpriteTimers !== 'undefined') {
-        Object.keys(_csSpriteTimers).forEach(function (k) { 
-          clearInterval(_csSpriteTimers[k]); 
-        });
-      }
-    } catch (e) {}
-    try { 
-      if (typeof _csParticleTimer !== 'undefined' && _csParticleTimer) {
-        cancelAnimationFrame(_csParticleTimer); 
-      }
-    } catch (e) {}
+    try { if (typeof _csSpriteTimers !== 'undefined') Object.keys(_csSpriteTimers).forEach(function (k) { clearInterval(_csSpriteTimers[k]); }); } catch (e) {}
+    try { if (typeof _csParticleTimer !== 'undefined' && _csParticleTimer) cancelAnimationFrame(_csParticleTimer); } catch (e) {}
   }
-  
   function hideCharSelect() {
     var cs = document.getElementById('charSelect');
     if (cs) cs.classList.add('hidden');
@@ -489,7 +279,7 @@
   }
 
   // ───────────────────────────────
-  //  СТАРТ ИГРЫ
+  //  СТАРТ ИГРЫ ИЗ СНАПШОТА
   // ───────────────────────────────
   function bootFromSnapshot(snap) {
     if (SYNC.started) return;
@@ -499,88 +289,54 @@
     if (typeof startGame === 'function') startGame();
   }
 
+  // Применить серверный снапшот поверх уже идущей игры (другое устройство)
   function hotApply(snap) {
     if (!applySnapshot(snap)) return;
     if (typeof updateHUD === 'function') updateHUD();
     if (typeof initSkillsHud === 'function') initSkillsHud();
     if (typeof updatePotionHud === 'function') updatePotionHud();
-    try { 
-      if (typeof switchTab === 'function' && typeof activeTab !== 'undefined') {
-        switchTab(activeTab); 
-      }
-    } catch (e) {}
+    try { if (typeof switchTab === 'function' && typeof activeTab !== 'undefined') switchTab(activeTab); } catch (e) {}
   }
 
   // ───────────────────────────────
   //  ЦИКЛЫ СИНХРОНИЗАЦИИ
   // ───────────────────────────────
-  var syncTimers = {
-    local: null,
-    server: null
-  };
-
   function startSyncLoops() {
-    stopSyncLoops();
-    
-    syncTimers.local = setInterval(saveLocal, 1000);
-    syncTimers.server = setInterval(pushServer, 15000);
+    setInterval(saveLocal, 1000);            // localStorage каждую 1 сек (дёшево, не теряем HP/золото)
+    setInterval(pushServer, 15000);          // сервер каждые 15 сек
 
+    // visibilitychange — срабатывает при сворачивании в Telegram
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) flush();
     });
 
+    // Telegram WebApp события — надёжнее beforeunload
     if (window.Telegram && window.Telegram.WebApp) {
+      // close: юзер закрыл мини-апп кнопкой X
       try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
+      // viewportChanged: изменился размер вьюпорта (сворачивание/разворачивание)
       try { window.Telegram.WebApp.onEvent('viewportChanged', saveLocal); } catch (e) {}
     }
 
+    // pagehide — иногда работает в некоторых WebView
     window.addEventListener('pagehide', flush);
+    // beforeunload — НЕ работает в Telegram WebView, но оставим для браузера
     window.addEventListener('beforeunload', flush);
   }
 
-  function stopSyncLoops() {
-    if (syncTimers.local) {
-      clearInterval(syncTimers.local);
-      syncTimers.local = null;
-    }
-    if (syncTimers.server) {
-      clearInterval(syncTimers.server);
-      syncTimers.server = null;
-    }
-  }
-
-  function initErrorHandling() {
-    window.addEventListener('error', function(event) {
-      sendErrorLog({
-        message: event.message,
-        stack: event.error ? event.error.stack : null,
-        source: event.filename,
-        line: event.lineno,
-        col: event.colno
-      });
-    });
-
-    window.addEventListener('unhandledrejection', function(event) {
-      sendErrorLog({
-        message: 'Unhandled Promise Rejection',
-        stack: event.reason ? (event.reason.stack || event.reason.message) : null
-      });
-    });
-  }
-
   // ───────────────────────────────
-  //  BOOT — ГЛАВНАЯ ЛОГИКА ЗАГРУЗКИ
+  //  BOOT
   // ───────────────────────────────
   function initTelegram() {
     if (window.Telegram && window.Telegram.WebApp) {
       try { window.Telegram.WebApp.ready(); } catch (e) {}
       try { window.Telegram.WebApp.expand(); } catch (e) {}
-      try { 
-        if (window.Telegram.WebApp.disableVerticalSwipes) {
-          window.Telegram.WebApp.disableVerticalSwipes(); 
-        }
-      } catch (e) {}
+      try { window.Telegram.WebApp.disableVerticalSwipes && window.Telegram.WebApp.disableVerticalSwipes(); } catch (e) {}
       TG_INIT = window.Telegram.WebApp.initData || '';
+      // start_param — реферальный код из ссылки ?startapp=CODE
+      try {
+        START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
+      } catch (e) { START_PARAM = ''; }
     }
     SYNC.online = !!TG_INIT;
   }
@@ -589,170 +345,64 @@
     lsInitStars();
     lsSetStatus('Подключение', 10);
     initTelegram();
-    initErrorHandling();
-    
-    var booted = false;
+
     var local = readLocal();
 
-    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 30);
+    // 1) Мгновенный старт из локального кеша (пока идёт запрос на сервер)
+    if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+      lsSetStatus('Загрузка данных', 40);
+      bootFromSnapshot(local);
+    }
 
-    // ЕСЛИ МЫ ОНЛАЙН - ВСЕГДА ЖДЕМ СЕРВЕР
-    if (SYNC.online) {
-      console.log('🌐 Онлайн режим — ждём ответ сервера');
-      
-      // Таймаут: если сервер не ответил за 6 сек — ТОЛЬКО ТОГДА грузим из localStorage
-      var lsTimeout = setTimeout(function () {
-        if (booted) return;
-        booted = true;
-        
-        console.log('⚠️ Сервер не ответил за 6с, загружаем из localStorage');
-        if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-          lsSetStatus('Офлайн загрузка', 40);
-          bootFromSnapshot(local);
-        } else {
-          lsSetStatus('Нет данных', 40);
-        }
-        lsHide();
-      }, 6000);
+    // Таймаут: если сервер не ответил за 6 сек — скрываем экран всё равно
+    var lsTimeout = setTimeout(function () { lsHide(); }, 6000);
 
-      // ГЛАВНЫЙ ПРИОРИТЕТ - СЕРВЕР
-      serverLoad().then(function (r) {
-        if (booted) return;
-        booted = true;
-        clearTimeout(lsTimeout);
-        
-        console.log('✅ Ответ сервера получен:', r);
-        
-        var server = r && r.save;
-        var hasServerData = server && server.data && server.data.charId &&
-                            typeof CHARS !== 'undefined' && CHARS[server.data.charId];
+    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
 
-        if (r && r.ok) {
-          if (hasServerData) {
-            // НА СЕРВЕРЕ ЕСТЬ ДАННЫЕ - ИСПОЛЬЗУЕМ ТОЛЬКО ИХ
-            console.log('📥 Загружаем данные с сервера (игнорируем localStorage)');
-            lsSetStatus('Загрузка с сервера', 70);
-            
-            // ВСЕГДА используем серверные данные
-            var serverData = server.data;
-            
-            // Сохраняем серверные данные в localStorage (обновляем локальный кеш)
-            writeLocal(serverData);
-            
-            // Запускаем игру ТОЛЬКО из серверных данных
-            if (!SYNC.started) {
-              bootFromSnapshot(serverData);
-            } else {
-              hotApply(serverData);
-            }
-            
-            lsSetStatus('Готово', 90);
-            
-          } else {
-            // НА СЕРВЕРЕ ПУСТО (новый игрок или данные удалены)
-            console.log('🆕 Сервер пуст — это новый игрок или данные удалены');
-            
-            // Очищаем localStorage чтобы не было конфликтов
-            try {
-              localStorage.removeItem(LS_KEY);
-              console.log('🗑️ localStorage очищен');
-            } catch (e) {}
-            
-            // НЕ загружаем из localStorage, показываем выбор персонажа
-            lsSetStatus('Новый игрок', 50);
-            
-            stopCharSelectAnims();
-            
-            var cs = document.getElementById('charSelect');
-            if (cs) {
-              cs.classList.remove('hidden');
-              if (typeof initCharSelect === 'function') {
-                initCharSelect();
-              }
-              if (typeof window._csSelected === 'object') {
-                window._csSelected = null;
-              }
-              if (typeof updateConfirmBtn === 'function') {
-                updateConfirmBtn();
-              }
-            }
-            
-            lsHide();
-            return; // ВАЖНО: выходим, не запускаем игру
-          }
-        } else {
-          console.error('❌ Сервер вернул ошибку');
-          throw new Error('Server returned error');
+    // 2) Сверка с сервером
+    serverLoad().then(function (r) {
+      clearTimeout(lsTimeout);
+      var server = r && r.save;
+      if (server && server.data && server.data.charId &&
+          typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
+        lsSetStatus('Применение данных', 85);
+        var sTs = server.updatedAt || 0;
+        var lTs = (local && local.updatedAt) || 0;
+        if (!SYNC.started) {
+          bootFromSnapshot(server.data);
+        } else if (sTs > lTs + 3000) {
+          hotApply(server.data);
         }
-        
-      }).catch(function (err) {
-        if (booted) return;
-        booted = true;
-        clearTimeout(lsTimeout);
-        
-        console.warn('❌ Ошибка загрузки с сервера:', err.message);
-        
-        // ТОЛЬКО если сервер недоступен - используем localStorage
-        if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-          console.log('📦 Загружаем из localStorage (сервер недоступен)');
-          lsSetStatus('Офлайн загрузка', 40);
-          bootFromSnapshot(local);
-        } else {
-          lsSetStatus('Ошибка загрузки', 40);
-        }
-        
-        sendErrorLog({
-          message: 'Server load failed in boot',
-          error: err.message
-        });
-        
-      }).then(function () {
-        if (!SYNC.booted) {
-          SYNC.booted = true;
-          startSyncLoops();
-          if (SYNC.online && SYNC.started) pushServer();
-          lsHide();
-        }
-      });
-      
-    } else {
-      // ОФЛАЙН РЕЖИМ - только localStorage
-      console.log('📴 Офлайн режим — используем только localStorage');
-      lsSetStatus('Офлайн режим', 60);
-      
-      if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-        lsSetStatus('Загрузка с устройства', 80);
-        bootFromSnapshot(local);
-      } else {
-        lsSetStatus('Нет данных', 40);
       }
-      
+    }).catch(function () {
+      clearTimeout(lsTimeout);
+    }).then(function () {
       SYNC.booted = true;
       startSyncLoops();
+      if (SYNC.online && SYNC.started) pushServer();
       lsHide();
-    }
+    });
   }
 
   // ───────────────────────────────
-  //  ХУКИ: выбор персонажа + действия
+  //  ХУКИ: выбор персонажа + структурные действия
   // ───────────────────────────────
   function hookCharSelect() {
     var orig = window.confirmChar;
     if (typeof orig !== 'function') return;
     window.confirmChar = function () {
       var r = orig.apply(this, arguments);
-      if (typeof G_CHAR === 'undefined' || !G_CHAR) return r;
+      if (typeof G_CHAR === 'undefined' || !G_CHAR) return r; // не выбрали — выходим
       G.charId = G_CHAR.id;
       SYNC.started = true;
       stopCharSelectAnims();
       saveLocal();
       if (SYNC.online) {
         try {
-          fetch(API + '/character', {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' },
+          fetch(API + '/api/character', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ initData: TG_INIT, charId: G.charId }),
-          }).catch(function() {});
+          });
         } catch (e) {}
         pushServer();
       }
@@ -760,16 +410,15 @@
     };
   }
 
+  // Дебаунс для saveLocal из updateHUD (не чаще раза в 500мс)
   var _hudSaveTimer = null;
   function saveLocalDebounced() {
     if (_hudSaveTimer) return;
-    _hudSaveTimer = setTimeout(function () { 
-      _hudSaveTimer = null; 
-      if (SYNC.started) saveLocal(); 
-    }, 500);
+    _hudSaveTimer = setTimeout(function () { _hudSaveTimer = null; saveLocal(); }, 500);
   }
 
   function hookActions() {
+    // Структурные действия — сохраняем сразу (debounce 1.2с на сервер)
     var names = [
       'buyUpgrade', 'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
       'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem', 'exchangePixr',
@@ -785,6 +434,9 @@
       };
     });
 
+    // updateHUD вызывается при каждом изменении HP/XP/золота —
+    // цепляемся сюда для максимально быстрого сохранения в localStorage.
+    // Используем debounce 500мс чтобы не тормозить игровой loop.
     var origHUD = window.updateHUD;
     if (typeof origHUD === 'function') {
       window.updateHUD = function () {
@@ -795,11 +447,11 @@
     }
   }
 
-  // Установка хуков
+  // Установка хуков сразу (все скрипты выше уже загружены)
   hookCharSelect();
   hookActions();
 
-  // Boot после полной загрузки
+  // Boot после полной загрузки (ui.js успевает инициализировать экран выбора)
   if (document.readyState === 'complete') {
     boot();
   } else {
@@ -808,11 +460,14 @@
 
   // Публичный API
   window.GameSync = {
-    save: pushServer,
-    flush: flush,
-    touch: touch,
+    save:      pushServer,
+    flush:     flush,
+    touch:     touch,
     serialize: serializeState,
-    apply: applySnapshot,
-    state: SYNC,
+    apply:     applySnapshot,
+    state:     SYNC,
+    // нужны renderFriends в ui.js
+    _API:  API,
+    get _INIT() { return TG_INIT; },
   };
 })();

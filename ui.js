@@ -350,7 +350,7 @@ function exchangePixr() {
 // ═══════════════════════════════
 function switchTab(tab) {
   activeTab = tab;
-  ['game','inv','upgrades','floors','rating','wallet'].forEach(t => {
+  ['game','inv','upgrades','floors','rating','wallet','friends'].forEach(t => {
     const btn = document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1));
     if (btn) btn.classList.toggle('active', t === tab);
   });
@@ -359,6 +359,7 @@ function switchTab(tab) {
   document.getElementById('panelFloors').classList.toggle('visible',   tab === 'floors');
   document.getElementById('panelRating').classList.toggle('visible',   tab === 'rating');
   document.getElementById('panelWallet').classList.toggle('visible',   tab === 'wallet');
+  document.getElementById('panelFriends').classList.toggle('visible',  tab === 'friends');
   var hudEl = document.getElementById('skillsHud');
   if (hudEl) hudEl.classList.toggle('visible', tab === 'game' && !!G_CHAR);
   var isGame = tab === 'game' && !!G_CHAR;
@@ -372,6 +373,187 @@ function switchTab(tab) {
   if (tab === 'floors')   renderFloors();
   if (tab === 'rating')   renderRating();
   if (tab === 'wallet')   renderWallet();
+  if (tab === 'friends')  renderFriends();
+}
+
+
+// ═══════════════════════════════
+//  ВКЛАДКА ДРУЗЕЙ
+// ═══════════════════════════════
+var _friendsLoading = false;
+
+function renderFriends() {
+  var body = document.getElementById('friendsBody');
+  if (!body) return;
+
+  // Если нет initData (не в Telegram) — показываем заглушку
+  if (!window.GameSync || !window.GameSync.state.online) {
+    body.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#556;font-size:12px;">' +
+      '<div style="font-size:32px;margin-bottom:12px;">📱</div>' +
+      'Реферальная программа<br>доступна только в Telegram</div>';
+    return;
+  }
+
+  if (_friendsLoading) return;
+  _friendsLoading = true;
+  body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">Загрузка...</div>';
+
+  fetch(window.GameSync._API + '/api/ref/friends', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: window.GameSync._INIT }),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(r) {
+    _friendsLoading = false;
+    if (!r.ok) { body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Ошибка загрузки</div>'; return; }
+    renderFriendsData(r, body);
+  })
+  .catch(function() {
+    _friendsLoading = false;
+    body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
+  });
+}
+
+function renderFriendsData(r, body) {
+  var coinSvg = '<svg width="14" height="14" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
+  var charColors = { fire: '#ff6030', light: '#ffd040', water: '#40d0ff' };
+  var charNames  = { fire: 'Пирокан', light: 'Люмос', water: 'Аквас' };
+
+  // ── Реферальная ссылка ──
+  var linkHtml =
+    '<div style="margin-bottom:14px;padding:12px;background:rgba(245,197,66,0.06);border:1.5px solid #3a3a1a;border-radius:10px;">' +
+    '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:8px;">ТВОЯ РЕФЕРАЛЬНАЯ ССЫЛКА</div>' +
+    '<div style="font-size:11px;color:#f5c542;word-break:break-all;margin-bottom:10px;padding:6px 8px;background:#0d0d1a;border-radius:5px;border:1px solid #2a2a5a;">' +
+      r.refLink +
+    '</div>' +
+    '<div style="display:flex;gap:8px;">' +
+    '<button onclick="friendsCopyLink('' + r.refLink + '')" style="flex:1;padding:9px;font-size:11px;font-family:Courier New,monospace;border-radius:7px;border:1.5px solid #f5c542;background:rgba(245,197,66,0.1);color:#f5c542;cursor:pointer;">📋 Скопировать</button>' +
+    '<button onclick="friendsShare('' + r.refLink + '')" style="flex:1;padding:9px;font-size:11px;font-family:Courier New,monospace;border-radius:7px;border:1.5px solid #2ecc71;background:rgba(46,204,113,0.1);color:#2ecc71;cursor:pointer;">✈️ Поделиться</button>' +
+    '</div></div>';
+
+  // ── Награда ──
+  var rewardHtml =
+    '<div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:8px;font-size:10px;color:#667;">' +
+    coinSvg + ' <span style="color:#f5c542;font-weight:bold">500 золота</span> за каждые 5 уровней друга · ' +
+    '<span style="color:#aaa">Уровни 5, 10, 15, 20...</span></div>';
+
+  // ── Кнопка забрать ──
+  var claimHtml = '';
+  if (r.pendingGold > 0) {
+    claimHtml =
+      '<button onclick="friendsClaim(this)" style="width:100%;margin-bottom:14px;padding:13px;font-size:14px;font-weight:bold;' +
+      'font-family:Courier New,monospace;border-radius:9px;border:1.5px solid #f5c542;' +
+      'background:linear-gradient(180deg,rgba(245,197,66,0.2),rgba(245,197,66,0.05));' +
+      'color:#f5c542;cursor:pointer;letter-spacing:1px;">' +
+      coinSvg + ' Забрать ' + r.pendingGold + ' золота</button>';
+  }
+
+  // ── Список друзей ──
+  var friendsHtml = '';
+  if (!r.friends || r.friends.length === 0) {
+    friendsHtml =
+      '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">' +
+      '<div style="font-size:28px;margin-bottom:10px;">👥</div>' +
+      'Пока нет друзей<br><span style="font-size:10px;color:#334;">Поделись ссылкой — за каждого<br>получишь золото!</span></div>';
+  } else {
+    var totalEarned = 0;
+    r.friends.forEach(function(f) { totalEarned += f.paid * (500 / 5); });
+    friendsHtml = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:8px;">ДРУЗЬЯ (' + r.friends.length + ')</div>';
+    r.friends.forEach(function(f) {
+      var col = charColors[f.charId] || '#aaa';
+      var cls = charNames[f.charId]  || 'Неизвестный';
+      var nextLv = f.nextMilestone;
+      var toNext = nextLv - f.level;
+      var progressPct = toNext > 0 ? Math.min(100, ((5 - toNext) / 5 * 100)) : 100;
+      friendsHtml +=
+        '<div style="margin-bottom:10px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid #1a1a35;border-radius:9px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px;">' +
+        '<div style="width:36px;height:36px;border-radius:6px;background:rgba(255,255,255,0.06);border:1.5px solid ' + col + '33;' +
+        'display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">👤</div>' +
+        '<div style="flex:1;">' +
+        '<div style="font-size:13px;color:#ddd;font-weight:bold;">' + (f.name || 'Игрок') + '</div>' +
+        '<div style="font-size:10px;color:' + col + ';margin-top:1px;">' + cls + '</div>' +
+        '</div>' +
+        '<div style="text-align:right;">' +
+        '<div style="font-size:14px;font-weight:bold;color:#f5c542;">Lv.' + f.level + '</div>' +
+        '<div style="font-size:9px;color:#556;margin-top:1px;">след. ' + coinSvg + ' на Lv.' + nextLv + '</div>' +
+        '</div></div>' +
+        '<div style="height:4px;background:#111;border-radius:2px;">' +
+        '<div style="height:4px;background:' + col + ';border-radius:2px;width:' + progressPct + '%;transition:width .3s"></div>' +
+        '</div>' +
+        '<div style="font-size:9px;color:#445;margin-top:4px;text-align:right;">' +
+        (toNext > 0 ? 'ещё ' + toNext + ' ур. до награды' : 'награда готова!') +
+        '</div></div>';
+    });
+    if (totalEarned > 0) {
+      friendsHtml += '<div style="text-align:center;font-size:10px;color:#556;padding:8px 0;">Всего заработано: ' + coinSvg + ' <span style="color:#f5c542">' + totalEarned + '</span></div>';
+    }
+  }
+
+  body.innerHTML = linkHtml + rewardHtml + claimHtml + friendsHtml;
+}
+
+function friendsCopyLink(link) {
+  var copied = false;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(link).then(function() {
+      showFriendsToast('Ссылка скопирована!');
+    }).catch(function() { friendsCopyFallback(link); });
+  } else {
+    friendsCopyFallback(link);
+  }
+}
+function friendsCopyFallback(link) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = link; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showFriendsToast('Ссылка скопирована!');
+  } catch(e) { showFriendsToast('Скопируй вручную'); }
+}
+function friendsShare(link) {
+  var text = 'Играю в Pixel Runner RPG! Заходи по моей ссылке — получишь бонус!';
+  var shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
+  if (window.Telegram && window.Telegram.WebApp) {
+    try { window.Telegram.WebApp.openTelegramLink(shareUrl); return; } catch(e) {}
+  }
+  window.open(shareUrl, '_blank');
+}
+function friendsClaim(btn) {
+  if (!window.GameSync) return;
+  btn.disabled = true;
+  btn.textContent = 'Получение...';
+  fetch(window.GameSync._API + '/api/ref/claim', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: window.GameSync._INIT }),
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(r) {
+    if (r.ok && r.goldEarned > 0) {
+      G.gold += r.goldEarned;
+      updateHUD();
+      if (typeof window.GameSync.touch === 'function') window.GameSync.touch();
+      showFriendsToast('+' + r.goldEarned + ' золота получено!');
+      setTimeout(function() { renderFriends(); }, 800);
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Забрать';
+    }
+  })
+  .catch(function() { btn.disabled = false; });
+}
+function showFriendsToast(msg) {
+  var el = document.getElementById('floorUnlock');
+  var sub = document.getElementById('fuText');
+  if (!el || !sub) return;
+  sub.textContent = msg;
+  el.querySelector('.fu-title').textContent = '🎉 ' + msg;
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+  setTimeout(function() { el.classList.remove('show'); }, 2500);
 }
 
 // ═══════════════════════════════
