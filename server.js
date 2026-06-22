@@ -22,12 +22,11 @@ const app = express();
 // ═══════════════════════════════
 const API_VERSION = 'v1';
 const MAX_REQUEST_SIZE = 5 * 1024 * 1024; // 5MB
-const SAVE_RATE_LIMIT = 30; // 30 сохранений в минуту
-const GENERAL_RATE_LIMIT = 100; // 100 запросов в минуту
+const SAVE_RATE_LIMIT = 30;
+const GENERAL_RATE_LIMIT = 100;
 const LEADERBOARD_LIMIT = 50;
 const INACTIVE_DAYS = 30;
 
-// Лимиты для валидации игровых данных
 const GAME_LIMITS = {
   maxLevel: 9999,
   maxGold: 999999999,
@@ -44,7 +43,7 @@ const GAME_LIMITS = {
 //  1. БЕЗОПАСНОСТЬ
 // ═══════════════════════════════
 app.use(helmet({
-  contentSecurityPolicy: false, // Отключаем CSP для Telegram WebApp
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false
 }));
 
@@ -52,22 +51,15 @@ app.use(helmet({
 //  2. CORS
 // ═══════════════════════════════
 app.use((req, res, next) => {
-  const allowedOrigins = [
-    'https://your-game.railway.app',
-    'https://web.telegram.org',
-    'https://telegram.org'
-  ];
-  
   const origin = req.headers.origin;
   
-  // В разработке разрешаем все origins
   if (process.env.NODE_ENV === 'development') {
     res.header('Access-Control-Allow-Origin', origin || '*');
   } else {
-    // В продакшене проверяем origin
-    if (allowedOrigins.includes(origin)) {
-      res.header('Access-Control-Allow-Origin', origin);
-    } else if (origin && origin.startsWith('https://web.telegram.org')) {
+    if (origin && (
+      origin.startsWith('https://web.telegram.org') ||
+      origin === 'https://your-game.railway.app'
+    )) {
       res.header('Access-Control-Allow-Origin', origin);
     } else {
       res.header('Access-Control-Allow-Origin', 'https://web.telegram.org');
@@ -76,7 +68,7 @@ app.use((req, res, next) => {
   
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.header('Access-Control-Max-Age', '86400'); // 24 часа
+  res.header('Access-Control-Max-Age', '86400');
   res.header('Vary', 'Origin');
   
   if (req.method === 'OPTIONS') {
@@ -89,23 +81,20 @@ app.use((req, res, next) => {
 //  3. СЖАТИЕ
 // ═══════════════════════════════
 app.use(compression({
-  threshold: 1024, // Сжимаем ответы больше 1KB
-  level: 6         // Уровень сжатия (1-9)
+  threshold: 1024,
+  level: 6
 }));
 
 // ═══════════════════════════════
 //  4. RATE LIMITING
 // ═══════════════════════════════
-
-// Общий лимит для всех запросов
 const generalLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 минута
+  windowMs: 60 * 1000,
   max: GENERAL_RATE_LIMIT,
   message: { ok: false, error: 'rate_limit', message: 'Too many requests' },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    // Приоритет: Telegram ID > IP
     try {
       const body = req.body;
       if (body && body.initData) {
@@ -118,7 +107,6 @@ const generalLimiter = rateLimit({
   }
 });
 
-// Строгий лимит для сохранений
 const saveLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: SAVE_RATE_LIMIT,
@@ -139,15 +127,13 @@ const saveLimiter = rateLimit({
 app.use(generalLimiter);
 
 // ═══════════════════════════════
-//  5. ЛОГИРОВАНИЕ ЗАПРОСОВ
+//  5. ЛОГИРОВАНИЕ
 // ═══════════════════════════════
 app.use((req, res, next) => {
   const start = Date.now();
   
   res.on('finish', () => {
     const duration = Date.now() - start;
-    
-    // Логируем ошибки и медленные запросы
     if (res.statusCode >= 400 || duration > 1000) {
       console.warn(`⚠️ ${req.method} ${req.path} ${res.statusCode} - ${duration}ms`);
     }
@@ -160,9 +146,7 @@ app.use((req, res, next) => {
 //  6. ЗАЩИТА ОТ БОЛЬШИХ ЗАПРОСОВ
 // ═══════════════════════════════
 app.use((req, res, next) => {
-  if (req.method === 'GET') {
-    return next();
-  }
+  if (req.method === 'GET') return next();
   
   let size = 0;
   
@@ -183,12 +167,10 @@ app.use((req, res, next) => {
 });
 
 // ═══════════════════════════════
-//  7. БЕЗОПАСНЫЙ ПАРСИНГ JSON
+//  7. ПАРСИНГ JSON
 // ═══════════════════════════════
 app.use((req, res, next) => {
-  if (req.method === 'GET') {
-    return next();
-  }
+  if (req.method === 'GET') return next();
 
   let body = '';
   
@@ -223,7 +205,7 @@ app.use((req, res, next) => {
 // ═══════════════════════════════
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
-  console.error('❌ MONGODB_URI не задан в переменных окружения');
+  console.error('❌ MONGODB_URI не задан');
   process.exit(1);
 }
 
@@ -239,7 +221,6 @@ mongoose.connect(MONGODB_URI, {
   process.exit(1);
 });
 
-// События подключения
 mongoose.connection.on('disconnected', () => {
   console.warn('⚠️ MongoDB отключена');
 });
@@ -252,7 +233,6 @@ mongoose.connection.on('error', (err) => {
   console.error('❌ MongoDB ошибка:', err.message);
 });
 
-// Схема
 const SaveSchema = new mongoose.Schema({
   tgId:      { type: String, required: true, unique: true, index: true },
   username:  { type: String, default: '' },
@@ -268,7 +248,6 @@ const SaveSchema = new mongoose.Schema({
   timestamps: true 
 });
 
-// Индексы для производительности
 SaveSchema.index({ cp: -1, level: -1 });
 SaveSchema.index({ updatedAt: 1 });
 SaveSchema.index({ charId: 1 });
@@ -283,17 +262,14 @@ function validateGameData(data) {
     return { valid: false, reason: 'invalid_type' };
   }
   
-  // Проверка обязательных полей
   if (!data.charId || typeof data.charId !== 'string') {
     return { valid: false, reason: 'missing_charId' };
   }
   
-  // Проверка на отрицательные значения
   if (data.gold < 0 || data.pixr < 0 || data.gram < 0) {
     return { valid: false, reason: 'negative_currency' };
   }
   
-  // Проверка лимитов
   if (data.level < GAME_LIMITS.minLevel || data.level > GAME_LIMITS.maxLevel) {
     return { valid: false, reason: 'invalid_level' };
   }
@@ -318,14 +294,12 @@ function validateGameData(data) {
     return { valid: false, reason: 'invalid_hp' };
   }
   
-  // Проверка размера инвентаря
   if (data.inventory && Array.isArray(data.inventory)) {
     if (data.inventory.length > GAME_LIMITS.maxInventory) {
       return { valid: false, reason: 'inventory_overflow' };
     }
   }
   
-  // Проверка equipped слотов
   if (data.equipped && typeof data.equipped === 'object') {
     const validSlots = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
     for (const slot of Object.keys(data.equipped)) {
@@ -335,7 +309,6 @@ function validateGameData(data) {
     }
   }
   
-  // Проверка структуры baseStats
   if (data.baseStats && typeof data.baseStats === 'object') {
     const validStats = ['atk', 'def', 'hp', 'spd', 'crit', 'dodge'];
     for (const stat of Object.keys(data.baseStats)) {
@@ -447,7 +420,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Корневой эндпоинт
 app.get('/', (req, res) => {
   res.json({
     ok: true,
@@ -467,6 +439,8 @@ app.post('/api/load', async (req, res) => {
     const doc = await Save.findOne({ tgId: tg.id })
       .select('charId data updatedAt -_id')
       .lean();
+    
+    console.log(`📥 Load request for user ${tg.id}: ${doc ? 'found' : 'empty'}`);
     
     res.json({
       ok: true,
@@ -498,7 +472,6 @@ app.post('/api/save', saveLimiter, async (req, res) => {
     return res.status(400).json({ ok: false, error: 'bad_data', message: 'Missing or invalid data' });
   }
 
-  // ВАЛИДАЦИЯ ИГРОВЫХ ДАННЫХ
   const validation = validateGameData(data);
   if (!validation.valid) {
     console.warn(`⚠️ Invalid game data from user ${tg.id}:`, validation.reason);
@@ -514,10 +487,8 @@ app.post('/api/save', saveLimiter, async (req, res) => {
   const clientTs = Number(data.updatedAt) || now;
 
   try {
-    // Проверяем текущую запись для разрешения конфликтов
     const existing = await Save.findOne({ tgId: tg.id }).lean();
     
-    // Если есть более новые данные на сервере — не перезаписываем
     if (existing && existing.updatedAt > clientTs) {
       console.log(`⚠️ Conflict for user ${tg.id}: server=${existing.updatedAt}, client=${clientTs}`);
       return res.json({ 
@@ -528,7 +499,6 @@ app.post('/api/save', saveLimiter, async (req, res) => {
       });
     }
 
-    // Сохраняем данные
     await Save.updateOne(
       { tgId: tg.id },
       {
@@ -546,6 +516,8 @@ app.post('/api/save', saveLimiter, async (req, res) => {
       },
       { upsert: true }
     );
+    
+    console.log(`💾 Save for user ${tg.id}: level=${data.level}, gold=${data.gold}`);
     
     res.json({ 
       ok: true, 
@@ -569,8 +541,8 @@ app.post('/api/character', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'bad_char', message: 'Invalid character ID' });
   }
 
-  // Проверяем, что персонаж существует (список валидных ID)
-  const validChars = ['warrior', 'mage', 'rogue', 'archer', 'paladin']; // Замените на свои
+  // Список валидных персонажей (замените на свои)
+  const validChars = ['warrior', 'mage', 'rogue', 'archer', 'paladin'];
   if (!validChars.includes(charId)) {
     return res.status(400).json({ ok: false, error: 'invalid_char', message: 'Character not found' });
   }
@@ -589,6 +561,8 @@ app.post('/api/character', async (req, res) => {
       },
       { upsert: true }
     );
+    
+    console.log(`🎮 User ${tg.id} selected character: ${charId}`);
     
     res.json({ ok: true, message: 'Character selected' });
   } catch (err) {
@@ -708,7 +682,6 @@ app.use((req, res) => {
 //  12. ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК
 // ═══════════════════════════════
 app.use((err, req, res, next) => {
-  // Игнорируем ошибки обрыва соединения
   if (err.code === 'ECONNRESET' ||
       err.code === 'EPIPE' ||
       err.message?.includes('aborted') ||
@@ -717,7 +690,6 @@ app.use((err, req, res, next) => {
     return;
   }
 
-  // Логируем все остальные ошибки
   console.error('❌ Unhandled error:', {
     url: req.url,
     method: req.method,
@@ -756,7 +728,6 @@ async function cleanupInactivePlayers() {
   }
 }
 
-// Запускаем очистку раз в 24 часа
 setInterval(cleanupInactivePlayers, 24 * 60 * 60 * 1000);
 
 // ═══════════════════════════════
@@ -765,7 +736,6 @@ setInterval(cleanupInactivePlayers, 24 * 60 * 60 * 1000);
 async function gracefulShutdown(signal) {
   console.log(`📴 ${signal} received. Starting graceful shutdown...`);
   
-  // Закрываем HTTP сервер
   await new Promise((resolve) => {
     server.close(() => {
       console.log('🔌 HTTP server closed');
@@ -773,7 +743,6 @@ async function gracefulShutdown(signal) {
     });
   });
   
-  // Закрываем соединение с MongoDB
   try {
     await mongoose.connection.close();
     console.log('🗄️ MongoDB connection closed');
@@ -785,7 +754,6 @@ async function gracefulShutdown(signal) {
   process.exit(0);
 }
 
-// Принудительное завершение через 10 секунд
 function forceShutdown() {
   console.error('❌ Forced shutdown after timeout');
   process.exit(1);
@@ -826,12 +794,10 @@ const server = app.listen(PORT, () => {
   console.log('═══════════════════════════════════');
 });
 
-// Настройка таймаутов
-server.timeout = 120000;          // 2 минуты на ответ
-server.keepAliveTimeout = 65000;  // Дольше чем у Railway
-server.headersTimeout = 66000;    // Должен быть > keepAliveTimeout
+server.timeout = 120000;
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
 
-// Обработка ошибок сервера
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`❌ Port ${PORT} is already in use`);

@@ -4,8 +4,9 @@
   прогресса на сервер (MongoDB), локальный кеш.
 
   Логика:
-   • При запуске: моментальный старт из localStorage (без
-     мигания экрана выбора), затем сверка с сервером.
+   • При запуске: сервер главный источник данных.
+     Если сервер отвечает "пусто" — сбрасываем localStorage
+     и показываем выбор персонажа.
    • HP / баланс / весь снапшот:
        – localStorage каждые 1 сек,
        – сервер каждые 15 сек,
@@ -53,7 +54,7 @@
   // ───────────────────────────────
   //  ЭКРАН ЗАГРУЗКИ
   // ───────────────────────────────
-  var LS_MIN_MS = 800; // минимальное время показа (чтоб не мелькало)
+  var LS_MIN_MS = 800;
   var _lsShownAt = Date.now();
 
   function lsSetStatus(text, pct) {
@@ -77,7 +78,6 @@
     }, delay);
   }
 
-  // Генерация звёзд фона
   function lsInitStars() {
     var wrap = document.getElementById('lsStars');
     if (!wrap) return;
@@ -114,7 +114,6 @@
       return false;
     }
 
-    // Проверка критических полей на разумные значения
     if (s.gold < 0 || s.gold > LIMITS.maxGold) return false;
     if (s.level < 1 || s.level > LIMITS.maxLevel) return false;
     if (s.floor < 0 || s.floor > LIMITS.maxFloor) return false;
@@ -125,7 +124,7 @@
   }
 
   // ───────────────────────────────
-  //  СЕРИАЛИЗАЦИЯ СОСТОЯНИЯ (полный снапшот G)
+  //  СЕРИАЛИЗАЦИЯ СОСТОЯНИЯ
   // ───────────────────────────────
   function serializeState() {
     var eq = {};
@@ -136,7 +135,7 @@
 
     var inv = (G.inventory || []).map(function (it) {
       var c = clone(it);
-      delete c._equipped; // ссылку восстанавливаем по equipped при загрузке
+      delete c._equipped;
       return c;
     });
 
@@ -175,14 +174,12 @@
   function applySnapshot(s) {
     if (!validateSnapshot(s)) return false;
 
-    // Персонаж (спрайты, без сброса прокачанных статов)
     if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
       G_CHAR = CHARS[s.charId];
       G.charId = s.charId;
       if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
     }
 
-    // Базовые статы и числа
     if (s.baseStats) G.baseStats = Object.assign({}, s.baseStats);
     G.gold = num(s.gold, G.gold);
     G.pixr = num(s.pixr, G.pixr);
@@ -207,18 +204,15 @@
     G.skills = s.skills || {};
     G.invFilter = s.invFilter || 'all';
 
-    // Инвентарь
     G.inventory = (s.inventory || []).map(function (it) {
       var c = clone(it); c._equipped = false; return c;
     });
 
-    // Счётчик id (не ниже максимального существующего)
     if (typeof s.invIdCounter === 'number') _invIdCounter = s.invIdCounter;
     G.inventory.forEach(function (i) {
       if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
     });
 
-    // Экипировка: восстанавливаем ССЫЛКИ на объекты инвентаря
     G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
     var eq = s.equipped || {};
     EQUIP_SLOTS.forEach(function (slot) {
@@ -228,7 +222,6 @@
       if (it) { it._equipped = true; G.equipped[slot] = it; }
     });
 
-    // Пересчёт статов от базы + экипировки, затем HP
     if (typeof recalcStats === 'function') recalcStats();
     var hp = num(s.hp, G.maxHp);
     if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
@@ -245,7 +238,6 @@
       localStorage.setItem(LS_KEY, JSON.stringify(snap)); 
     } catch (e) {
       console.warn('Failed to write to localStorage:', e);
-      // Если localStorage переполнен - очищаем старые данные
       if (e.name === 'QuotaExceededError') {
         try {
           localStorage.clear();
@@ -309,7 +301,6 @@
     });
   }
 
-  // Отправка логов ошибок на сервер
   function sendErrorLog(errorData) {
     if (!SYNC.online) return;
     
@@ -330,7 +321,6 @@
     } catch (e) {}
   }
 
-  // Обновление индикатора синхронизации
   function updateSyncIndicator(status) {
     if (!SYNC.syncIndicator) {
       SYNC.syncIndicator = document.getElementById('syncIndicator');
@@ -394,11 +384,10 @@
       })
       .then(function () { 
         SYNC.pushing = false; 
-        processQueue(); // Обрабатываем очередь неудачных сохранений
+        processQueue();
       });
   }
 
-  // Очередь неудачных сохранений
   function queueFailedSave(snap) {
     SYNC.pendingSaves.push({ 
       snap: snap, 
@@ -437,12 +426,10 @@
       })
       .then(function () {
         SYNC.pushing = false;
-        // Продолжаем обрабатывать очередь через небольшую задержку
         setTimeout(processQueue, 5000);
       });
   }
 
-  // Сохранение «сразу» после структурных действий (с коалесингом)
   function touch() {
     if (!SYNC.started) return;
     saveLocal();
@@ -460,8 +447,6 @@
     if (!SYNC.online) return;
     
     var body = JSON.stringify({ initData: TG_INIT, data: snap });
-    
-    // keepalive имеет ограничение на размер ~64KB
     var useKeepalive = body.length < 60000;
     
     var options = {
@@ -504,7 +489,7 @@
   }
 
   // ───────────────────────────────
-  //  СТАРТ ИГРЫ ИЗ СНАПШОТА
+  //  СТАРТ ИГРЫ
   // ───────────────────────────────
   function bootFromSnapshot(snap) {
     if (SYNC.started) return;
@@ -514,7 +499,6 @@
     if (typeof startGame === 'function') startGame();
   }
 
-  // Применить серверный снапшот поверх уже идущей игры (другое устройство)
   function hotApply(snap) {
     if (!applySnapshot(snap)) return;
     if (typeof updateHUD === 'function') updateHUD();
@@ -527,25 +511,6 @@
     } catch (e) {}
   }
 
-  // Разрешение конфликтов между локальными и серверными данными
-  function resolveConflicts(local, server) {
-    if (!server || !server.updatedAt) return local;
-    if (!local || !local.updatedAt) return server;
-    
-    // Серверные данные новее - приоритет серверу
-    if (server.updatedAt > local.updatedAt) return server;
-    
-    // Локальные данные новее (редко, но возможно)
-    if (local.updatedAt > server.updatedAt) return local;
-    
-    // Временные метки совпадают - сохраняем более прогрессивного персонажа
-    if (local.level > server.level) return local;
-    if (server.level > local.level) return server;
-    
-    // При прочих равных - больше золота
-    return local.gold >= server.gold ? local : server;
-  }
-
   // ───────────────────────────────
   //  ЦИКЛЫ СИНХРОНИЗАЦИИ
   // ───────────────────────────────
@@ -555,26 +520,21 @@
   };
 
   function startSyncLoops() {
-    // Очищаем старые таймеры
     stopSyncLoops();
     
-    syncTimers.local = setInterval(saveLocal, 1000);    // localStorage каждую 1 сек
-    syncTimers.server = setInterval(pushServer, 15000);  // сервер каждые 15 сек
+    syncTimers.local = setInterval(saveLocal, 1000);
+    syncTimers.server = setInterval(pushServer, 15000);
 
-    // visibilitychange — срабатывает при сворачивании в Telegram
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) flush();
     });
 
-    // Telegram WebApp события — надёжнее beforeunload
     if (window.Telegram && window.Telegram.WebApp) {
       try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
       try { window.Telegram.WebApp.onEvent('viewportChanged', saveLocal); } catch (e) {}
     }
 
-    // pagehide — иногда работает в некоторых WebView
     window.addEventListener('pagehide', flush);
-    // beforeunload — НЕ работает в Telegram WebView, но оставим для браузера
     window.addEventListener('beforeunload', flush);
   }
 
@@ -589,7 +549,6 @@
     }
   }
 
-  // Глобальный обработчик ошибок
   function initErrorHandling() {
     window.addEventListener('error', function(event) {
       sendErrorLog({
@@ -610,7 +569,7 @@
   }
 
   // ───────────────────────────────
-  //  BOOT
+  //  BOOT — ГЛАВНАЯ ЛОГИКА ЗАГРУЗКИ
   // ───────────────────────────────
   function initTelegram() {
     if (window.Telegram && window.Telegram.WebApp) {
@@ -632,68 +591,74 @@
     initTelegram();
     initErrorHandling();
     
-    var booted = false; // Защита от двойной загрузки
+    var booted = false;
     var local = readLocal();
 
-    // Таймаут: если сервер не ответил за 6 сек — грузим из localStorage (офлайн)
-    var lsTimeout = setTimeout(function () {
-      if (booted) return;
-      booted = true;
+    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 30);
+
+    // ЕСЛИ МЫ ОНЛАЙН - ВСЕГДА ЖДЕМ СЕРВЕР
+    if (SYNC.online) {
+      console.log('🌐 Онлайн режим — ждём ответ сервера');
       
-      if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-        lsSetStatus('Офлайн загрузка', 40);
-        bootFromSnapshot(local);
-      } else {
-        lsSetStatus('Нет данных', 40);
-      }
-      lsHide();
-    }, 6000);
-
-    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
-
-    // 2) Сверка с сервером
-    serverLoad().then(function (r) {
-      if (booted) return;
-      booted = true;
-      clearTimeout(lsTimeout);
-      
-      var server = r && r.save;
-      var hasServerData = server && server.data && server.data.charId &&
-                          typeof CHARS !== 'undefined' && CHARS[server.data.charId];
-
-      if (r && r.ok) {
-        if (hasServerData) {
-          // На сервере ЕСТЬ данные — загружаем их
-          lsSetStatus('Загрузка с сервера', 70);
-          
-          // Разрешаем конфликты между локальными и серверными данными
-          var finalData = resolveConflicts(local, server.data);
-          
-          // Сохраняем финальные данные в localStorage
-          writeLocal(finalData);
-          
-          // Запускаем игру
-          if (!SYNC.started) {
-            bootFromSnapshot(finalData);
-          } else {
-            hotApply(finalData);
-          }
-          
-          lsSetStatus('Готово', 90);
-          
+      // Таймаут: если сервер не ответил за 6 сек — ТОЛЬКО ТОГДА грузим из localStorage
+      var lsTimeout = setTimeout(function () {
+        if (booted) return;
+        booted = true;
+        
+        console.log('⚠️ Сервер не ответил за 6с, загружаем из localStorage');
+        if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+          lsSetStatus('Офлайн загрузка', 40);
+          bootFromSnapshot(local);
         } else {
-          // НА СЕРВЕРЕ ПУСТО — проверяем localStorage
-          if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-            // Загружаем из localStorage и отправляем на сервер
-            lsSetStatus('Восстановление', 50);
-            bootFromSnapshot(local);
-            if (SYNC.online) pushServer();
+          lsSetStatus('Нет данных', 40);
+        }
+        lsHide();
+      }, 6000);
+
+      // ГЛАВНЫЙ ПРИОРИТЕТ - СЕРВЕР
+      serverLoad().then(function (r) {
+        if (booted) return;
+        booted = true;
+        clearTimeout(lsTimeout);
+        
+        console.log('✅ Ответ сервера получен:', r);
+        
+        var server = r && r.save;
+        var hasServerData = server && server.data && server.data.charId &&
+                            typeof CHARS !== 'undefined' && CHARS[server.data.charId];
+
+        if (r && r.ok) {
+          if (hasServerData) {
+            // НА СЕРВЕРЕ ЕСТЬ ДАННЫЕ - ИСПОЛЬЗУЕМ ТОЛЬКО ИХ
+            console.log('📥 Загружаем данные с сервера (игнорируем localStorage)');
+            lsSetStatus('Загрузка с сервера', 70);
+            
+            // ВСЕГДА используем серверные данные
+            var serverData = server.data;
+            
+            // Сохраняем серверные данные в localStorage (обновляем локальный кеш)
+            writeLocal(serverData);
+            
+            // Запускаем игру ТОЛЬКО из серверных данных
+            if (!SYNC.started) {
+              bootFromSnapshot(serverData);
+            } else {
+              hotApply(serverData);
+            }
+            
+            lsSetStatus('Готово', 90);
+            
           } else {
-            // Полностью новый игрок
+            // НА СЕРВЕРЕ ПУСТО (новый игрок или данные удалены)
+            console.log('🆕 Сервер пуст — это новый игрок или данные удалены');
+            
+            // Очищаем localStorage чтобы не было конфликтов
             try {
               localStorage.removeItem(LS_KEY);
+              console.log('🗑️ localStorage очищен');
             } catch (e) {}
             
+            // НЕ загружаем из localStorage, показываем выбор персонажа
             lsSetStatus('Новый игрок', 50);
             
             stopCharSelectAnims();
@@ -711,48 +676,65 @@
                 updateConfirmBtn();
               }
             }
+            
+            lsHide();
+            return; // ВАЖНО: выходим, не запускаем игру
           }
+        } else {
+          console.error('❌ Сервер вернул ошибку');
+          throw new Error('Server returned error');
         }
-      } else {
-        // Сервер вернул ошибку — используем localStorage
+        
+      }).catch(function (err) {
+        if (booted) return;
+        booted = true;
+        clearTimeout(lsTimeout);
+        
+        console.warn('❌ Ошибка загрузки с сервера:', err.message);
+        
+        // ТОЛЬКО если сервер недоступен - используем localStorage
         if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+          console.log('📦 Загружаем из localStorage (сервер недоступен)');
           lsSetStatus('Офлайн загрузка', 40);
           bootFromSnapshot(local);
+        } else {
+          lsSetStatus('Ошибка загрузки', 40);
         }
-      }
-      
-    }).catch(function (err) {
-      if (booted) return;
-      booted = true;
-      clearTimeout(lsTimeout);
-      
-      console.warn('Server load failed:', err);
-      
-      // Если сервер не ответил — загружаем из localStorage (офлайн режим)
-      if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-        lsSetStatus('Офлайн загрузка', 40);
-        bootFromSnapshot(local);
-      } else {
-        lsSetStatus('Ошибка загрузки', 40);
-      }
-      
-      sendErrorLog({
-        message: 'Server load failed in boot',
-        error: err.message
+        
+        sendErrorLog({
+          message: 'Server load failed in boot',
+          error: err.message
+        });
+        
+      }).then(function () {
+        if (!SYNC.booted) {
+          SYNC.booted = true;
+          startSyncLoops();
+          if (SYNC.online && SYNC.started) pushServer();
+          lsHide();
+        }
       });
       
-    }).then(function () {
-      if (!SYNC.booted) {
-        SYNC.booted = true;
-        startSyncLoops();
-        if (SYNC.online && SYNC.started) pushServer();
-        lsHide();
+    } else {
+      // ОФЛАЙН РЕЖИМ - только localStorage
+      console.log('📴 Офлайн режим — используем только localStorage');
+      lsSetStatus('Офлайн режим', 60);
+      
+      if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+        lsSetStatus('Загрузка с устройства', 80);
+        bootFromSnapshot(local);
+      } else {
+        lsSetStatus('Нет данных', 40);
       }
-    });
+      
+      SYNC.booted = true;
+      startSyncLoops();
+      lsHide();
+    }
   }
 
   // ───────────────────────────────
-  //  ХУКИ: выбор персонажа + структурные действия
+  //  ХУКИ: выбор персонажа + действия
   // ───────────────────────────────
   function hookCharSelect() {
     var orig = window.confirmChar;
@@ -778,7 +760,6 @@
     };
   }
 
-  // Дебаунс для saveLocal из updateHUD
   var _hudSaveTimer = null;
   function saveLocalDebounced() {
     if (_hudSaveTimer) return;
@@ -789,7 +770,6 @@
   }
 
   function hookActions() {
-    // Структурные действия — сохраняем сразу (debounce 1.2с на сервер)
     var names = [
       'buyUpgrade', 'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
       'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem', 'exchangePixr',
@@ -805,7 +785,6 @@
       };
     });
 
-    // updateHUD вызывается при каждом изменении HP/XP/золота
     var origHUD = window.updateHUD;
     if (typeof origHUD === 'function') {
       window.updateHUD = function () {
@@ -816,7 +795,7 @@
     }
   }
 
-  // Установка хуков сразу (все скрипты выше уже загружены)
+  // Установка хуков
   hookCharSelect();
   hookActions();
 
@@ -834,7 +813,6 @@
     touch: touch,
     serialize: serializeState,
     apply: applySnapshot,
-    resolveConflicts: resolveConflicts,
     state: SYNC,
   };
 })();
