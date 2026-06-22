@@ -27,7 +27,7 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-  triggerSave();
+  API.partial({ gold: G.gold, upg: G.upg, baseStats: G.baseStats, stats: G.stats });
 }
 
 function renderUpgrades() {
@@ -38,16 +38,24 @@ function renderUpgrades() {
     <button onclick="setUpgTab('stats')" style="flex:1;padding:7px 0;font-size:11px;font-family:Courier New,monospace;
       border-radius:6px;border:1.5px solid ${_upgTab==='stats'?'#f5c542':'#2a2a5a'};
       background:${_upgTab==='stats'?'rgba(245,197,66,0.1)':'rgba(255,255,255,0.03)'};
-      color:${_upgTab==='stats'?'#f5c542':'#556'};cursor:pointer;">⚔️ Характеристики</button>
+      color:${_upgTab==='stats'?'#f5c542':'#556'};cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="2" y="2" width="2" height="2" fill="currentColor"/><rect x="4" y="4" width="2" height="2" fill="currentColor"/><rect x="6" y="6" width="2" height="2" fill="currentColor"/><rect x="13" y="1" width="2" height="2" fill="currentColor"/><rect x="11" y="3" width="2" height="2" fill="currentColor"/><rect x="9" y="5" width="2" height="2" fill="currentColor"/><rect x="4" y="2" width="8" height="2" fill="currentColor"/><rect x="12" y="2" width="2" height="8" fill="currentColor"/></svg>
+      Характеристики</button>
     <button onclick="setUpgTab('skills')" style="flex:1;padding:7px 0;font-size:11px;font-family:Courier New,monospace;
       border-radius:6px;border:1.5px solid ${_upgTab==='skills'?'#a78bfa':'#2a2a5a'};
       background:${_upgTab==='skills'?'rgba(167,139,250,0.1)':'rgba(255,255,255,0.03)'};
-      color:${_upgTab==='skills'?'#a78bfa':'#556'};cursor:pointer;">📖 Навыки</button>
+      color:${_upgTab==='skills'?'#a78bfa':'#556'};cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="12" height="2" fill="currentColor"/><rect x="2" y="0" width="2" height="16" fill="currentColor"/><rect x="12" y="0" width="2" height="16" fill="currentColor"/><rect x="2" y="14" width="12" height="2" fill="currentColor"/><rect x="4" y="4" width="8" height="2" fill="currentColor" opacity="0.7"/><rect x="4" y="7" width="6" height="2" fill="currentColor" opacity="0.7"/><rect x="4" y="10" width="7" height="2" fill="currentColor" opacity="0.7"/></svg>
+      Навыки</button>
   </div>`;
 
-  const header = `<div style="font-size:11px;color:#778;margin-bottom:10px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;">
-    ⚔️ Боевая мощь: <span style="color:#fa0;font-weight:bold">${cp}</span>
-    &nbsp;|&nbsp; 💰 Золото: <span style="color:#f5c542;font-weight:bold">${G.gold}</span>
+  const coinSvg = `<svg width="13" height="13" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;flex-shrink:0"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>`;
+  const swordSvg = `<svg width="13" height="13" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;flex-shrink:0"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg>`;
+
+  const header = `<div style="font-size:11px;color:#778;margin-bottom:10px;padding:7px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;display:flex;align-items:center;gap:8px;">
+    ${swordSvg} <span>CP: <span style="color:#fa0;font-weight:bold">${cp}</span></span>
+    <span style="color:#2a2a5a;margin:0 2px">|</span>
+    ${coinSvg} <span>Золото: <span style="color:#f5c542;font-weight:bold">${G.gold}</span></span>
   </div>`;
 
   // ── Характеристики ──
@@ -59,8 +67,11 @@ function renderUpgrades() {
       const statVal = u.id === 'atkSpd'
         ? G.stats.atkSpd.toFixed(2) + 'x (' + getAtkCooldown().toFixed(1) + 's)'
         : G.stats[u.stat];
+      const btnContent = lv >= maxLv
+        ? 'MAX'
+        : `<span style="display:flex;align-items:center;gap:3px;justify-content:center;">${coinSvg}<span>${cost}</span></span>`;
       return `<div class="upg-item">
-        <div class="upg-icon">${u.emoji}</div>
+        <div class="upg-icon">${upgIcon(u.svgId)}</div>
         <div class="upg-info">
           <div class="upg-name">${u.name}</div>
           <div class="upg-level">Уровень ${lv}/${maxLv} &nbsp; ${u.stat.toUpperCase()}: ${statVal}</div>
@@ -68,7 +79,7 @@ function renderUpgrades() {
         </div>
         <button class="upg-btn" ${lv >= maxLv ? 'disabled style="opacity:0.4"' : ''}
           onclick="buyUpgrade(UPG_DEFS.find(u=>u.id==='${u.id}'))">
-          ${lv >= maxLv ? 'MAX' : `💰${cost}`}
+          ${btnContent}
         </button>
       </div>`;
     }).join('');
@@ -242,7 +253,7 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
-  triggerSave();
+  API.partial({ floor: G.floor, maxFloor: G.maxFloor });
 }
 
 // ═══════════════════════════════
@@ -259,10 +270,22 @@ function renderRating() {
       `<div class="rating-row" style="${p.isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.06)' : ''}">
         <div class="rating-rank">${medals[i] || (i + 1)}</div>
         <div class="rating-name">${p.name}</div>
-        <div class="rating-cp">⚔️ ${p.cp}</div>
+        <div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ${p.cp}</div>
       </div>`
     ).join('');
 }
+
+// ── SVG иконки для кошелька/статистики ──
+function swordStatSvg(c) { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="7" fill="${c}"/><rect x="2" y="3" width="6" height="2" fill="${c}"/><rect x="4" y="7" width="2" height="1" fill="${c}" opacity="0.7"/><rect x="3" y="8" width="4" height="1" fill="${c}" opacity="0.7"/><rect x="4" y="9" width="2" height="1" fill="${c}" opacity="0.7"/></svg>`; }
+function shieldSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#3498db"/><rect x="0" y="2" width="2" height="4" fill="#3498db"/><rect x="8" y="2" width="2" height="4" fill="#3498db"/><rect x="2" y="0" width="2" height="3" fill="#5dade2"/><rect x="6" y="0" width="2" height="3" fill="#5dade2"/><rect x="2" y="6" width="3" height="2" fill="#3498db"/><rect x="5" y="6" width="3" height="2" fill="#3498db"/><rect x="4" y="8" width="2" height="2" fill="#2980b9"/></svg>`; }
+function heartSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="3" height="2" fill="#e74c3c"/><rect x="6" y="1" width="3" height="2" fill="#e74c3c"/><rect x="0" y="2" width="10" height="4" fill="#e74c3c"/><rect x="1" y="6" width="8" height="2" fill="#e74c3c"/><rect x="2" y="8" width="6" height="1" fill="#c0392b"/><rect x="3" y="9" width="4" height="1" fill="#c0392b"/></svg>`; }
+function windSvg()     { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="0" y="3" width="6" height="2" fill="#2ecc71"/><rect x="2" y="1" width="4" height="2" fill="#27ae60"/><rect x="0" y="5" width="8" height="2" fill="#2ecc71"/><rect x="2" y="7" width="6" height="2" fill="#27ae60"/><rect x="6" y="1" width="2" height="4" fill="#2ecc71"/><rect x="8" y="5" width="2" height="2" fill="#27ae60"/></svg>`; }
+function critSvg()     { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="3" fill="#f5c542"/><rect x="4" y="7" width="2" height="3" fill="#f5c542"/><rect x="0" y="4" width="3" height="2" fill="#f5c542"/><rect x="7" y="4" width="3" height="2" fill="#f5c542"/><rect x="1" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="1" y="7" width="2" height="2" fill="#f5c542"/><rect x="7" y="7" width="2" height="2" fill="#f5c542"/><rect x="3" y="3" width="4" height="4" fill="#fff8d0"/></svg>`; }
+function dodgeSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="3" y="0" width="2" height="3" fill="#9b59b6"/><rect x="7" y="0" width="2" height="3" fill="#9b59b6"/><rect x="0" y="3" width="3" height="2" fill="#9b59b6"/><rect x="7" y="3" width="3" height="2" fill="#9b59b6"/><rect x="0" y="6" width="3" height="2" fill="#9b59b6"/><rect x="7" y="6" width="3" height="2" fill="#9b59b6"/><rect x="3" y="7" width="2" height="3" fill="#9b59b6"/><rect x="7" y="7" width="2" height="3" fill="#9b59b6"/><rect x="4" y="3" width="2" height="2" fill="#c39bd3"/><rect x="3" y="4" width="4" height="2" fill="#c39bd3"/></svg>`; }
+function skullSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="1" width="6" height="6" fill="#aaa"/><rect x="0" y="3" width="2" height="4" fill="#aaa"/><rect x="8" y="3" width="2" height="4" fill="#aaa"/><rect x="2" y="7" width="6" height="2" fill="#aaa"/><rect x="3" y="9" width="2" height="1" fill="#888"/><rect x="6" y="9" width="2" height="1" fill="#888"/><rect x="2" y="3" width="2" height="2" fill="#0d0d1a"/><rect x="6" y="3" width="2" height="2" fill="#0d0d1a"/><rect x="4" y="6" width="2" height="1" fill="#0d0d1a"/></svg>`; }
+function cupSvg()      { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="1" width="6" height="4" fill="#f5c542"/><rect x="0" y="1" width="2" height="3" fill="#f5c542"/><rect x="8" y="1" width="2" height="3" fill="#f5c542"/><rect x="3" y="5" width="4" height="2" fill="#f5c542"/><rect x="4" y="7" width="2" height="1" fill="#c8a000"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/></svg>`; }
+function towerSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="2" width="6" height="8" fill="#7ab8ff"/><rect x="2" y="1" width="2" height="3" fill="#7ab8ff"/><rect x="5" y="0" width="2" height="4" fill="#7ab8ff"/><rect x="8" y="1" width="2" height="3" fill="#7ab8ff"/><rect x="3" y="4" width="2" height="2" fill="#0d0d1a"/><rect x="6" y="4" width="2" height="2" fill="#0d0d1a"/><rect x="4" y="7" width="2" height="3" fill="#0d0d1a"/></svg>`; }
+function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="#ffaa00"/><rect x="3" y="3" width="2" height="2" fill="#ffaa00"/><rect x="5" y="1" width="2" height="2" fill="#ffaa00"/><rect x="7" y="3" width="2" height="2" fill="#ffaa00"/><rect x="3" y="5" width="4" height="2" fill="#ffcc44"/><rect x="2" y="7" width="6" height="2" fill="#ff8800"/></svg>`; }
 
 // ═══════════════════════════════
 //  ВКЛАДКА КОШЕЛЬКА
@@ -272,6 +295,7 @@ function renderWallet() {
   const pixr = G.pixr || 0;
   const gram = (G.gram || 0).toFixed(3);
   const canExchange = pixr >= 1000;
+  const coinSvg = `<svg width="16" height="16" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>`;
   document.getElementById('walletBody').innerHTML = `
     <div class="wallet-card">
       <div class="wallet-label">PIXR</div>
@@ -289,9 +313,10 @@ function renderWallet() {
       </div>
       <div class="wallet-sub">Получается обменом PIXR → GRAM (1000:1)</div>
       <div class="wallet-actions" style="margin-top:10px;">
-        <div class="wallet-btn dep" style="opacity:${canExchange?1:0.4};pointer-events:${canExchange?'auto':'none'};"
+        <div class="wallet-btn dep" style="opacity:${canExchange?1:0.4};pointer-events:${canExchange?'auto':'none'};display:flex;align-items:center;justify-content:center;gap:6px;"
           onclick="exchangePixr()">
-          🔄 Обменять 1000 PIXR → 1 GRAM
+          <svg width="14" height="14" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="0" y="3" width="6" height="2" fill="currentColor"/><rect x="4" y="1" width="2" height="2" fill="currentColor"/><rect x="4" y="5" width="2" height="2" fill="currentColor"/><rect x="4" y="5" width="6" height="2" fill="currentColor"/><rect x="4" y="3" width="2" height="2" fill="currentColor"/><rect x="4" y="7" width="2" height="2" fill="currentColor"/></svg>
+          Обменять 1000 PIXR → 1 GRAM
         </div>
       </div>
       ${!canExchange ? `<div style="font-size:10px;color:#556;margin-top:6px;text-align:center;">Нужно минимум 1000 PIXR (у тебя ${pixr})</div>` : ''}
@@ -299,17 +324,17 @@ function renderWallet() {
     <div class="wallet-card">
       <div class="wallet-label">Статистика</div>
       <div class="stats-grid">
-        <div class="stat-cell"><div class="stat-icon">⚔️</div><div class="stat-label">Боевая мощь</div><div class="stat-val">${cp}</div></div>
-        <div class="stat-cell"><div class="stat-icon">💀</div><div class="stat-label">Убийств</div><div class="stat-val">${G.killCount}</div></div>
-        <div class="stat-cell"><div class="stat-icon">🏆</div><div class="stat-label">Уровень</div><div class="stat-val">${G.level}</div></div>
-        <div class="stat-cell"><div class="stat-icon">🏰</div><div class="stat-label">Этаж</div><div class="stat-val">${G.floor} / ${FLOORS.length}</div></div>
-        <div class="stat-cell"><div class="stat-icon">⚔️</div><div class="stat-label">Атака</div><div class="stat-val">${G.stats.atk}</div></div>
-        <div class="stat-cell"><div class="stat-icon">🛡️</div><div class="stat-label">Защита</div><div class="stat-val">${G.stats.def}</div></div>
-        <div class="stat-cell"><div class="stat-icon">💨</div><div class="stat-label">Скорость</div><div class="stat-val">${G.stats.spd}</div></div>
-        <div class="stat-cell"><div class="stat-icon">⚡</div><div class="stat-label">Крит %</div><div class="stat-val">${G.stats.crit}%</div></div>
-        <div class="stat-cell"><div class="stat-icon">🌀</div><div class="stat-label">Уклон %</div><div class="stat-val">${G.stats.dodge}%</div></div>
-        <div class="stat-cell"><div class="stat-icon">❤️</div><div class="stat-label">Макс. HP</div><div class="stat-val">${G.maxHp}</div></div>
-        <div class="stat-cell"><div class="stat-icon">🗡️</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
+        <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ffaa00')}</div><div class="stat-label">Боевая мощь</div><div class="stat-val">${cp}</div></div>
+        <div class="stat-cell"><div class="stat-icon">${skullSvg()}</div><div class="stat-label">Убийств</div><div class="stat-val">${G.killCount}</div></div>
+        <div class="stat-cell"><div class="stat-icon">${cupSvg()}</div><div class="stat-label">Уровень</div><div class="stat-val">${G.level}</div></div>
+        <div class="stat-cell"><div class="stat-icon">${towerSvg()}</div><div class="stat-label">Этаж</div><div class="stat-val">${G.floor} / ${FLOORS.length}</div></div>
+        <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ff6060')}</div><div class="stat-label">Атака</div><div class="stat-val">${G.stats.atk}</div></div>
+        <div class="stat-cell"><div class="stat-icon">${shieldSvg()}</div><div class="stat-label">Защита</div><div class="stat-val">${G.stats.def}</div></div>
+        <div class="stat-cell"><div class="stat-icon">${windSvg()}</div><div class="stat-label">Скорость</div><div class="stat-val">${G.stats.spd}</div></div>
+        <div class="stat-cell"><div class="stat-icon">${critSvg()}</div><div class="stat-label">Крит %</div><div class="stat-val">${G.stats.crit}%</div></div>
+        <div class="stat-cell"><div class="stat-icon">${dodgeSvg()}</div><div class="stat-label">Уклон %</div><div class="stat-val">${G.stats.dodge}%</div></div>
+        <div class="stat-cell"><div class="stat-icon">${heartSvg()}</div><div class="stat-label">Макс. HP</div><div class="stat-val">${G.maxHp}</div></div>
+        <div class="stat-cell"><div class="stat-icon">${atkSpdSvg()}</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
       </div>
     </div>`;
 }
@@ -320,7 +345,7 @@ function exchangePixr() {
   G.gram = parseFloat(((G.gram || 0) + 1).toFixed(3));
   updateHUD();
   renderWallet();
-  triggerSave();
+  API.partial({ pixr: G.pixr, gram: G.gram });
 }
 
 // ═══════════════════════════════
@@ -378,34 +403,8 @@ function confirmChar() {
   G_CHAR = CHARS[_csSelected];
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
-  startGame();
-  // Сохраняем charId сразу
-  if (typeof triggerSave === 'function') triggerSave();
-}
-
-// Автозапуск с сохранённым персонажем (вызывается из state.js после загрузки)
-function confirmCharById(charId) {
-  if (!CHARS[charId]) return;
-  Object.values(_csSpriteTimers).forEach(clearInterval);
-  if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
-  _csSelected = charId;
-  G_CHAR = CHARS[charId];
-  var ch = G_CHAR;
-  // Применяем спрайты персонажа
-  spriteRun.src  = ch.runSrc;
-  spriteAtk.src  = ch.atkSrc;
-  spriteIdle.src = ch.idleSrc;
-  window.RUN_FRAMES_CUR  = ch.runFrames;  window.RUN_FW_CUR      = ch.runFW;
-  window.ATK_FRAMES_CUR  = ch.atkFrames;  window.ATK_FW_CUR      = ch.atkFW;
-  window.IDLE_FRAMES_CUR = ch.idleFrames; window.IDLE_FW_CUR     = ch.idleFW;
-  // Восстанавливаем сохранённые статы (НЕ дефолтные персонажа)
-  if (G._savedBaseStats) {
-    G.baseStats = Object.assign({}, G._savedBaseStats);
-    Object.assign(G.stats, G._savedBaseStats);
-    G.maxHp = G.baseStats.hp;
-    G.hp    = Math.min(G.hp || G.maxHp, G.maxHp);
-  }
-  document.getElementById('charSelect').classList.add('hidden');
+  // Сохраняем выбор персонажа сразу
+  API.save();
   startGame();
 }
 
@@ -413,13 +412,16 @@ function applyCharacter(ch) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
-  window.RUN_FRAMES_CUR  = ch.runFrames;  window.RUN_FW_CUR      = ch.runFW;
-  window.ATK_FRAMES_CUR  = ch.atkFrames;  window.ATK_FW_CUR      = ch.atkFW;
-  window.IDLE_FRAMES_CUR = ch.idleFrames; window.IDLE_FW_CUR     = ch.idleFW;
+  window.RUN_FRAMES_CUR  = ch.runFrames;
+  window.RUN_FW_CUR      = ch.runFW;
+  window.ATK_FRAMES_CUR  = ch.atkFrames;
+  window.ATK_FW_CUR      = ch.atkFW;
+  window.IDLE_FRAMES_CUR = ch.idleFrames;
+  window.IDLE_FW_CUR     = ch.idleFW;
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;
-  // аватар SVG — не трогаем
+  // аватар теперь SVG, не трогаем
 }
 
 function startGame() {
@@ -482,14 +484,57 @@ function initCsParticles() {
 }
 
 // ── Инициализация экрана выбора при загрузке страницы ──
-window.addEventListener('load', function() {
+window.addEventListener('load', async function() {
+  // Telegram SDK
+  if (window.Telegram && window.Telegram.WebApp) {
+    Telegram.WebApp.ready();
+    Telegram.WebApp.expand();
+  }
+
+  // Инициализируем символы сразу (чтобы анимации шли пока грузимся)
   initCharSelectSprites();
   initCsParticles();
+
+  // ── Авторизация и загрузка сохранения ──
+  var loadStatus = document.getElementById('loadingStatus');
+  if (loadStatus) loadStatus.textContent = 'Авторизация Telegram...';
+
+  var charId = null;
+  try {
+    charId = await API.init();
+  } catch(e) {
+    console.warn('[UI] API.init error:', e);
+  }
+
+  // Скрываем загрузочный экран
+  var loadScreen = document.getElementById('loadingScreen');
+  if (loadScreen) loadScreen.style.display = 'none';
+
+  // Если у игрока уже был выбран персонаж — восстанавливаем его
+  if (charId && CHARS[charId]) {
+    G_CHAR = CHARS[charId];
+    applyCharacter(G_CHAR);
+    // Восстанавливаем HP из сохранения (applyCharacter перезаписывает — восстановим)
+    if (G.hp && G.maxHp) {
+      // hp уже в G от applySave — просто пересчитаем статы из улучшений
+      recalcStats();
+    }
+    // Скрываем экран выбора и стартуем игру
+    document.getElementById('charSelect').classList.add('hidden');
+    startGame();
+  }
+  // Иначе — показываем экран выбора персонажа (уже виден по умолчанию)
 });
 
-// ── resize и Telegram SDK ──
+// ── resize ──
 window.addEventListener('resize', resize);
-if (window.Telegram && window.Telegram.WebApp) {
-  Telegram.WebApp.ready();
-  Telegram.WebApp.expand();
-}
+
+// ── Сохранение при уходе/сворачивании ──
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden' && G_CHAR) {
+    API.save();
+  }
+});
+window.addEventListener('pagehide', function() {
+  if (G_CHAR) API.save();
+});
