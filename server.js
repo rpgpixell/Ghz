@@ -13,18 +13,28 @@ require('dotenv').config();
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── CORS ──
-app.use(cors({
+// ── CORS + explicit OPTIONS preflight ──
+const corsOptions = {
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'x-init-data'],
-}));
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // явный ответ на все preflight
+
 app.use(express.json({ limit: '2mb' }));
 
-// ── MongoDB ──
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => { console.error('MongoDB error:', err); process.exit(1); });
+// ── MongoDB (сервер стартует немедленно) ──
+let dbReady = false;
+if (!process.env.MONGODB_URI) {
+  console.warn('WARNING: MONGODB_URI not set, running without DB');
+} else {
+  mongoose.connect(process.env.MONGODB_URI)
+    .then(() => { console.log('MongoDB connected'); dbReady = true; })
+    .catch(err => console.error('MongoDB connect error:', err.message));
+}
 
 // ── Schema ──
 const SaveSchema = new mongoose.Schema({
@@ -36,16 +46,21 @@ const SaveSchema = new mongoose.Schema({
 });
 const Save = mongoose.model('Save', SaveSchema);
 
+// ─── DB guard middleware ──────────────────────
+function requireDb(req, res, next) {
+  if (!dbReady) return res.status(503).json({ error: 'DB not ready' });
+  next();
+}
+
 // ══════════════════════════════════════════
 //  HMAC-проверка Telegram initData
 // ══════════════════════════════════════════
 function verifyTelegramInitData(initDataRaw) {
   try {
-    const params  = new URLSearchParams(initDataRaw);
-    const hash    = params.get('hash');
+    const params = new URLSearchParams(initDataRaw);
+    const hash   = params.get('hash');
     if (!hash) return null;
 
-    // Собираем строку для проверки
     const entries = [];
     params.forEach((val, key) => {
       if (key !== 'hash') entries.push(`${key}=${val}`);
@@ -53,7 +68,6 @@ function verifyTelegramInitData(initDataRaw) {
     entries.sort();
     const dataCheckString = entries.join('\n');
 
-    // HMAC-SHA256
     const secretKey = crypto
       .createHmac('sha256', 'WebAppData')
       .update(process.env.BOT_TOKEN)
@@ -65,11 +79,9 @@ function verifyTelegramInitData(initDataRaw) {
 
     if (expectedHash !== hash) return null;
 
-    // Парсим user
     const userStr = params.get('user');
     if (!userStr) return null;
-    const user = JSON.parse(userStr);
-    return user;
+    return JSON.parse(userStr);
   } catch (e) {
     return null;
   }
@@ -80,15 +92,15 @@ function authMiddleware(req, res, next) {
   const initDataRaw = req.headers['x-init-data'];
   if (!initDataRaw) return res.status(401).json({ error: 'No init data' });
 
-  // Dev mode: если BOT_TOKEN = 'dev', пропускаем проверку
-  if (process.env.BOT_TOKEN === 'dev') {
+  // Dev mode
+  if (!process.env.BOT_TOKEN || process.env.BOT_TOKEN === 'dev') {
     try {
-      const params = new URLSearchParams(initDataRaw);
+      const params  = new URLSearchParams(initDataRaw);
       const userStr = params.get('user');
       req.tgUser = userStr ? JSON.parse(userStr) : { id: 1, username: 'dev' };
       return next();
     } catch {
-      return res.status(401).json({ error: 'Invalid init data format' });
+      return res.status(401).json({ error: 'Invalid init data' });
     }
   }
 
@@ -100,9 +112,9 @@ function authMiddleware(req, res, next) {
 }
 
 // ══════════════════════════════════════════
-//  POST /auth — проверить и вернуть профиль
+//  POST /auth
 // ══════════════════════════════════════════
-app.post('/auth', authMiddleware, async (req, res) => {
+app.post('/auth', authMiddleware, requireDb, async (req, res) => {
   try {
     const id   = String(req.tgUser.id);
     const name = req.tgUser.username || req.tgUser.first_name || '';
@@ -128,11 +140,11 @@ app.post('/auth', authMiddleware, async (req, res) => {
 });
 
 // ══════════════════════════════════════════
-//  POST /save — сохранить прогресс
+//  POST /save
 // ══════════════════════════════════════════
-app.post('/save', authMiddleware, async (req, res) => {
+app.post('/save', authMiddleware, requireDb, async (req, res) => {
   try {
-    const id       = String(req.tgUser.id);
+    const id                  = String(req.tgUser.id);
     const { charType, saveData } = req.body;
 
     if (!charType || !saveData) {
@@ -153,9 +165,9 @@ app.post('/save', authMiddleware, async (req, res) => {
 });
 
 // ══════════════════════════════════════════
-//  GET /load — загрузить прогресс
+//  GET /load
 // ══════════════════════════════════════════
-app.get('/load', authMiddleware, async (req, res) => {
+app.get('/load', authMiddleware, requireDb, async (req, res) => {
   try {
     const id  = String(req.tgUser.id);
     const doc = await Save.findOne({ telegramId: id });
@@ -176,6 +188,6 @@ app.get('/load', authMiddleware, async (req, res) => {
 });
 
 // ── Health ──
-app.get('/health', (req, res) => res.json({ ok: true }));
+app.get('/health', (req, res) => res.json({ ok: true, db: dbReady }));
 
 app.listen(PORT, () => console.log(`Pixel Runner RPG server on port ${PORT}`));
