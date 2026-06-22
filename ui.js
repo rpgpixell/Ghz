@@ -504,6 +504,22 @@ window.addEventListener('load', async function() {
   try {
     charId = await API.init();
     if (loadStatus) loadStatus.textContent = 'Загрузка данных...';
+    // Устанавливаем фото из Telegram
+    if (API.photoUrl) {
+      var img = document.getElementById('hudAvatarImg');
+      var svg = document.getElementById('hudAvatarSvg');
+      if (img) {
+        img.src = API.photoUrl;
+        img.onload = function() {
+          img.style.display = 'block';
+          if (svg) svg.style.display = 'none';
+        };
+        img.onerror = function() {
+          img.style.display = 'none';
+          if (svg) svg.style.display = '';
+        };
+      }
+    }
   } catch(e) {
     console.warn('[UI] API.init error:', e);
     if (loadStatus) loadStatus.textContent = 'Офлайн режим';

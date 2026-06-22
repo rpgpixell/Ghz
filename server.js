@@ -232,7 +232,7 @@ app.post('/auth', async (req, res) => {
       isNew = true;
     }
 
-    return res.json({ ok: true, userId, isNew, save: docToSave(doc) });
+    return res.json({ ok: true, userId, isNew, save: docToSave(doc), photoUrl: user.photo_url || '', firstName: user.first_name || '' });
   } catch (e) {
     console.error('[/auth]', e.message);
     return res.status(401).json({ error: e.message });
@@ -334,7 +334,6 @@ function docToSave(doc) {
     inventory: doc.inventory || [],
     equipped:  doc.equipped,
     skills:    doc.skills || {},
-    _ts:       doc.updatedAt ? new Date(doc.updatedAt).getTime() : 0,
   };
 }
 
