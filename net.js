@@ -9,7 +9,7 @@
    • HP / баланс / весь снапшот:
        – localStorage каждые 5 сек,
        – сервер каждые 30 сек,
-       – + при закрытии/сворачивании (sendBeacon — Telegram).
+       – + при закрытии/сворачивании (visibilitychange + TG close event).
    • Структурные действия (покупка, экипировка, заточка,
      навыки, BP, premium, этаж, выбор персонажа) —
      сохраняются сразу (debounce 1.2с).
@@ -203,22 +203,20 @@
     SYNC.dirtyTimer = setTimeout(pushServer, 1200);
   }
 
-  // Флаш при закрытии/сворачивании (надёжно через sendBeacon)
+  // Флаш при закрытии/сворачивании.
+  // sendBeacon не работает в Telegram WebView — используем обычный fetch.
+  // localStorage — главная страховка (синхронно, не теряется никогда).
   function flush() {
     if (!SYNC.started) return;
     var snap = serializeState();
-    writeLocal(snap);
+    writeLocal(snap);           // всегда в localStorage синхронно
     if (!SYNC.online) return;
     try {
-      var body = JSON.stringify({ initData: TG_INIT, data: snap });
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(API + '/api/save', new Blob([body], { type: 'application/json' }));
-      } else {
-        fetch(API + '/api/save', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: body, keepalive: true,
-        });
-      }
+      fetch(API + '/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData: TG_INIT, data: snap }),
+      });
     } catch (e) {}
   }
 
@@ -259,15 +257,26 @@
   //  ЦИКЛЫ СИНХРОНИЗАЦИИ
   // ───────────────────────────────
   function startSyncLoops() {
-    setInterval(saveLocal, 5000);            // локальный кеш
-    setInterval(function () { pushServer(); }, 30000); // сервер раз в 30 сек
+    setInterval(saveLocal, 5000);            // localStorage каждые 5 сек
+    setInterval(pushServer, 30000);          // сервер каждые 30 сек
 
-    document.addEventListener('visibilitychange', function () { if (document.hidden) flush(); });
-    window.addEventListener('pagehide', flush);
-    window.addEventListener('beforeunload', flush);
+    // visibilitychange — срабатывает при сворачивании в Telegram
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) flush();
+    });
+
+    // Telegram WebApp события — надёжнее beforeunload
     if (window.Telegram && window.Telegram.WebApp) {
+      // close: юзер закрыл мини-апп кнопкой X
+      try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
+      // viewportChanged: изменился размер вьюпорта (сворачивание/разворачивание)
       try { window.Telegram.WebApp.onEvent('viewportChanged', saveLocal); } catch (e) {}
     }
+
+    // pagehide — иногда работает в некоторых WebView
+    window.addEventListener('pagehide', flush);
+    // beforeunload — НЕ работает в Telegram WebView, но оставим для браузера
+    window.addEventListener('beforeunload', flush);
   }
 
   // ───────────────────────────────
