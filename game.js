@@ -364,11 +364,7 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
-    // Сохраняем при левел-апе
-    API.partial({ level: G.level, xp: G.xp, xpNeeded: G.xpNeeded, baseStats: G.baseStats, stats: G.stats, hp: G.hp, maxHp: G.maxHp });
   }
-  // Отмечаем изменение XP/gold для автосохранения
-  API.markDirty();
 }
 
 // ── Проверка открытия следующего этажа ──
@@ -398,8 +394,6 @@ function gameOverSequence() {
       : 'Вы погибли в бою';
   }
   if (modal) modal.classList.remove('hidden');
-  // Сохраняем при смерти (штраф должен записаться)
-  API.save();
 }
 
 function revivePlayer() {
@@ -460,7 +454,7 @@ function loop(ts) {
   const dt = Math.min((ts - lastTime) / 1000, 0.1);
   lastTime = ts;
   update(dt);
-  render();
+  if (activeTab === 'game') render();
   requestAnimationFrame(loop);
 }
 
@@ -599,7 +593,6 @@ function buyBattlePass() {
   G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
   G.bp.active = true;
   renderBattlePass();
-  API.partial({ gram: G.gram, bp: G.bp });
 }
 function claimBpReward(idx) {
   if (!G.bp || !G.bp.active) return;
@@ -610,7 +603,6 @@ function claimBpReward(idx) {
   r.apply();
   G.bp.claimed.push(idx);
   renderBattlePass();
-  API.save();
 }
 function renderBattlePass() {
   if (!G.bp) G.bp = { active: false, claimed: [] };
@@ -710,6 +702,5 @@ function buyPrem(tier) {
   G.prem = { tier: tier, expiresAt: base + t.days * 86400000 };
   updatePremStatus();
   closePremModal();
-  showDmgPop('PREM: ' + t.name + '!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
-  API.partial({ gram: G.gram, prem: G.prem });
+  showDmgPop('👑 ' + t.name + ' активен!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
 }
