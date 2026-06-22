@@ -34,6 +34,10 @@
     pushing: false,
     dirtyTimer: null,
     lastServerTs: 0,
+    // Сервер подтвердил что сейв существует (или пользователь выбрал персонажа).
+    // Без этого флага запросы на сохранение НЕ отправляются —
+    // защита от перезаписи удалённого пользователя локальными данными.
+    serverConfirmed: false,
   };
 
   // ───────────────────────────────
@@ -229,7 +233,7 @@
   }
 
   function pushServer() {
-    if (!SYNC.online || !SYNC.started || SYNC.pushing) { saveLocal(); return; }
+    if (!SYNC.online || !SYNC.started || !SYNC.serverConfirmed || SYNC.pushing) { saveLocal(); return; }
     var snap = serializeState();
     writeLocal(snap);
     SYNC.pushing = true;
@@ -325,6 +329,34 @@
   }
 
   // ───────────────────────────────
+  //  СБРОС К ЭКРАНУ ВЫБОРА ПЕРСОНАЖА
+  //  Вызывается когда сервер говорит "этого пользователя нет"
+  // ───────────────────────────────
+  function resetToCharSelect() {
+    // Стоп игры
+    if (typeof gameActive !== 'undefined') window.gameActive = false;
+    try { if (typeof G !== 'undefined') {
+      G.charId = null;
+      G.gold = 0; G.pixr = 0; G.gram = 0;
+      G.level = 1; G.xp = 0; G.floor = 1; G.maxFloor = 1; G.killCount = 0;
+      G.inventory = []; G.equipped = {};
+      G.upg = { atk:0, def:0, hp:0, spd:0, crit:0, dodge:0, atkSpd:0 };
+      G.bp = { active: false, claimed: [] };
+      G.prem = { tier: null, expiresAt: 0 };
+      G.skills = {};
+    }} catch(e) {}
+    if (typeof _invIdCounter !== 'undefined') window._invIdCounter = 0;
+    // Показываем экран выбора персонажа
+    var cs = document.getElementById('charSelect');
+    if (cs) cs.classList.remove('hidden');
+    // Скрываем игровые элементы
+    var canvas = document.getElementById('gameCanvas');
+    if (canvas) canvas.style.display = 'none';
+    var skillsHud = document.getElementById('skillsHud');
+    if (skillsHud) skillsHud.classList.remove('visible');
+  }
+
+  // ───────────────────────────────
   //  BOOT
   // ───────────────────────────────
   function initTelegram() {
@@ -362,9 +394,16 @@
     // 2) Сверка с сервером
     serverLoad().then(function (r) {
       clearTimeout(lsTimeout);
-      var server = r && r.save;
+
+      // Сервер ответил с ошибкой авторизации — не трогаем локальные данные
+      if (!r || !r.ok) return;
+
+      var server = r.save;
+
       if (server && server.data && server.data.charId &&
           typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
+        // Сервер подтвердил сейв — разрешаем запись на сервер
+        SYNC.serverConfirmed = true;
         lsSetStatus('Применение данных', 85);
         var sTs = server.updatedAt || 0;
         var lTs = (local && local.updatedAt) || 0;
@@ -373,13 +412,27 @@
         } else if (sTs > lTs + 3000) {
           hotApply(server.data);
         }
+      } else if (!server) {
+        // ── СЕРВЕР — ИСТОЧНИК ИСТИНЫ ──
+        // Сервер вернул ok:true, save:null → пользователь удалён или новый.
+        // Если у нас был локальный старт — сбрасываем, сервер главнее.
+        if (SYNC.started) {
+          writeLocal(null);
+          localStorage.removeItem(LS_KEY);
+          SYNC.started = false;
+          SYNC.serverConfirmed = false;
+          resetToCharSelect();
+        }
+        // Для нового пользователя (не было local) — просто ждём выбора персонажа
       }
     }).catch(function () {
+      // Сеть недоступна — продолжаем с локальными данными, но на сервер не пишем
       clearTimeout(lsTimeout);
     }).then(function () {
       SYNC.booted = true;
       startSyncLoops();
-      if (SYNC.online && SYNC.started) pushServer();
+      // Пушим только если сервер подтвердил существование сейва
+      if (SYNC.online && SYNC.started && SYNC.serverConfirmed) pushServer();
       lsHide();
     });
   }
@@ -395,6 +448,7 @@
       if (typeof G_CHAR === 'undefined' || !G_CHAR) return r; // не выбрали — выходим
       G.charId = G_CHAR.id;
       SYNC.started = true;
+      SYNC.serverConfirmed = true; // пользователь сам выбрал персонажа — разрешаем запись
       stopCharSelectAnims();
       saveLocal();
       if (SYNC.online) {
