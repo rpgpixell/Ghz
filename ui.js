@@ -381,6 +381,25 @@ function confirmChar() {
   startGame();
 }
 
+// Автозапуск с сохранённым персонажем (после загрузки с сервера)
+function confirmCharById(charId) {
+  if (!CHARS[charId]) return;
+  Object.values(_csSpriteTimers).forEach(clearInterval);
+  if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
+  _csSelected = charId;
+  G_CHAR = CHARS[charId];
+  applyCharacter(G_CHAR);
+  // Восстанавливаем статы из сохранения (applyCharacter перезаписывает baseStats)
+  if (G._savedBaseStats) {
+    G.baseStats = Object.assign({}, G._savedBaseStats);
+    Object.assign(G.stats, G._savedBaseStats);
+    G.hp   = Math.min(G.hp,   G.maxHp);
+    G.maxHp = G.baseStats.hp + (G.upg.hp || 0) * 15;
+  }
+  document.getElementById('charSelect').classList.add('hidden');
+  startGame();
+}
+
 function applyCharacter(ch) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;

@@ -79,7 +79,8 @@ function tgInit() {
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'hidden') _saveNow();
   });
-  setInterval(_saveSoon, 30000);
+  // FIX: _saveSoon → triggerSave (функция была не определена)
+  setInterval(triggerSave, 30000);
 }
 
 // ── Авторизация и загрузка сохранения ──
@@ -91,7 +92,26 @@ async function _authAndLoad() {
       headers: { 'Content-Type': 'application/json', 'Authorization': 'TMA ' + _tgInitData }
     });
     var data = await res.json();
-    if (data.ok && !data.isNew) _applyServerSave(data.save);
+    if (data.ok && !data.isNew && data.save) {
+      _applyServerSave(data.save);
+      // Если был сохранён персонаж — автозапускаем игру, минуя экран выбора
+      if (data.save.charId && window.CHARS && window.CHARS[data.save.charId]) {
+        _showLoadingScreen(false);
+        // Ждём пока ui.js загрузится (он после state.js)
+        var attempts = 0;
+        var tryStart = setInterval(function() {
+          attempts++;
+          if (typeof confirmCharById === 'function') {
+            clearInterval(tryStart);
+            confirmCharById(data.save.charId);
+          } else if (attempts > 50) {
+            clearInterval(tryStart);
+            _showLoadingScreen(false);
+          }
+        }, 100);
+        return;
+      }
+    }
   } catch(e) { console.error('Auth failed:', e); }
   finally    { _showLoadingScreen(false); }
 }
@@ -99,10 +119,15 @@ async function _authAndLoad() {
 // ── Применить сохранение с сервера → G ──
 function _applyServerSave(save) {
   var fields = ['gold','pixr','gram','level','xp','xpNeeded','floor','maxFloor',
-                'hp','maxHp','killCount','upg','potionLv','potions','baseStats',
+                'hp','maxHp','killCount','upg','potionLv','potions',
                 'inventory','equipped','skills','bp','prem'];
   fields.forEach(function(f) { if (save[f] != null) G[f] = save[f]; });
-  if (save.baseStats) { G.baseStats = Object.assign({}, save.baseStats); Object.assign(G.stats, save.baseStats); }
+  if (save.baseStats) {
+    G.baseStats = Object.assign({}, save.baseStats);
+    Object.assign(G.stats, save.baseStats);
+    // Запоминаем отдельно — confirmCharById восстановит после applyCharacter
+    G._savedBaseStats = Object.assign({}, save.baseStats);
+  }
   if (save.charId) G._savedCharId = save.charId;
 }
 
