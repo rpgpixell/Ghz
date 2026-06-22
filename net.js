@@ -1,9 +1,9 @@
 /*
   ══════════════════════════════════════════════════════
-  net.js — Сетевой слой: Telegram-авторизация, сохранение
-  прогресса на сервер (MongoDB), локальный кеш.
-
-  🔥 FIXED: теперь корректно разделяет данные разных пользователей
+  net.js — Сетевой слой: Telegram-авторизация, 
+  сохранение прогресса на сервер (Redis + MongoDB)
+  
+  🔥 БЕЗ LOCALSTORAGE — все данные на сервере
   ══════════════════════════════════════════════════════
 */
 (function () {
@@ -17,8 +17,6 @@
     return url.replace(/\/$/, '');
   })();
 
-  var LS_KEY = 'prrpg_save_v1';
-  var LS_USER_KEY = 'prrpg_user_v1'; // отдельный ключ для ID пользователя
   var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
 
   var TG_INIT = '';
@@ -30,14 +28,14 @@
     dirtyTimer: null,
     lastServerTs: 0,
     serverConfirmed: false,
-    currentTgId: null, // ← добавляем хранение текущего пользователя
+    currentTgId: null,
   };
 
   // ─── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ───
   function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
   function clone(o)  { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
 
-  // ─── ПОЛУЧЕНИЕ TG ID ───
+  // ─── ПОЛУЧЕНИЕ TG ID (ТОЛЬКО ИЗ TELEGRAM) ───
   function getTgId() {
     try {
       if (window.Telegram && window.Telegram.WebApp) {
@@ -47,13 +45,6 @@
         }
       }
     } catch (e) {}
-    
-    // Fallback: из localStorage
-    try {
-      var saved = localStorage.getItem(LS_USER_KEY);
-      if (saved) return saved;
-    } catch (e) {}
-    
     return null;
   }
 
@@ -113,7 +104,7 @@
 
     var snap = {
       v: 1,
-      tgId: getTgId(), // ← КРИТИЧНО: сохраняем ID пользователя
+      tgId: getTgId(),
       charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
 
       gold: G.gold, pixr: G.pixr, gram: G.gram,
@@ -209,43 +200,7 @@
     return true;
   }
 
-  // ─── ЛОКАЛЬНЫЙ КЕШ ───
-  function writeLocal(snap) {
-    try { 
-      localStorage.setItem(LS_KEY, JSON.stringify(snap));
-      // Сохраняем ID пользователя отдельно для быстрой проверки
-      if (snap && snap.tgId) {
-        localStorage.setItem(LS_USER_KEY, snap.tgId);
-      }
-    } catch (e) {}
-  }
-  
-  function readLocal() {
-    try { 
-      var s = localStorage.getItem(LS_KEY); 
-      if (!s) return null;
-      var parsed = JSON.parse(s);
-      // Проверка: принадлежит ли кеш текущему пользователю
-      var currentTgId = getTgId();
-      if (currentTgId && parsed.tgId && parsed.tgId !== currentTgId) {
-        console.warn('🧹 Кеш принадлежит другому пользователю, очищаем');
-        localStorage.removeItem(LS_KEY);
-        return null;
-      }
-      return parsed;
-    } catch (e) { 
-      return null; 
-    }
-  }
-  
-  function saveLocal() { 
-    if (SYNC.started) {
-      var snap = serializeState();
-      writeLocal(snap);
-    }
-  }
-
-  // ─── СЕРВЕР ───
+  // ─── СЕРВЕРНЫЕ ЗАПРОСЫ ───
   var START_PARAM = '';
 
   function serverLoad() {
@@ -254,7 +209,7 @@
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 5000) : null;
     
     var tgId = getTgId();
-    console.log('🔵 [serverLoad] Пользователь:', tgId);
+    console.log('🟢 [serverLoad] Пользователь:', tgId);
     
     return fetch(API + '/api/load', {
       method: 'POST',
@@ -279,16 +234,20 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, data: snap }),
-    }).then(function (r) { return r.json(); });
+    }).then(function (r) { 
+      if (r.status === 403) {
+        console.error('🚫 Сервер отклонил сохранение (user_mismatch)');
+        return { ok: false, error: 'user_mismatch' };
+      }
+      return r.json(); 
+    });
   }
 
   function pushServer() {
     if (!SYNC.online || !SYNC.started || !SYNC.serverConfirmed || SYNC.pushing) { 
-      saveLocal(); 
       return; 
     }
     var snap = serializeState();
-    writeLocal(snap);
     SYNC.pushing = true;
     serverSave(snap)
       .then(function (r) { 
@@ -300,7 +259,6 @@
 
   function touch() {
     if (!SYNC.started) return;
-    saveLocal();
     if (!SYNC.online) return;
     clearTimeout(SYNC.dirtyTimer);
     SYNC.dirtyTimer = setTimeout(pushServer, 1200);
@@ -309,13 +267,13 @@
   function flush() {
     if (!SYNC.started) return;
     var snap = serializeState();
-    writeLocal(snap);
     if (!SYNC.online || !SYNC.serverConfirmed) return;
     try {
       fetch(API + '/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData: TG_INIT, data: snap }),
+        keepalive: true,
       });
     } catch (e) {}
   }
@@ -351,8 +309,7 @@
 
   // ─── ЦИКЛЫ СИНХРОНИЗАЦИИ ───
   function startSyncLoops() {
-    setInterval(saveLocal, 2000);
-    setInterval(pushServer, 15000);
+    setInterval(pushServer, 5000);
 
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) flush();
@@ -360,7 +317,6 @@
 
     if (window.Telegram && window.Telegram.WebApp) {
       try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
-      try { window.Telegram.WebApp.onEvent('viewportChanged', saveLocal); } catch (e) {}
     }
 
     window.addEventListener('pagehide', flush);
@@ -410,11 +366,9 @@
     }
     SYNC.online = !!TG_INIT;
     
-    // Сохраняем ID пользователя
     var tgId = getTgId();
     if (tgId) {
       SYNC.currentTgId = tgId;
-      localStorage.setItem(LS_USER_KEY, tgId);
     }
     console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
   }
@@ -423,14 +377,6 @@
     lsInitStars();
     lsSetStatus('Подключение', 10);
     initTelegram();
-
-    var local = readLocal();
-
-    // Мгновенный старт из локального кеша
-    if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-      lsSetStatus('Загрузка данных', 40);
-      bootFromSnapshot(local);
-    }
 
     var lsTimeout = setTimeout(function () { lsHide(); }, 6000);
     lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
@@ -457,18 +403,15 @@
           typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
         SYNC.serverConfirmed = true;
         lsSetStatus('Применение данных', 85);
-        var sTs = server.updatedAt || 0;
-        var lTs = (local && local.updatedAt) || 0;
         
         if (!SYNC.started) {
           bootFromSnapshot(server.data);
-        } else if (sTs > lTs + 3000) {
+        } else {
           hotApply(server.data);
         }
       } else if (!server || !server.data) {
         // Сервер говорит "пользователь новый или удалён"
         if (SYNC.started) {
-          localStorage.removeItem(LS_KEY);
           SYNC.started = false;
           SYNC.serverConfirmed = false;
           resetToCharSelect();
@@ -498,7 +441,6 @@
       stopCharSelectAnims();
       
       var snap = serializeState();
-      writeLocal(snap);
       
       if (SYNC.online) {
         try {
@@ -515,11 +457,11 @@
   }
 
   var _hudSaveTimer = null;
-  function saveLocalDebounced() {
+  function saveToServerDebounced() {
     if (_hudSaveTimer) return;
     _hudSaveTimer = setTimeout(function () { 
       _hudSaveTimer = null; 
-      saveLocal(); 
+      pushServer(); 
     }, 500);
   }
 
@@ -543,7 +485,7 @@
     if (typeof origHUD === 'function') {
       window.updateHUD = function () {
         var r = origHUD.apply(this, arguments);
-        if (SYNC.started) saveLocalDebounced();
+        if (SYNC.started) saveToServerDebounced();
         return r;
       };
     }

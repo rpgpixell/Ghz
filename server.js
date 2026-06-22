@@ -1,9 +1,9 @@
 /*
   ══════════════════════════════════════════════════════
   server.js — Backend для Pixel Runner RPG
-  Express + MongoDB (Mongoose) + Telegram WebApp auth
+  Express + MongoDB (Mongoose) + Redis + Telegram WebApp auth
 
-  🔥 FIXED: теперь данные привязаны к tgId из initData
+  🔥 БЕЗ LOCALSTORAGE — Redis (кэш) + MongoDB (хранилище)
   ══════════════════════════════════════════════════════
 */
 
@@ -11,12 +11,19 @@ require('dotenv').config();
 const express  = require('express');
 const mongoose = require('mongoose');
 const crypto   = require('crypto');
+const Redis    = require('ioredis');
 
 const app = express();
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
 if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не задан — реферальные ссылки сломаны!');
 const REF_GOLD_PER_MILESTONE = 500;
 const REF_MILESTONE_STEP     = 5;
+
+// ── Redis ──
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+
+redis.on('connect', () => console.log('✅ Redis подключён'));
+redis.on('error', (err) => console.error('❌ Redis error:', err));
 
 // ── Rate limiter ──
 const _rl = new Map();
@@ -149,6 +156,32 @@ app.post('/api/load', async (req, res) => {
   console.log(`🟢 [load] tgId: ${tg.id}, startParam: ${startParam || 'none'}`);
   
   try {
+    // 🔥 Сначала читаем из Redis
+    const key = `player:${tg.id}`;
+    let data = await redis.get(key);
+    
+    if (data) {
+      data = JSON.parse(data);
+      console.log(`📦 [load] Из Redis для ${tg.id}`);
+      
+      // Обновляем метаданные
+      await redis.hset(`player:meta:${tg.id}`, {
+        lastSeen: Date.now()
+      });
+      
+      return res.json({
+        ok: true,
+        save: {
+          charId: data.charId || null,
+          data: data,
+          updatedAt: data.updatedAt || 0,
+        },
+        user: { id: tg.id, username: tg.username, firstName: tg.firstName },
+      });
+    }
+    
+    // Если в Redis нет — читаем из MongoDB
+    console.log(`💿 [load] Из MongoDB для ${tg.id}`);
     let doc = await Save.findOne({ tgId: tg.id });
 
     if (!doc) {
@@ -162,26 +195,41 @@ app.post('/api/load', async (req, res) => {
         data: null,
       });
       console.log(`🆕 [load] Новый пользователь: ${tg.id}, refBy: ${refBy || 'none'}`);
-    } else if (!doc.refBy && startParam && startParam !== tg.id) {
+      
+      return res.json({
+        ok: true,
+        save: {
+          charId: null,
+          data: null,
+          updatedAt: 0,
+        },
+        user: { id: tg.id, username: tg.username, firstName: tg.firstName },
+      });
+    }
+    
+    if (!doc.refBy && startParam && startParam !== tg.id) {
       await Save.updateOne({ tgId: tg.id }, { $set: { refBy: startParam } });
       doc.refBy = startParam;
       console.log(`🔗 [load] Добавлен реферер для ${tg.id}: ${startParam}`);
     }
 
-    // ⚠️ ВАЖНО: проверяем, что данные в БД принадлежат этому пользователю
-    // Если в data есть tgId и он не совпадает — это ошибка
+    // Проверка соответствия tgId
     if (doc.data && doc.data.tgId && doc.data.tgId !== tg.id) {
       console.error(`❌ [load] Несоответствие tgId! БД: ${doc.data.tgId}, запрос: ${tg.id}`);
-      // Исправляем: перезаписываем data с правильным tgId
       doc.data.tgId = tg.id;
       await doc.save();
+    }
+
+    // Кешируем в Redis
+    if (doc.data) {
+      await redis.set(key, JSON.stringify(doc.data), 'EX', 7200);
     }
 
     res.json({
       ok: true,
       save: {
-        charId:    doc.charId,
-        data:      doc.data,
+        charId: doc.charId,
+        data: doc.data,
         updatedAt: doc.updatedAt || 0,
       },
       user: { id: tg.id, username: tg.username, firstName: tg.firstName },
@@ -197,7 +245,7 @@ app.post('/api/save', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
   
-  if (rateLimit(tg.id, 8, 15000)) {
+  if (rateLimit(tg.id, 10, 10000)) {
     return res.status(429).json({ ok: false, error: 'rate_limit' });
   }
   
@@ -206,7 +254,7 @@ app.post('/api/save', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'bad_data' });
   }
 
-  // ⚠️ КРИТИЧНО: проверяем, что data.tgId совпадает с tg.id из авторизации
+  // Проверка владельца
   if (data.tgId && data.tgId !== tg.id) {
     console.error(`❌ [save] Попытка сохранить чужие данные! tgId из запроса: ${tg.id}, tgId в data: ${data.tgId}`);
     return res.status(403).json({ ok: false, error: 'user_mismatch' });
@@ -214,29 +262,54 @@ app.post('/api/save', async (req, res) => {
 
   // Принудительно устанавливаем правильный tgId
   data.tgId = tg.id;
+  data.updatedAt = Date.now();
   
-  const clientTs = Number(data.updatedAt) || Date.now();
   console.log(`💾 [save] tgId: ${tg.id}, level: ${data.level || 1}, cp: ${data.cp || 0}`);
   
   try {
-    await Save.updateOne(
-      { tgId: tg.id },
-      { $set: {
-        username: tg.username, 
-        firstName: tg.firstName,
-        charId: data.charId || null, 
-        data,
-        level: Number(data.level) || 1,
-        cp:    Number(data.cp)    || 0,
-        floor: Number(data.floor) || 1,
-        updatedAt: clientTs,
-      }},
-      { upsert: true }
-    );
-    res.json({ ok: true, updatedAt: clientTs });
+    // 🔥 Пишем в Redis (мгновенно)
+    const key = `player:${tg.id}`;
+    await redis.set(key, JSON.stringify(data), 'EX', 7200);
+    
+    // Обновляем метаданные для лидерборда
+    await redis.hset(`player:meta:${tg.id}`, {
+      level: data.level || 1,
+      cp: data.cp || 0,
+      floor: data.floor || 1,
+      username: tg.username || '',
+      firstName: tg.firstName || '',
+      charId: data.charId || null,
+      updatedAt: data.updatedAt
+    });
+    await redis.expire(`player:meta:${tg.id}`, 7200);
+    
+    res.json({ ok: true, updatedAt: data.updatedAt });
   } catch (e) {
-    console.error('❌ [save] error:', e.message);
-    res.status(500).json({ ok: false, error: 'server_error' });
+    console.error('❌ [save] Redis error:', e.message);
+    
+    // Fallback: если Redis упал, пишем напрямую в MongoDB
+    try {
+      await Save.updateOne(
+        { tgId: tg.id },
+        { 
+          $set: {
+            username: tg.username, 
+            firstName: tg.firstName,
+            charId: data.charId || null, 
+            data,
+            level: Number(data.level) || 1,
+            cp:    Number(data.cp)    || 0,
+            floor: Number(data.floor) || 1,
+            updatedAt: data.updatedAt,
+          }
+        },
+        { upsert: true }
+      );
+      res.json({ ok: true, updatedAt: data.updatedAt });
+    } catch (e2) {
+      console.error('❌ [save] MongoDB fallback error:', e2.message);
+      res.status(500).json({ ok: false, error: 'server_error' });
+    }
   }
 });
 
@@ -253,10 +326,8 @@ app.post('/api/character', async (req, res) => {
   console.log(`🎭 [character] tgId: ${tg.id}, charId: ${charId}`);
   
   try {
-    // Сначала проверяем, существует ли документ
     let doc = await Save.findOne({ tgId: tg.id });
     if (!doc) {
-      // Создаём новый документ с правильным tgId
       doc = await Save.create({
         tgId: tg.id,
         username: tg.username,
@@ -265,13 +336,22 @@ app.post('/api/character', async (req, res) => {
         data: { tgId: tg.id, charId: charId },
       });
     } else {
-      // Обновляем существующий
       doc.charId = charId;
       if (!doc.data) doc.data = {};
       doc.data.charId = charId;
       doc.data.tgId = tg.id;
       await doc.save();
     }
+    
+    // Обновляем в Redis
+    const key = `player:${tg.id}`;
+    let redisData = await redis.get(key);
+    if (redisData) {
+      const parsed = JSON.parse(redisData);
+      parsed.charId = charId;
+      await redis.set(key, JSON.stringify(parsed), 'EX', 7200);
+    }
+    
     res.json({ ok: true });
   } catch (e) { 
     console.error('❌ [character] error:', e.message);
@@ -286,6 +366,28 @@ app.get('/api/leaderboard', async (req, res) => {
     return res.status(429).json({ ok: false, error: 'rate_limit' });
   }
   try {
+    // Сначала пробуем из Redis
+    const metaKeys = await redis.keys('player:meta:*');
+    if (metaKeys.length > 0) {
+      const top = [];
+      for (const key of metaKeys) {
+        const meta = await redis.hgetall(key);
+        if (meta && meta.charId) {
+          top.push({
+            username: meta.firstName || meta.username || 'Игрок',
+            firstName: meta.firstName || '',
+            level: parseInt(meta.level) || 1,
+            cp: parseInt(meta.cp) || 0,
+            floor: parseInt(meta.floor) || 1,
+            charId: meta.charId || null,
+          });
+        }
+      }
+      top.sort((a, b) => b.cp - a.cp || b.level - a.level);
+      return res.json({ ok: true, top: top.slice(0, 50) });
+    }
+    
+    // Если Redis пуст — из MongoDB
     const top = await Save.find({ charId: { $ne: null } })
       .sort({ cp: -1, level: -1 }).limit(50)
       .select('username firstName level cp floor charId -_id').lean();
@@ -296,10 +398,7 @@ app.get('/api/leaderboard', async (req, res) => {
   }
 });
 
-// ═══════════════════════════════
-//  РЕФЕРАЛЬНАЯ СИСТЕМА
-// ═══════════════════════════════
-
+// ── Реферальная система ──
 app.post('/api/ref/friends', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
@@ -358,7 +457,6 @@ app.post('/api/ref/claim', async (req, res) => {
     const { gold, newMilestones } = calcPendingGold(doc.refMilestones || {}, friends);
     if (gold === 0) return res.json({ ok: true, goldEarned: 0 });
 
-    // Убеждаемся, что data существует и имеет правильный tgId
     if (!doc.data) doc.data = { tgId: tg.id };
     if (doc.data.tgId !== tg.id) doc.data.tgId = tg.id;
     
@@ -382,6 +480,16 @@ app.post('/api/ref/claim', async (req, res) => {
     
     if (!result) return res.json({ ok: true, goldEarned: 0, error: 'concurrent' });
 
+    // Обновляем Redis
+    const key = `player:${tg.id}`;
+    let redisData = await redis.get(key);
+    if (redisData) {
+      const parsed = JSON.parse(redisData);
+      parsed.gold = doc.data.gold;
+      parsed.updatedAt = Date.now();
+      await redis.set(key, JSON.stringify(parsed), 'EX', 7200);
+    }
+
     console.log(`✅ [ref/claim] tgId: ${tg.id}, goldEarned: ${gold}`);
     res.json({ ok: true, goldEarned: gold });
   } catch (e) {
@@ -392,6 +500,62 @@ app.post('/api/ref/claim', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════
+//  Фоновый воркер: Redis → MongoDB (каждые 30 секунд)
+// ═══════════════════════════════
+async function syncRedisToMongo() {
+  try {
+    const keys = await redis.keys('player:*');
+    if (keys.length === 0) return;
+    
+    console.log(`🔄 Синхронизация ${keys.length} игроков...`);
+    let count = 0;
+    
+    for (const key of keys) {
+      const tgId = key.replace('player:', '');
+      const data = await redis.get(key);
+      if (!data) continue;
+      
+      const parsed = JSON.parse(data);
+      
+      await Save.updateOne(
+        { tgId: tgId },
+        { 
+          $set: {
+            username: parsed.username || '',
+            firstName: parsed.firstName || '',
+            charId: parsed.charId || null,
+            data: parsed,
+            level: parsed.level || 1,
+            cp: parsed.cp || 0,
+            floor: parsed.floor || 1,
+            updatedAt: parsed.updatedAt || Date.now()
+          }
+        },
+        { upsert: true }
+      );
+      count++;
+    }
+    
+    console.log(`✅ Синхронизация завершена (${count} записей)`);
+  } catch (e) {
+    console.error('❌ [sync] error:', e.message);
+  }
+}
+
+// Запускаем воркер каждые 30 секунд
+setInterval(syncRedisToMongo, 30000);
+
+// При завершении процесса — сохраняем всё
+process.on('SIGTERM', async () => {
+  console.log('🔄 Сохраняем Redis → MongoDB перед выходом...');
+  await syncRedisToMongo();
+  process.exit(0);
+});
+
+// ═══════════════════════════════
+//  Запуск сервера
+// ═══════════════════════════════
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('🚀 Server on :' + PORT);
