@@ -142,7 +142,7 @@ const Save = mongoose.model('Save', saveSchema);
  * Верифицирует Telegram initData через HMAC-SHA256.
  * Возвращает объект user или бросает ошибку.
  */
-function verifyTelegramAuth(initData) {
+function verifyTelegramAuth(initData, maxAge) {
   const botToken = process.env.BOT_TOKEN;
   if (!botToken) throw new Error('BOT_TOKEN not set');
 
@@ -166,10 +166,11 @@ function verifyTelegramAuth(initData) {
 
   if (computedHash !== hash) throw new Error('Hash mismatch — invalid initData');
 
-  // Проверяем давность (не старше 1 часа)
+  // Проверяем давность (по умолчанию 1 час, для beacon 24 часа)
   const authDate = parseInt(params.get('auth_date') || '0', 10);
   const now      = Math.floor(Date.now() / 1000);
-  if (now - authDate > 3600) throw new Error('initData expired');
+  const limit    = maxAge || 3600;
+  if (now - authDate > limit) throw new Error('initData expired');
 
   const userJson = params.get('user');
   if (!userJson) throw new Error('No user in initData');
@@ -274,6 +275,35 @@ app.post('/save', authMiddleware, async (req, res) => {
   } catch (e) {
     console.error('[POST /save]', e.message);
     return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── POST /save/beacon ───────────────────────────────────
+// Вызывается через sendBeacon при закрытии/перезагрузке страницы.
+// initData передаётся в теле запроса (beacon не поддерживает заголовки).
+// Используем расширенный лимит давности — 24 часа.
+app.post('/save/beacon', async (req, res) => {
+  try {
+    const { _initData, ...saveData } = req.body;
+    if (!_initData) return res.status(401).json({ error: 'Missing _initData' });
+
+    // Верификация с лимитом 24 часа
+    const user   = verifyTelegramAuth(_initData, 86400);
+    const userId = String(user.id);
+
+    const patch = buildPatch(saveData);
+    patch.updatedAt = new Date();
+
+    await Save.findOneAndUpdate(
+      { userId },
+      { $set: patch },
+      { upsert: true, new: true }
+    );
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[POST /save/beacon]', e.message);
+    return res.status(401).json({ error: e.message });
   }
 });
 
