@@ -28,7 +28,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '1mb', type: ['application/json', 'text/plain'] }));
 
 // ═══════════════════════════════
-//  MongoDB
+//  MongoDB — БЕЗ SNAPPY
 // ═══════════════════════════════
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
@@ -36,7 +36,7 @@ if (!MONGODB_URI) {
   process.exit(1);
 }
 
-console.log('🔗 [MongoDB] Подключение к:', MONGODB_URI.replace(/\/\/.*@/, '//***@'));
+console.log('🔗 [MongoDB] Подключение...');
 
 mongoose.connect(MONGODB_URI, {
   serverSelectionTimeoutMS: 15000,
@@ -44,7 +44,7 @@ mongoose.connect(MONGODB_URI, {
   maxPoolSize: 50,
   minPoolSize: 10,
   maxIdleTimeMS: 10000,
-  compressors: ['snappy'],
+  // ❌ УБРАЛИ compressors: ['snappy']
 })
 .then(() => {
   console.log('✅ MongoDB подключена');
@@ -237,58 +237,33 @@ app.post('/api/load', async (req, res) => {
   }
 });
 
-// ── Сохранение (С ПОЛНОЙ ДИАГНОСТИКОЙ) ──
+// ── Сохранение ──
 app.post('/api/save', async (req, res) => {
   const startTime = Date.now();
   
   try {
-    console.log('📥 [save] Входящий запрос');
-    
-    // 1. Проверяем авторизацию
     const tg = authUser(req, res); 
-    if (!tg) {
-      console.error('❌ [save] Ошибка авторизации');
-      return;
-    }
-    console.log(`👤 [save] Пользователь: ${tg.id}`);
-
-    // 2. Rate limit
+    if (!tg) return;
+    
     if (rateLimit(tg.id, 10, 10000)) {
-      console.warn(`⏱️ [save] Rate limit для ${tg.id}`);
       return res.status(429).json({ ok: false, error: 'rate_limit' });
     }
-
-    // 3. Проверяем наличие данных
+    
     const data = req.body && req.body.data;
     if (!data || typeof data !== 'object') {
-      console.error('❌ [save] Нет данных или не объект');
+      console.error('❌ [save] Нет данных');
       return res.status(400).json({ ok: false, error: 'bad_data' });
     }
 
-    // 4. Логируем основные поля
-    console.log(`📊 [save] Данные: level=${data.level || 1}, cp=${data.cp || 0}, hp=${data.hp}, gold=${data.gold}, floor=${data.floor || 1}`);
-
-    // 5. Проверяем владельца
     if (data.tgId && data.tgId !== tg.id) {
-      console.error(`❌ [save] Несоответствие tgId! Запрос: ${tg.id}, data: ${data.tgId}`);
+      console.error(`❌ [save] Несоответствие tgId!`);
       return res.status(403).json({ ok: false, error: 'user_mismatch' });
     }
 
-    // 6. Подготавливаем данные для сохранения
     data.tgId = tg.id;
     data.updatedAt = Date.now();
 
-    // 7. Проверяем размер данных
-    const dataSize = JSON.stringify(data).length;
-    console.log(`📏 [save] Размер данных: ${dataSize} байт`);
-    if (dataSize > 1000000) {
-      console.warn(`⚠️ [save] Большой размер данных: ${dataSize} байт`);
-    }
-
-    // 8. Сохраняем в MongoDB
-    console.log(`💾 [save] Сохранение в MongoDB...`);
-    
-    const updateResult = await Save.findOneAndUpdate(
+    await Save.findOneAndUpdate(
       { tgId: tg.id },
       { 
         $set: {
@@ -310,28 +285,17 @@ app.post('/api/save', async (req, res) => {
     );
 
     const duration = Date.now() - startTime;
-    console.log(`✅ [save] Успешно сохранено для ${tg.id} (${duration}ms)`);
+    console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms)`);
     res.json({ ok: true, updatedAt: data.updatedAt });
 
   } catch (e) {
     const duration = Date.now() - startTime;
-    console.error(`❌ [save] ОШИБКА (${duration}ms):`);
-    console.error(`  - Имя: ${e.name}`);
-    console.error(`  - Сообщение: ${e.message}`);
-    console.error(`  - Стек: ${e.stack}`);
+    console.error(`❌ [save] ОШИБКА (${duration}ms):`, e.message);
     
-    if (e.name === 'MongoServerError') {
-      console.error(`  - Код MongoDB: ${e.code}`);
-      console.error(`  - Ключ: ${JSON.stringify(e.keyPattern)}`);
-      console.error(`  - Значение: ${JSON.stringify(e.keyValue)}`);
-    }
-    
-    // Возвращаем ошибку
     res.status(500).json({ 
       ok: false, 
       error: 'server_error',
-      message: e.message,
-      code: e.code || 0
+      message: e.message
     });
   }
 });
