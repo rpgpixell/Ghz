@@ -27,7 +27,8 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
-  API.partial({ gold: G.gold, upg: G.upg, baseStats: G.baseStats, stats: G.stats });
+  // ✅ Простое улучшение — помечаем dirty для автосохранения
+  API.markDirty();
 }
 
 function renderUpgrades() {

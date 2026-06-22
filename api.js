@@ -4,15 +4,16 @@
   Pixel Runner RPG
 
   Стратегия сохранений:
-  1. localStorage — мгновенно при каждом изменении (буфер от краша)
-  2. Сервер — каждые 20 сек + при ключевых событиях
-  3. При старте — берём новейшее из сервера и localStorage
+  1. Сервер — единственный источник истины
+  2. Автосохранение каждые 20 сек
+  3. При старте — загрузка с сервера
+  4. sendBeacon при закрытии
 
-  API.init()          — авторизация + загрузка (merge сервер/local)
-  API.save()          — сервер + localStorage
-  API.saveBeacon()    — sendBeacon при закрытии + localStorage
-  API.saveLocal()     — только localStorage (0ms, при каждом изменении)
-  API.partial(fields) — частичный патч сервера + localStorage
+  API.init()          — авторизация + загрузка с сервера
+  API.save()          — полное сохранение на сервер
+  API.saveBeacon()    — sendBeacon при закрытии
+  API.partial(fields) — частичный патч сервера
+  API.markDirty()     — пометить, что нужно сохранить
   API.savedHp         — HP из сохранения (до applyCharacter)
   ══════════════════════════════════════════════════════
 */
@@ -20,16 +21,15 @@
 const API = (function() {
   'use strict';
 
-  const BASE_URL   = 'https://ghz-production.up.railway.app';
-  const LS_KEY     = 'pixelrpg_save';   // ключ в localStorage
+  const BASE_URL = 'https://ghz-production.up.railway.app';
 
-  let _initData  = '';
-  let _userId    = '';
-  let _photoUrl  = '';
+  let _initData = '';
+  let _userId = '';
+  let _photoUrl = '';
   let _firstName = '';
   let _saveTimer = null;
-  let _dirty     = false;
-  let _savedHp   = null;
+  let _dirty = false;
+  let _savedHp = null;
 
   function getInitData() {
     if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
@@ -51,47 +51,6 @@ const API = (function() {
       throw new Error(body.error || 'HTTP ' + res.status);
     }
     return res.json();
-  }
-
-  // ══════════════════════════════════════════════════════
-  //  localStorage
-  // ══════════════════════════════════════════════════════
-
-  // Сохранить снапшот локально — синхронно, 0ms
-  function writeLocal(snapshot) {
-    try {
-      // Привязываем к userId чтобы не смешивать аккаунты
-      var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
-      localStorage.setItem(key, JSON.stringify(snapshot));
-    } catch(e) {
-      // localStorage может быть заполнен — не критично
-      console.warn('[API] localStorage write failed:', e.message);
-    }
-  }
-
-  // Загрузить локальное сохранение
-  function readLocal() {
-    try {
-      var key  = _userId ? LS_KEY + '_' + _userId : LS_KEY;
-      var raw  = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : null;
-    } catch(e) {
-      return null;
-    }
-  }
-
-  // Выбрать новейшее из двух сохранений по timestamp
-  function mergeSaves(serverSave, localSave) {
-    if (!localSave) return serverSave;
-    if (!serverSave) return localSave;
-    var localTs  = localSave._ts  || 0;
-    var serverTs = serverSave._ts || 0;
-    if (localTs > serverTs) {
-      console.log('[API] Using local save (newer by ' + Math.round((localTs - serverTs) / 1000) + 's)');
-      return localSave;
-    }
-    console.log('[API] Using server save (newer or equal)');
-    return serverSave;
   }
 
   // ══════════════════════════════════════════════════════
@@ -155,12 +114,11 @@ const API = (function() {
       inventory: G.inventory.slice(),
       equipped:  Object.assign({}, G.equipped),
       skills:    Object.assign({}, G.skills),
-      _ts:       Date.now(),   // timestamp для merge
     };
   }
 
   // ══════════════════════════════════════════════════════
-  //  Публичное API
+  //  Публичное API — ТОЛЬКО СЕРВЕР
   // ══════════════════════════════════════════════════════
 
   async function init() {
@@ -179,21 +137,17 @@ const API = (function() {
       _firstName = res.firstName || '';
       console.log('[API] Auth OK userId=' + _userId + ' isNew=' + res.isNew);
 
-      // Merge: сервер vs localStorage — берём новейшее
-      var serverSave = res.save;
-      var localSave  = readLocal();
-      var best       = mergeSaves(serverSave, localSave);
-
-      var charId = applySave(best);
-
-      // Если взяли локальное — сразу синхронизируем с сервером
-      if (best === localSave && localSave) {
-        save();
-      }
+      // ✅ Всегда берем с сервера
+      var charId = applySave(res.save);
 
       // Автосохранение каждые 20 сек
       _saveTimer = setInterval(function() {
-        if (_dirty) { save(); _dirty = false; }
+        if (_dirty) {
+          save().catch(function(e) {
+            console.warn('[API] Auto-save failed:', e.message);
+          });
+          _dirty = false;
+        }
       }, 20000);
 
       return charId;
@@ -203,13 +157,10 @@ const API = (function() {
     }
   }
 
-  // Полное сохранение: сервер + localStorage
+  // Полное сохранение: только сервер
   async function save() {
-    var snapshot = buildSnapshot();
-    // localStorage — синхронно и сразу
-    writeLocal(snapshot);
-    // Сервер — async
     if (!_initData) return;
+    var snapshot = buildSnapshot();
     try {
       await apiFetch('/save', {
         method: 'POST',
@@ -217,36 +168,26 @@ const API = (function() {
       });
       console.log('[API] Save OK');
     } catch (e) {
-      console.error('[API] Save failed (local saved):', e.message);
-      // Данные уже в localStorage — не страшно
+      console.error('[API] Save failed:', e.message);
+      throw e;
     }
   }
 
-  // Только localStorage — вызывать при каждом изменении G
-  function saveLocal() {
-    writeLocal(buildSnapshot());
-  }
-
-  // sendBeacon при закрытии + localStorage
+  // sendBeacon при закрытии — только сервер
   function saveBeacon() {
-    // localStorage — гарантированно
-    var snapshot = buildSnapshot();
-    writeLocal(snapshot);
-    // Beacon на сервер — initData передаём в теле (URL может быть обрезан)
     if (!_initData) return;
+    var snapshot = buildSnapshot();
     var payload = Object.assign({}, snapshot, { _initData: _initData });
     var blob = new Blob(
       [JSON.stringify(payload)],
       { type: 'application/json' }
     );
     navigator.sendBeacon(BASE_URL + '/save/beacon', blob);
-    console.log('[API] Beacon + local saved');
+    console.log('[API] Beacon sent');
   }
 
-  // Частичный патч сервера + обновление localStorage
+  // Частичный патч сервера
   async function partial(fields) {
-    // localStorage обновляем сразу (полный снапшот)
-    writeLocal(buildSnapshot());
     if (!_initData) return;
     _dirty = false;
     try {
@@ -254,21 +195,20 @@ const API = (function() {
         method: 'POST',
         body: JSON.stringify({ fields: fields }),
       });
+      console.log('[API] Partial OK');
     } catch (e) {
-      console.error('[API] Partial failed (local saved):', e.message);
+      console.error('[API] Partial failed:', e.message);
+      throw e;
     }
   }
 
   function markDirty() {
     _dirty = true;
-    // При каждом изменении — мгновенно в localStorage
-    writeLocal(buildSnapshot());
   }
 
   return {
     init:        init,
     save:        save,
-    saveLocal:   saveLocal,
     saveBeacon:  saveBeacon,
     partial:     partial,
     markDirty:   markDirty,

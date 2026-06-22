@@ -364,10 +364,20 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
-    // Сохраняем при левел-апе
-    API.partial({ level: G.level, xp: G.xp, xpNeeded: G.xpNeeded, baseStats: G.baseStats, stats: G.stats, hp: G.hp, maxHp: G.maxHp });
+    // ✅ Левел-ап — критическое событие, сохраняем сразу
+    API.partial({ 
+      level: G.level, 
+      xp: G.xp, 
+      xpNeeded: G.xpNeeded, 
+      baseStats: G.baseStats, 
+      stats: G.stats, 
+      hp: G.hp, 
+      maxHp: G.maxHp 
+    }).catch(function(e) {
+      console.warn('[Game] Level-up save failed:', e.message);
+    });
   }
-  // Отмечаем изменение XP/gold для автосохранения
+  // ✅ Простое получение XP — помечаем dirty для автосохранения
   API.markDirty();
 }
 
@@ -398,8 +408,10 @@ function gameOverSequence() {
       : 'Вы погибли в бою';
   }
   if (modal) modal.classList.remove('hidden');
-  // Сохраняем при смерти (штраф должен записаться)
-  API.save();
+  // ✅ Смерть — критическое событие
+  API.save().catch(function(e) {
+    console.warn('[Game] Death save failed:', e.message);
+  });
 }
 
 function revivePlayer() {
@@ -599,7 +611,10 @@ function buyBattlePass() {
   G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
   G.bp.active = true;
   renderBattlePass();
-  API.partial({ gram: G.gram, bp: G.bp });
+  // ✅ Критическое событие
+  API.partial({ gram: G.gram, bp: G.bp }).catch(function(e) {
+    console.warn('[Game] BP purchase save failed:', e.message);
+  });
 }
 function claimBpReward(idx) {
   if (!G.bp || !G.bp.active) return;
@@ -610,7 +625,10 @@ function claimBpReward(idx) {
   r.apply();
   G.bp.claimed.push(idx);
   renderBattlePass();
-  API.save();
+  // ✅ Критическое событие
+  API.save().catch(function(e) {
+    console.warn('[Game] BP claim save failed:', e.message);
+  });
 }
 function renderBattlePass() {
   if (!G.bp) G.bp = { active: false, claimed: [] };
@@ -711,5 +729,8 @@ function buyPrem(tier) {
   updatePremStatus();
   closePremModal();
   showDmgPop('PREM: ' + t.name + '!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
-  API.partial({ gram: G.gram, prem: G.prem });
+  // ✅ Критическое событие
+  API.partial({ gram: G.gram, prem: G.prem }).catch(function(e) {
+    console.warn('[Game] Premium purchase save failed:', e.message);
+  });
 }
