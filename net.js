@@ -257,8 +257,8 @@
   //  ЦИКЛЫ СИНХРОНИЗАЦИИ
   // ───────────────────────────────
   function startSyncLoops() {
-    setInterval(saveLocal, 5000);            // localStorage каждые 5 сек
-    setInterval(pushServer, 30000);          // сервер каждые 30 сек
+    setInterval(saveLocal, 1000);            // localStorage каждую 1 сек (дёшево, не теряем HP/золото)
+    setInterval(pushServer, 15000);          // сервер каждые 15 сек
 
     // visibilitychange — срабатывает при сворачивании в Telegram
     document.addEventListener('visibilitychange', function () {
@@ -350,7 +350,15 @@
     };
   }
 
+  // Дебаунс для saveLocal из updateHUD (не чаще раза в 500мс)
+  var _hudSaveTimer = null;
+  function saveLocalDebounced() {
+    if (_hudSaveTimer) return;
+    _hudSaveTimer = setTimeout(function () { _hudSaveTimer = null; saveLocal(); }, 500);
+  }
+
   function hookActions() {
+    // Структурные действия — сохраняем сразу (debounce 1.2с на сервер)
     var names = [
       'buyUpgrade', 'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
       'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem', 'exchangePixr',
@@ -365,6 +373,18 @@
         return r;
       };
     });
+
+    // updateHUD вызывается при каждом изменении HP/XP/золота —
+    // цепляемся сюда для максимально быстрого сохранения в localStorage.
+    // Используем debounce 500мс чтобы не тормозить игровой loop.
+    var origHUD = window.updateHUD;
+    if (typeof origHUD === 'function') {
+      window.updateHUD = function () {
+        var r = origHUD.apply(this, arguments);
+        if (SYNC.started) saveLocalDebounced();
+        return r;
+      };
+    }
   }
 
   // Установка хуков сразу (все скрипты выше уже загружены)
