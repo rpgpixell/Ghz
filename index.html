@@ -28,24 +28,196 @@
 <div id="app">
 
   <!-- ══════════════════════════════════
-       ЗАГРУЗОЧНЫЙ ЭКРАН (скрывается после авторизации)
+       ЗАГРУЗОЧНЫЙ ЭКРАН
        ══════════════════════════════════ -->
-  <div id="loadingScreen" style="
-    position:fixed;inset:0;z-index:9999;
-    background:#0d0d1a;
-    display:flex;flex-direction:column;
-    align-items:center;justify-content:center;gap:18px;">
-    <div style="font-family:Courier New,monospace;font-size:22px;color:#f5c542;letter-spacing:3px;">PIXEL RUNNER RPG</div>
-    <div style="display:flex;gap:6px;" id="loadingDots">
-      <span style="width:8px;height:8px;background:#f5c542;border-radius:50%;animation:ldot 1s ease-in-out infinite 0s"></span>
-      <span style="width:8px;height:8px;background:#f5c542;border-radius:50%;animation:ldot 1s ease-in-out infinite .2s"></span>
-      <span style="width:8px;height:8px;background:#f5c542;border-radius:50%;animation:ldot 1s ease-in-out infinite .4s"></span>
+  <div id="loadingScreen">
+    <canvas id="lsCanvas"></canvas>
+
+    <div class="ls-heroes">
+      <div class="ls-hero fire-hero">
+        <div class="ls-hero-glow" style="background:radial-gradient(circle,rgba(255,100,0,0.35) 0%,transparent 70%)"></div>
+        <canvas class="ls-sprite" id="ls-canvas-fire" width="80" height="80"></canvas>
+      </div>
+      <div class="ls-hero light-hero">
+        <div class="ls-hero-glow" style="background:radial-gradient(circle,rgba(255,220,50,0.35) 0%,transparent 70%)"></div>
+        <canvas class="ls-sprite" id="ls-canvas-light" width="80" height="80"></canvas>
+      </div>
+      <div class="ls-hero water-hero">
+        <div class="ls-hero-glow" style="background:radial-gradient(circle,rgba(40,180,255,0.35) 0%,transparent 70%)"></div>
+        <canvas class="ls-sprite" id="ls-canvas-water" width="80" height="80"></canvas>
+      </div>
     </div>
-    <div id="loadingStatus" style="font-family:Courier New,monospace;font-size:11px;color:#445;">Подключение...</div>
+
+    <div class="ls-logo-wrap">
+      <div class="ls-logo-sub">&#8212; PIXEL &#8212;</div>
+      <div class="ls-logo">RPG</div>
+      <div class="ls-logo-sub">&#8212; WORLD &#8212;</div>
+    </div>
+
+    <div class="ls-bar-wrap">
+      <div class="ls-bar-track">
+        <div class="ls-bar-fill" id="lsBarFill"></div>
+        <div class="ls-bar-shine"></div>
+      </div>
+    </div>
+
+    <div id="loadingStatus" class="ls-status">Подключение...</div>
+    <div class="ls-version">v1.0</div>
   </div>
+
   <style>
+    #loadingScreen {
+      position:fixed;inset:0;z-index:9999;
+      background:#07071a;
+      display:flex;flex-direction:column;
+      align-items:center;justify-content:center;
+      overflow:hidden;
+    }
+    #loadingScreen #lsCanvas {
+      position:absolute;inset:0;width:100%;height:100%;pointer-events:none;
+    }
+    .ls-heroes {
+      display:flex;gap:18px;margin-bottom:28px;position:relative;z-index:2;
+    }
+    .ls-hero {
+      position:relative;width:80px;height:80px;
+      animation:ls-float 3s ease-in-out infinite;
+    }
+    .ls-hero.light-hero { animation-delay:-1s; }
+    .ls-hero.water-hero { animation-delay:-2s; }
+    .ls-hero-glow {
+      position:absolute;inset:-12px;border-radius:50%;
+      animation:ls-pulse 3s ease-in-out infinite;
+    }
+    .ls-hero.light-hero .ls-hero-glow { animation-delay:-1s; }
+    .ls-hero.water-hero .ls-hero-glow { animation-delay:-2s; }
+    .ls-sprite { position:relative;z-index:1;image-rendering:pixelated; }
+    .ls-logo-wrap {
+      position:relative;z-index:2;text-align:center;margin-bottom:32px;
+    }
+    .ls-logo {
+      font-family:'Courier New',monospace;font-size:52px;font-weight:bold;
+      letter-spacing:10px;color:#f5c542;line-height:1;
+      text-shadow:0 0 20px rgba(245,197,66,0.8),0 0 40px rgba(245,197,66,0.4);
+      animation:ls-glow 2.5s ease-in-out infinite;
+    }
+    .ls-logo-sub {
+      font-family:'Courier New',monospace;font-size:11px;
+      letter-spacing:6px;color:rgba(245,197,66,0.45);margin:6px 0;
+    }
+    .ls-bar-wrap { position:relative;z-index:2;width:200px;margin-bottom:14px; }
+    .ls-bar-track {
+      width:100%;height:4px;background:rgba(255,255,255,0.06);
+      border-radius:2px;overflow:hidden;position:relative;
+      border:1px solid rgba(245,197,66,0.15);
+    }
+    .ls-bar-fill {
+      height:100%;width:0%;
+      background:linear-gradient(90deg,#c8920a,#f5c542,#ffe680);
+      border-radius:2px;animation:ls-bar-anim 2.5s ease-in-out infinite;
+    }
+    .ls-bar-shine {
+      position:absolute;top:0;left:-60px;width:40px;height:100%;
+      background:linear-gradient(90deg,transparent,rgba(255,255,255,0.5),transparent);
+      animation:ls-shine 2s ease-in-out infinite;
+    }
+    .ls-status {
+      font-family:'Courier New',monospace;font-size:10px;
+      color:rgba(245,197,66,0.35);letter-spacing:2px;
+      text-transform:uppercase;position:relative;z-index:2;
+    }
+    .ls-version {
+      position:absolute;bottom:18px;
+      font-family:'Courier New',monospace;font-size:10px;
+      color:rgba(255,255,255,0.1);letter-spacing:2px;
+    }
+    @keyframes ls-float {
+      0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)}
+    }
+    @keyframes ls-pulse {
+      0%,100%{opacity:.5;transform:scale(.9)} 50%{opacity:1;transform:scale(1.1)}
+    }
+    @keyframes ls-glow {
+      0%,100%{text-shadow:0 0 20px rgba(245,197,66,.8),0 0 40px rgba(245,197,66,.4)}
+      50%{text-shadow:0 0 30px rgba(245,197,66,1),0 0 60px rgba(245,197,66,.6),0 0 100px rgba(245,197,66,.25)}
+    }
+    @keyframes ls-bar-anim {
+      0%{width:5%} 40%{width:60%} 75%{width:85%} 100%{width:95%}
+    }
+    @keyframes ls-shine {
+      0%{left:-60px} 100%{left:260px}
+    }
     @keyframes ldot { 0%,80%,100%{opacity:.2;transform:scale(.8)} 40%{opacity:1;transform:scale(1)} }
   </style>
+
+  <script>
+  (function() {
+    function initLsParticles() {
+      var cv = document.getElementById('lsCanvas');
+      if (!cv) return;
+      cv.width = window.innerWidth; cv.height = window.innerHeight;
+      var ctx2 = cv.getContext('2d');
+      var pts = [], sparks = [];
+      for (var i = 0; i < 80; i++) {
+        pts.push({ x:Math.random()*cv.width, y:Math.random()*cv.height,
+          r:Math.random()<.1?1.5:.8, a:.1+Math.random()*.6,
+          hue:Math.random()<.3?45:220+Math.random()*60 });
+      }
+      for (var j = 0; j < 18; j++) {
+        sparks.push({ x:Math.random()*cv.width, y:Math.random()*cv.height,
+          vy:.2+Math.random()*.6, vx:(Math.random()-.5)*.3,
+          size:1+Math.random()*2, a:.4+Math.random()*.5,
+          hue:Math.random()<.5?45:200+Math.random()*40, life:Math.random() });
+      }
+      function tick() {
+        var ls = document.getElementById('loadingScreen');
+        if (!ls || ls.style.display==='none') return;
+        ctx2.clearRect(0,0,cv.width,cv.height);
+        pts.forEach(function(p){
+          p.a += (Math.random()-.5)*.03;
+          p.a = Math.max(.05,Math.min(.8,p.a));
+          ctx2.globalAlpha=p.a; ctx2.fillStyle='hsl('+p.hue+',70%,80%)';
+          ctx2.fillRect(p.x|0,p.y|0,p.r,p.r);
+        });
+        sparks.forEach(function(s){
+          s.y-=s.vy; s.x+=s.vx; s.life+=.01;
+          if(s.y<-5){s.y=cv.height+5;s.x=Math.random()*cv.width;}
+          var fade=Math.sin(s.life*Math.PI*2)*.5+.5;
+          ctx2.globalAlpha=s.a*fade; ctx2.fillStyle='hsl('+s.hue+',90%,75%)';
+          ctx2.fillRect(s.x|0,s.y|0,s.size,s.size);
+        });
+        ctx2.globalAlpha=1;
+        requestAnimationFrame(tick);
+      }
+      tick();
+    }
+    function initLsSprites() {
+      var chars = {
+        fire:  {src:'2.png',    frames:8,fw:128,fh:128},
+        light: {src:'run3.png', frames:8,fw:128,fh:128},
+        water: {src:'run2.png', frames:8,fw:128,fh:128},
+      };
+      Object.keys(chars).forEach(function(id) {
+        var ch=chars[id], img=new Image();
+        img.src=ch.src;
+        var cv2=document.getElementById('ls-canvas-'+id);
+        if(!cv2) return;
+        var frame=0;
+        setInterval(function(){
+          if(!cv2.isConnected) return;
+          var c=cv2.getContext('2d');
+          c.clearRect(0,0,80,80); c.imageSmoothingEnabled=false;
+          if(img.complete&&img.naturalWidth>0){
+            var sc=80/ch.fw;
+            c.drawImage(img,frame*ch.fw,0,ch.fw,ch.fh,0,80-ch.fh*sc,ch.fw*sc,ch.fh*sc);
+          }
+          frame=(frame+1)%ch.frames;
+        },100);
+      });
+    }
+    window.addEventListener('load',function(){ initLsParticles(); initLsSprites(); });
+  })();
+  </script>
 
   <!-- ══════════════════════════════════
        ЭКРАН ВЫБОРА ПЕРСОНАЖА
