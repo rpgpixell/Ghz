@@ -4,6 +4,24 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Pixel Runner RPG</title>
+<!--
+  ══════════════════════════════════════════════════════
+  index.html — Точка входа
+  Содержит: HTML-разметку всех экранов (выбор персонажа,
+  HUD, панели инвентаря/улучшений/этажей/рейтинга/кошелька,
+  нижняя навигация, модальные окна, HUD скиллов).
+  Подключает все CSS и JS файлы проекта.
+
+  ПОРЯДОК ПОДКЛЮЧЕНИЯ СКРИПТОВ ВАЖЕН:
+  1. data.js    — константы (CHARS, FLOORS, RARITIES, ...)
+  2. state.js   — объект G, calcCP, floorCfg
+  3. render.js  — canvas, спрайты, функции рисования
+  4. skills.js  — система навыков, баффы, HUD скиллов
+  5. game.js    — player, update loop, монстры, боёвка
+  6. inventory.js — предметы, заточка, рендер инвентаря
+  7. ui.js      — панели, вкладки, выбор персонажа
+  ══════════════════════════════════════════════════════
+-->
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -472,7 +490,6 @@
 <script src="game.js"></script>       <!-- Игровая логика: update, монстры, боёвка, XP -->
 <script src="inventory.js"></script>  <!-- Инвентарь: предметы, заточка, книги навыков -->
 <script src="ui.js"></script>         <!-- UI-панели: этажи, улучшения, рейтинг, кошелёк -->
-<script src="api.js"></script>        <!-- API клиент для сервера -->
 
 </body>
 </html>
