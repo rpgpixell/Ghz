@@ -54,19 +54,19 @@ if (!MONGODB_URI) console.error('❌ MONGODB_URI не задан');
 mongoose.connect(MONGODB_URI, {
   serverSelectionTimeoutMS: 15000,
   socketTimeoutMS: 45000,
-  maxPoolSize: 50,        // ← увеличенный пул для 5GB базы
+  maxPoolSize: 50,
   minPoolSize: 10,
   maxIdleTimeMS: 10000,
-  compressors: ['snappy'], // ← сжатие данных
+  compressors: ['snappy'],
 })
 .then(() => console.log('✅ MongoDB подключена (5GB)'))
 .catch(err => console.error('❌ MongoDB error:', err.message));
 
 // ═══════════════════════════════
-//  СХЕМА С ИНДЕКСАМИ
+//  СХЕМА — БЕЗ ДУБЛИРУЮЩИХСЯ ИНДЕКСОВ
 // ═══════════════════════════════
 const SaveSchema = new mongoose.Schema({
-  tgId:      { type: String, required: true, unique: true, index: true },
+  tgId:      { type: String, required: true },  // ← УБРАЛИ unique: true, index: true
   username:  { type: String, default: '' },
   firstName: { type: String, default: '' },
   charId:    { type: String, default: null },
@@ -80,11 +80,11 @@ const SaveSchema = new mongoose.Schema({
   refMilestones: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { minimize: false });
 
-// ✅ ИНДЕКСЫ ДЛЯ БЫСТРЫХ ЗАПРОСОВ
+// ✅ ТОЛЬКО ЗДЕСЬ ОБЪЯВЛЯЕМ ИНДЕКСЫ (ОДИН РАЗ)
 SaveSchema.index({ tgId: 1 }, { unique: true });
-SaveSchema.index({ cp: -1, level: -1 });   // для лидерборда
-SaveSchema.index({ refBy: 1 });             // для рефералки
-SaveSchema.index({ updatedAt: -1 });        // для очистки старых данных
+SaveSchema.index({ cp: -1, level: -1 });
+SaveSchema.index({ refBy: 1 });
+SaveSchema.index({ updatedAt: -1 });
 
 const Save = mongoose.model('Save', SaveSchema);
 
@@ -190,7 +190,7 @@ app.post('/api/load', async (req, res) => {
   console.log(`🟢 [load] tgId: ${tg.id}, startParam: ${startParam || 'none'}`);
   
   try {
-    let doc = await Save.findOne({ tgId: tg.id }).lean(); // ← lean() для скорости
+    let doc = await Save.findOne({ tgId: tg.id }).lean();
 
     if (!doc) {
       const refBy = (startParam && startParam !== tg.id) ? startParam : null;
@@ -242,7 +242,7 @@ app.post('/api/load', async (req, res) => {
   }
 });
 
-// ── Сохранение полного снапшота (ОПТИМИЗИРОВАННОЕ) ──
+// ── Сохранение полного снапшота ──
 app.post('/api/save', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
@@ -267,7 +267,6 @@ app.post('/api/save', async (req, res) => {
   console.log(`💾 [save] tgId: ${tg.id}, level: ${data.level || 1}, cp: ${data.cp || 0}`);
   
   try {
-    // ⚡ findOneAndUpdate с upsert и lean() — быстрее
     await Save.findOneAndUpdate(
       { tgId: tg.id },
       { 
@@ -332,7 +331,7 @@ app.post('/api/character', async (req, res) => {
   }
 });
 
-// ── Лидерборд (С КЭШЕМ) ──
+// ── Лидерборд (с кэшем) ──
 app.get('/api/leaderboard', async (req, res) => {
   if (!req.query.tgId) return res.status(401).json({ ok: false, error: 'missing_id' });
   if (rateLimit('lb_' + req.query.tgId, 5, 60000)) {
@@ -340,19 +339,16 @@ app.get('/api/leaderboard', async (req, res) => {
   }
   
   try {
-    // ⚡ Проверяем кэш
     const cached = getLeaderboardCache();
     if (cached) {
       return res.json({ ok: true, top: cached, cached: true });
     }
     
-    // Если кэша нет — запрос в MongoDB
     const top = await Save.find({ charId: { $ne: null } })
       .sort({ cp: -1, level: -1 }).limit(50)
       .select('username firstName level cp floor charId -_id')
-      .lean(); // ← lean() для скорости
+      .lean();
     
-    // Сохраняем в кэш
     setLeaderboardCache(top);
     
     res.json({ ok: true, top, cached: false });
@@ -455,14 +451,14 @@ app.post('/api/ref/claim', async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  ОЧИСТКА СТАРЫХ ДАННЫХ (если нужно)
+//  ОЧИСТКА СТАРЫХ ДАННЫХ
 // ═══════════════════════════════
 setInterval(async () => {
   try {
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 дней
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const result = await Save.deleteMany({ 
       updatedAt: { $lt: cutoff },
-      data: null  // только пустые аккаунты
+      data: null
     });
     if (result.deletedCount > 0) {
       console.log(`🧹 Очищено ${result.deletedCount} старых аккаунтов`);
@@ -470,7 +466,7 @@ setInterval(async () => {
   } catch (e) {
     console.error('❌ [cleanup] error:', e.message);
   }
-}, 24 * 60 * 60 * 1000); // раз в сутки
+}, 24 * 60 * 60 * 1000);
 
 // ═══════════════════════════════
 //  Запуск сервера
