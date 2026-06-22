@@ -1,7 +1,7 @@
 {
   "name": "pixel-runner-rpg-backend",
   "version": "2.0.0",
-  "description": "Backend (Telegram auth + MongoDB saves) for Pixel Runner RPG",
+  "description": "Backend (Telegram auth + MongoDB) for Pixel Runner RPG",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

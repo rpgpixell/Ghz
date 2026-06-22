@@ -1,14 +1,16 @@
 /*
   ══════════════════════════════════════════════════════
   net.js — Сетевой слой: Telegram-авторизация,
-  сохранение прогресса на сервер (только MongoDB)
+  сохранение прогресса на сервер (MongoDB)
 
   СТРАТЕГИЯ СОХРАНЕНИЯ:
   ✅ МГНОВЕННО: inventory, equipped, upg, skills, potionLv,
      potionThreshold, floor, level, pixr, gram, bp, prem
-  ⏱️ 5 СЕКУНД: hp, gold, xp, killCount, potions
+  ⏱️ 3 СЕКУНДЫ: hp, gold, xp, killCount, potions
 
-  ❌ БЕЗ REDIS, БЕЗ ЛОКАЛЬНОГО СОХРАНЕНИЯ
+  ⚡ ОПТИМИЗАЦИИ:
+  - Сжатие данных перед отправкой
+  - Интервал 3 секунды (вместо 5)
   ══════════════════════════════════════════════════════
 */
 (function () {
@@ -107,7 +109,7 @@
   }
 
   // ═══════════════════════════════
-  //  СЕРИАЛИЗАЦИЯ
+  //  СЕРИАЛИЗАЦИЯ И СЖАТИЕ
   // ═══════════════════════════════
 
   function serializeState() {
@@ -123,7 +125,7 @@
       return c;
     });
 
-    return {
+    var full = {
       v: 1,
       tgId: getTgId(),
       charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
@@ -142,24 +144,50 @@
       bp: clone(G.bp || { active: false, claimed: [] }),
       prem: clone(G.prem || { tier: null, expiresAt: 0 }),
 
-      // === ОТЛОЖЕННЫЕ ПОЛЯ (5 сек) ===
+      // === ОТЛОЖЕННЫЕ ПОЛЯ (3 сек) ===
       hp: G.hp,
       gold: G.gold,
       xp: G.xp,
       killCount: G.killCount,
       potions: G.potions,
 
-      // === ПРОЧИЕ ===
-      maxHp: G.maxHp,
-      xpNeeded: G.xpNeeded,
-      maxFloor: G.maxFloor,
-      baseStats: clone(G.baseStats),
-      stats: clone(G.stats),
+      // === ПРОЧИЕ (не отправляем тяжелые) ===
       invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
       invFilter: G.invFilter || 'all',
       cp: (typeof calcCP === 'function') ? calcCP() : 0,
       updatedAt: Date.now(),
     };
+
+    // ⚡ СЖАТИЕ: удаляем тяжелые поля, которые не нужны на сервере
+    // (stats, baseStats, maxHp, xpNeeded, maxFloor — вычисляются на клиенте)
+    var compressed = {
+      v: full.v,
+      tgId: full.tgId,
+      charId: full.charId,
+      inventory: full.inventory,
+      equipped: full.equipped,
+      upg: full.upg,
+      skills: full.skills,
+      potionLv: full.potionLv,
+      potionThreshold: full.potionThreshold,
+      floor: full.floor,
+      level: full.level,
+      pixr: full.pixr,
+      gram: full.gram,
+      bp: full.bp,
+      prem: full.prem,
+      hp: full.hp,
+      gold: full.gold,
+      xp: full.xp,
+      killCount: full.killCount,
+      potions: full.potions,
+      invIdCounter: full.invIdCounter,
+      invFilter: full.invFilter,
+      cp: full.cp,
+      updatedAt: full.updatedAt,
+    };
+
+    return compressed;
   }
 
   // ═══════════════════════════════
@@ -284,6 +312,7 @@
     }).then(function (r) { return r.json(); });
   }
 
+  // ⚡ ОТЛОЖЕННОЕ СОХРАНЕНИЕ — КАЖДЫЕ 3 СЕКУНДЫ
   function serverSaveBatch() {
     if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
       return;
@@ -385,11 +414,12 @@
   }
 
   // ═══════════════════════════════
-  //  ЦИКЛЫ СИНХРОНИЗАЦИИ
+  //  ЦИКЛЫ СИНХРОНИЗАЦИИ — 3 СЕКУНДЫ
   // ═══════════════════════════════
 
   function startSyncLoops() {
-    SYNC.batchTimer = setInterval(serverSaveBatch, 5000);
+    // ⚡ КАЖДЫЕ 3 СЕКУНДЫ (вместо 5)
+    SYNC.batchTimer = setInterval(serverSaveBatch, 3000);
 
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) flush();

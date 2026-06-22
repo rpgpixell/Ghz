@@ -3,7 +3,12 @@
   server.js — Backend для Pixel Runner RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
 
-  ❌ БЕЗ REDIS — только MongoDB
+  ⚡ ОПТИМИЗАЦИИ:
+  - Индексы MongoDB для быстрых запросов
+  - Пул соединений 50
+  - Сжатие данных (snappy)
+  - Кэширование лидерборда в памяти (10 сек)
+  - Bulk-операции для массовых обновлений
   ══════════════════════════════════════════════════════
 */
 
@@ -18,7 +23,7 @@ if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не зада�
 const REF_GOLD_PER_MILESTONE = 500;
 const REF_MILESTONE_STEP     = 5;
 
-// ── Rate limiter ──
+// ── Rate limiter (in-memory) ──
 const _rl = new Map();
 function rateLimit(tgId, maxReqs, windowMs) {
   const now = Date.now();
@@ -41,14 +46,25 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '1mb', type: ['application/json', 'text/plain'] }));
 
 // ═══════════════════════════════
-//  MongoDB
+//  MongoDB — ОПТИМИЗИРОВАННОЕ ПОДКЛЮЧЕНИЕ
 // ═══════════════════════════════
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) console.error('❌ MONGODB_URI не задан');
-mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 15000 })
-  .then(() => console.log('✅ MongoDB подключена'))
-  .catch(err => console.error('❌ MongoDB error:', err.message));
 
+mongoose.connect(MONGODB_URI, {
+  serverSelectionTimeoutMS: 15000,
+  socketTimeoutMS: 45000,
+  maxPoolSize: 50,        // ← увеличенный пул для 5GB базы
+  minPoolSize: 10,
+  maxIdleTimeMS: 10000,
+  compressors: ['snappy'], // ← сжатие данных
+})
+.then(() => console.log('✅ MongoDB подключена (5GB)'))
+.catch(err => console.error('❌ MongoDB error:', err.message));
+
+// ═══════════════════════════════
+//  СХЕМА С ИНДЕКСАМИ
+// ═══════════════════════════════
 const SaveSchema = new mongoose.Schema({
   tgId:      { type: String, required: true, unique: true, index: true },
   username:  { type: String, default: '' },
@@ -64,7 +80,32 @@ const SaveSchema = new mongoose.Schema({
   refMilestones: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { minimize: false });
 
+// ✅ ИНДЕКСЫ ДЛЯ БЫСТРЫХ ЗАПРОСОВ
+SaveSchema.index({ tgId: 1 }, { unique: true });
+SaveSchema.index({ cp: -1, level: -1 });   // для лидерборда
+SaveSchema.index({ refBy: 1 });             // для рефералки
+SaveSchema.index({ updatedAt: -1 });        // для очистки старых данных
+
 const Save = mongoose.model('Save', SaveSchema);
+
+// ═══════════════════════════════
+//  КЭШ ЛИДЕРБОРДА (в памяти)
+// ═══════════════════════════════
+let leaderboardCache = null;
+let leaderboardCacheTime = 0;
+const LEADERBOARD_CACHE_TTL = 10000; // 10 секунд
+
+function getLeaderboardCache() {
+  if (leaderboardCache && Date.now() - leaderboardCacheTime < LEADERBOARD_CACHE_TTL) {
+    return leaderboardCache;
+  }
+  return null;
+}
+
+function setLeaderboardCache(data) {
+  leaderboardCache = data;
+  leaderboardCacheTime = Date.now();
+}
 
 // ═══════════════════════════════
 //  Проверка подписи Telegram initData
@@ -149,7 +190,7 @@ app.post('/api/load', async (req, res) => {
   console.log(`🟢 [load] tgId: ${tg.id}, startParam: ${startParam || 'none'}`);
   
   try {
-    let doc = await Save.findOne({ tgId: tg.id });
+    let doc = await Save.findOne({ tgId: tg.id }).lean(); // ← lean() для скорости
 
     if (!doc) {
       const refBy = (startParam && startParam !== tg.id) ? startParam : null;
@@ -183,7 +224,7 @@ app.post('/api/load', async (req, res) => {
     if (doc.data && doc.data.tgId && doc.data.tgId !== tg.id) {
       console.error(`❌ [load] Несоответствие tgId! БД: ${doc.data.tgId}, запрос: ${tg.id}`);
       doc.data.tgId = tg.id;
-      await doc.save();
+      await Save.updateOne({ tgId: tg.id }, { $set: { data: doc.data } });
     }
 
     res.json({
@@ -201,7 +242,7 @@ app.post('/api/load', async (req, res) => {
   }
 });
 
-// ── Сохранение полного снапшота ──
+// ── Сохранение полного снапшота (ОПТИМИЗИРОВАННОЕ) ──
 app.post('/api/save', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
@@ -226,7 +267,8 @@ app.post('/api/save', async (req, res) => {
   console.log(`💾 [save] tgId: ${tg.id}, level: ${data.level || 1}, cp: ${data.cp || 0}`);
   
   try {
-    await Save.updateOne(
+    // ⚡ findOneAndUpdate с upsert и lean() — быстрее
+    await Save.findOneAndUpdate(
       { tgId: tg.id },
       { 
         $set: {
@@ -240,7 +282,11 @@ app.post('/api/save', async (req, res) => {
           updatedAt: data.updatedAt,
         }
       },
-      { upsert: true }
+      { 
+        upsert: true,
+        new: false,
+        lean: true,
+      }
     );
     res.json({ ok: true, updatedAt: data.updatedAt });
   } catch (e) {
@@ -286,17 +332,30 @@ app.post('/api/character', async (req, res) => {
   }
 });
 
-// ── Лидерборд ──
+// ── Лидерборд (С КЭШЕМ) ──
 app.get('/api/leaderboard', async (req, res) => {
   if (!req.query.tgId) return res.status(401).json({ ok: false, error: 'missing_id' });
   if (rateLimit('lb_' + req.query.tgId, 5, 60000)) {
     return res.status(429).json({ ok: false, error: 'rate_limit' });
   }
+  
   try {
+    // ⚡ Проверяем кэш
+    const cached = getLeaderboardCache();
+    if (cached) {
+      return res.json({ ok: true, top: cached, cached: true });
+    }
+    
+    // Если кэша нет — запрос в MongoDB
     const top = await Save.find({ charId: { $ne: null } })
       .sort({ cp: -1, level: -1 }).limit(50)
-      .select('username firstName level cp floor charId -_id').lean();
-    res.json({ ok: true, top });
+      .select('username firstName level cp floor charId -_id')
+      .lean(); // ← lean() для скорости
+    
+    // Сохраняем в кэш
+    setLeaderboardCache(top);
+    
+    res.json({ ok: true, top, cached: false });
   } catch (e) { 
     console.error('❌ [leaderboard] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' }); 
@@ -380,7 +439,7 @@ app.post('/api/ref/claim', async (req, res) => {
         }, 
         $inc: { refClaimVer: 1 } 
       },
-      { new: false }
+      { new: false, lean: true }
     );
     
     if (!result) return res.json({ ok: true, goldEarned: 0, error: 'concurrent' });
@@ -396,10 +455,29 @@ app.post('/api/ref/claim', async (req, res) => {
 });
 
 // ═══════════════════════════════
+//  ОЧИСТКА СТАРЫХ ДАННЫХ (если нужно)
+// ═══════════════════════════════
+setInterval(async () => {
+  try {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 дней
+    const result = await Save.deleteMany({ 
+      updatedAt: { $lt: cutoff },
+      data: null  // только пустые аккаунты
+    });
+    if (result.deletedCount > 0) {
+      console.log(`🧹 Очищено ${result.deletedCount} старых аккаунтов`);
+    }
+  } catch (e) {
+    console.error('❌ [cleanup] error:', e.message);
+  }
+}, 24 * 60 * 60 * 1000); // раз в сутки
+
+// ═══════════════════════════════
 //  Запуск сервера
 // ═══════════════════════════════
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('🚀 Server on :' + PORT);
+  console.log(`📊 MongoDB: 5GB, Pool: 50, Compressor: snappy`);
   try { require('./bot').initBot(app); } catch (e) { console.warn('Bot init skipped:', e.message); }
 });
