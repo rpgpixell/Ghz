@@ -27,6 +27,7 @@ function buyUpgrade(u) {
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
+  markChange('high');
 }
 
 function renderUpgrades() {
@@ -252,6 +253,7 @@ function goToFloor(n) {
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
   updateHUD(); switchTab('game');
+  markChange('high');
 }
 
 // ═══════════════════════════════
@@ -398,7 +400,15 @@ function confirmChar() {
   Object.values(_csSpriteTimers).forEach(clearInterval);
   if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
   G_CHAR = CHARS[_csSelected];
-  applyCharacter(G_CHAR);
+  var isNewAccount = !hasSavedProgress();
+  G.character = _csSelected;
+  G.characterChosen = true;
+  if (isNewAccount) {
+    applyCharacterStats(G_CHAR);
+  }
+  applyCharacterVisuals(G_CHAR);
+  recalcStats();
+  markChange('critical');
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
 }
