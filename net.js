@@ -376,6 +376,14 @@
         START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
       } catch (e) { START_PARAM = ''; }
     }
+    // Фоллбэк: если мини-апп открыт через кнопку бота (web_app кнопка),
+    // бот передаёт реферала через ?ref= в URL (start_param там не работает)
+    if (!START_PARAM) {
+      try {
+        var urlRef = new URLSearchParams(window.location.search).get('ref') || '';
+        if (urlRef) START_PARAM = urlRef;
+      } catch (e) {}
+    }
     SYNC.online = !!TG_INIT;
   }
 

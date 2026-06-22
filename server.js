@@ -340,4 +340,8 @@ app.post('/api/ref/claim', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('🚀 Server on :' + PORT));
+app.listen(PORT, () => {
+  console.log('🚀 Server on :' + PORT);
+  // Инициализируем бота после старта сервера
+  try { require('./bot').initBot(app); } catch (e) { console.warn('Bot init skipped:', e.message); }
+});
