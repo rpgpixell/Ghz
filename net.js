@@ -246,22 +246,25 @@
     SYNC.dirtyTimer = setTimeout(pushServer, 1200);
   }
 
-  // Флаш при закрытии/сворачивании.
-  // sendBeacon не работает в Telegram WebView — используем обычный fetch.
-  // localStorage — главная страховка (синхронно, не теряется никогда).
-  function flush() {
-    if (!SYNC.started) return;
-    var snap = serializeState();
-    writeLocal(snap);           // всегда в localStorage синхронно
-    if (!SYNC.online) return;
-    try {
-      fetch(API + '/api/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT, data: snap }),
-      });
-    } catch (e) {}
+function flush() {
+  if (!SYNC.started) return;
+  
+  var snap = serializeState();
+  writeLocal(snap); // всегда в localStorage синхронно
+  
+  if (!SYNC.online) return;
+  
+  try {
+    fetch(API + '/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: TG_INIT, data: snap }),
+      keepalive: true // ← ДОБАВИТЬ ЭТУ СТРОКУ
+    }).catch(function() {}); // ← ДОБАВИТЬ ЭТУ СТРОКУ
+  } catch (e) {
+    // Игнорируем ошибки
   }
+}
 
   // ───────────────────────────────
   //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
@@ -337,47 +340,107 @@
   }
 
   function boot() {
-    lsInitStars();
-    lsSetStatus('Подключение', 10);
-    initTelegram();
+  lsInitStars();
+  lsSetStatus('Подключение', 10);
+  initTelegram();
 
+  // ВРЕМЕННО НЕ ЗАГРУЖАЕМ ИЗ LOCALSTORAGE!
+  // var local = readLocal(); // ← ЗАКОММЕНТИРОВАТЬ
+
+  // Таймаут: если сервер не ответил за 6 сек — грузим из localStorage (офлайн)
+  var lsTimeout = setTimeout(function () {
+    // Если сервер не ответил — загружаем из localStorage как запасной вариант
     var local = readLocal();
-
-    // 1) Мгновенный старт из локального кеша (пока идёт запрос на сервер)
     if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-      lsSetStatus('Загрузка данных', 40);
+      lsSetStatus('Офлайн загрузка', 40);
       bootFromSnapshot(local);
     }
+    lsHide();
+  }, 6000);
 
-    // Таймаут: если сервер не ответил за 6 сек — скрываем экран всё равно
-    var lsTimeout = setTimeout(function () { lsHide(); }, 6000);
+  lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
 
-    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
+  // 2) Сверка с сервером
+  serverLoad().then(function (r) {
+    clearTimeout(lsTimeout);
+    
+    var server = r && r.save;
+    var hasServerData = server && server.data && server.data.charId &&
+                        typeof CHARS !== 'undefined' && CHARS[server.data.charId];
 
-    // 2) Сверка с сервером
-    serverLoad().then(function (r) {
-      clearTimeout(lsTimeout);
-      var server = r && r.save;
-      if (server && server.data && server.data.charId &&
-          typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
-        lsSetStatus('Применение данных', 85);
-        var sTs = server.updatedAt || 0;
-        var lTs = (local && local.updatedAt) || 0;
+    // =============================================
+    // ГЛАВНАЯ ЛОГИКА: сервер всегда главный
+    // =============================================
+    if (r && r.ok) {
+      if (hasServerData) {
+        // На сервере ЕСТЬ данные — загружаем их
+        lsSetStatus('Загрузка с сервера', 70);
+        
+        // Сохраняем данные сервера в localStorage
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify(server.data));
+        } catch (e) {}
+        
+        // Запускаем игру из данных сервера
         if (!SYNC.started) {
           bootFromSnapshot(server.data);
-        } else if (sTs > lTs + 3000) {
+        } else {
           hotApply(server.data);
         }
+        
+        lsSetStatus('Готово', 90);
+        
+      } else {
+        // НА СЕРВЕРЕ ПУСТО — удаляем localStorage и показываем выбор персонажа
+        try {
+          localStorage.removeItem(LS_KEY);
+        } catch (e) {}
+        
+        // Если игра уже запущена — перезагружаем
+        if (SYNC.started) {
+          location.reload();
+          return;
+        }
+        
+        // Показываем экран выбора персонажа
+        lsSetStatus('Новый игрок', 50);
+        
+        stopCharSelectAnims();
+        
+        var cs = document.getElementById('charSelect');
+        if (cs) {
+          cs.classList.remove('hidden');
+          if (typeof initCharSelect === 'function') {
+            initCharSelect();
+          }
+          if (typeof window._csSelected === 'object') {
+            window._csSelected = null;
+          }
+          if (typeof updateConfirmBtn === 'function') {
+            updateConfirmBtn();
+          }
+        }
+        
+        lsHide();
+        return;
       }
-    }).catch(function () {
-      clearTimeout(lsTimeout);
-    }).then(function () {
-      SYNC.booted = true;
-      startSyncLoops();
-      if (SYNC.online && SYNC.started) pushServer();
-      lsHide();
-    });
-  }
+    }
+    
+  }).catch(function () {
+    clearTimeout(lsTimeout);
+    // Если сервер не ответил — загружаем из localStorage (офлайн режим)
+    var local = readLocal();
+    if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+      lsSetStatus('Офлайн загрузка', 40);
+      bootFromSnapshot(local);
+    }
+  }).then(function () {
+    SYNC.booted = true;
+    startSyncLoops();
+    if (SYNC.online && SYNC.started) pushServer();
+    lsHide();
+  });
+}
 
   // ───────────────────────────────
   //  ХУКИ: выбор персонажа + структурные действия
