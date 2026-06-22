@@ -1,6 +1,6 @@
 /*
   ══════════════════════════════════════════════════════
-  server.js — Backend для Pixel Runner RPG
+  server.js — Backend для PIXEL RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
   ══════════════════════════════════════════════════════
 */
@@ -183,7 +183,7 @@ function setLeaderboardCache(data) {
 //  Роуты
 // ═══════════════════════════════
 app.get('/', (req, res) => {
-  res.json({ ok: true, service: 'pixel-runner-rpg', db: mongoose.connection.readyState === 1 });
+  res.json({ ok: true, service: 'pixel-rpg', db: mongoose.connection.readyState === 1 });
 });
 
 // ── Загрузка ──
@@ -299,7 +299,7 @@ app.post('/api/save', async (req, res) => {
   }
 });
 
-// ── Выбор персонажа (ИСПРАВЛЕН) ──
+// ── Выбор персонажа ──
 app.post('/api/character', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
@@ -312,11 +312,9 @@ app.post('/api/character', async (req, res) => {
   console.log(`🎭 [character] tgId: ${tg.id}, charId: ${charId}`);
   
   try {
-    // 🔥 ИСПРАВЛЕНИЕ: сначала проверяем существование документа
     let doc = await Save.findOne({ tgId: tg.id });
     
     if (!doc) {
-      // Создаем нового пользователя с data как объект
       doc = await Save.create({
         tgId: tg.id,
         username: tg.username,
@@ -326,8 +324,6 @@ app.post('/api/character', async (req, res) => {
       });
       console.log(`🆕 [character] Создан новый пользователь: ${tg.id}`);
     } else {
-      // Обновляем существующего
-      // 🔥 Убеждаемся что data не null
       if (!doc.data || typeof doc.data !== 'object') {
         doc.data = {};
       }
@@ -341,7 +337,6 @@ app.post('/api/character', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { 
     console.error('❌ [character] error:', e.message);
-    console.error('  - Стек:', e.stack);
     res.status(500).json({ ok: false, error: 'server_error' }); 
   }
 });
@@ -452,6 +447,17 @@ app.post('/api/ref/claim', async (req, res) => {
     _claiming.delete(tg.id);
   }
 });
+
+// ═══════════════════════════════
+//  Бот
+// ═══════════════════════════════
+let bot = null;
+try {
+  const { initBot } = require('./bot');
+  bot = initBot(app);
+} catch (e) {
+  console.warn('⚠️ Бот не инициализирован:', e.message);
+}
 
 // ═══════════════════════════════
 //  Запуск

@@ -1,149 +1,314 @@
 /*
   ══════════════════════════════════════════════════════
-  bot.js — Telegram Bot для Pixel Runner RPG
-  Webhook режим (оптимально для Railway)
-
+  bot.js — Telegram бот для PIXEL RPG
+  ───
   Команды:
-    /start          — приветствие + кнопка открыть игру
-    /start ref123   — пришёл по реферальной ссылке
-    /help           — краткая помощь
-
-  ENV (Railway -> Variables):
-    BOT_TOKEN         — токен бота из @BotFather (обязательно)
-    BOT_USERNAME      — username бота без @ (обязательно)
-    MINI_APP_URL      — URL фронтенда, напр. https://user.github.io/pixel-runner
-    WEBHOOK_SECRET    — секрет для URL вебхука (если не задан — берётся из токена)
-    RAILWAY_PUBLIC_DOMAIN — задаётся Railway автоматически
-
-  Подключение: вызвать initBot(app) ПОСЛЕ всех роутов в server.js
+  /start — приветствие с кнопкой запуска игры
+  /help — справка
+  /ref — реферальная ссылка
+  /profile — профиль игрока
   ══════════════════════════════════════════════════════
 */
 
 const TelegramBot = require('node-telegram-bot-api');
 
-const BOT_TOKEN      = process.env.BOT_TOKEN      || '';
-const BOT_USERNAME   = process.env.BOT_USERNAME   || 'YourBotUsername';
-const MINI_APP_URL   = (process.env.MINI_APP_URL  || '').replace(/\/$/, '');
-// Используем вторую часть токена как секрет (достаточно для защиты URL вебхука)
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || (BOT_TOKEN.split(':')[1] || 'pixelrunner');
+let bot = null;
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
+const WEBAPP_URL = process.env.WEBAPP_URL || 'https://your-domain.com';
 
-// ── Тексты ──
-function welcomeText(firstName) {
-  // MarkdownV2: экранируем спецсимволы . ! ( ) - _
-  const name = firstName.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
-  return (
-    `⚔️ *Привет, ${name}\\!*\n\n` +
-    `Добро пожаловать в *Pixel Runner RPG* — pixel\\-art RPG прямо в Telegram\\!\n\n` +
-    `🧙 Выбери персонажа из трёх классов\n` +
-    `🗡️ Убивай монстров, собирай экипировку\n` +
-    `⬆️ Прокачивай навыки и характеристики\n` +
-    `🏆 Поднимайся по этажам и соревнуйся с другими\n\n` +
-    `_Прогресс сохраняется автоматически_`
-  );
+if (!BOT_TOKEN) {
+  console.warn('⚠️ BOT_TOKEN не задан — бот не запущен');
 }
 
-function helpText() {
-  return (
-    `*Pixel Runner RPG — помощь*\n\n` +
-    `🎮 /start — открыть игру\n\n` +
-    `*Как пригласить друга:*\n` +
-    `Зайди в игру → вкладка Друзья → скопируй реферальную ссылку\\.\n` +
-    `За каждые *5 уровней* друга получаешь *500 золота*\\.`
-  );
-}
-
-// ── Инициализация ──
+// ── Инициализация бота ──
 function initBot(app) {
   if (!BOT_TOKEN) {
-    console.warn('⚠️  BOT_TOKEN не задан — бот отключён');
+    console.warn('⚠️ Бот не инициализирован: нет BOT_TOKEN');
     return null;
   }
-  if (!MINI_APP_URL) {
-    console.warn('⚠️  MINI_APP_URL не задан — кнопка игры не будет работать');
-  }
 
-  const bot = new TelegramBot(BOT_TOKEN);
+  try {
+    bot = new TelegramBot(BOT_TOKEN, { polling: true });
+    console.log('✅ Telegram бот запущен');
 
-  // ── Webhook endpoint ──
-  const webhookPath = `/bot/${WEBHOOK_SECRET}`;
-  app.post(webhookPath, (req, res) => {
-    try { bot.processUpdate(req.body); } catch (e) { console.error('bot update error:', e.message); }
-    res.sendStatus(200);
-  });
+    // ── /start ──
+    bot.onText(/\/start(?:\s+(.+))?/, (msg, match) => {
+      const chatId = msg.chat.id;
+      const userId = msg.from.id;
+      const username = msg.from.username || msg.from.first_name || 'Игрок';
+      const startParam = match && match[1] ? match[1] : null;
+      
+      console.log(`📨 /start от ${username} (${userId}), param: ${startParam || 'none'}`);
+      
+      let webappUrl = WEBAPP_URL;
+      if (startParam) {
+        webappUrl += `?startapp=${startParam}`;
+      }
+      
+      const message = `
+${getGreeting(username)}
 
-  // ── Устанавливаем webhook на Railway ──
-  const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || '';
-  if (domain) {
-    const webhookUrl = `https://${domain}${webhookPath}`;
-    bot.setWebHook(webhookUrl)
-      .then(() => console.log(`✅ Webhook: ${webhookUrl}`))
-      .catch(err => console.error('❌ setWebHook error:', err.message));
-  } else {
-    console.warn('⚠️  RAILWAY_PUBLIC_DOMAIN не найден — установи webhook вручную:');
-    console.warn(`   https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=ТВОЙ_URL${webhookPath}`);
-  }
+🔥 **PIXEL RPG** — эпическая RPG в стиле пиксель-арт!
 
-  // ═══════════════════════════════
-  //  /start [param]
-  // ═══════════════════════════════
-  bot.onText(/^\/start(.*)$/, async (msg, match) => {
-    const chatId   = msg.chat.id;
-    const userId   = String(msg.from.id);
-    const param    = (match[1] || '').trim();
-    const firstName = msg.from.first_name || 'Игрок';
+━━━━━━━━━━━━━━━━━━━
+🎮 **В игре тебя ждут:**
+  ✦ 10 уникальных этажей с монстрами
+  ✦ 3 класса персонажей (Огонь, Свет, Вода)
+  ✦ Система улучшений и навыков
+  ✦ Редкие предметы и заточка
+  ✦ Боевой пропуск и премиум статус
+  ✦ Реферальная система — приглашай друзей!
 
-    // Строим URL мини-аппа
-    // Если пришёл по реферальной ссылке (/start ref123456) — передаём реф в URL
-    // Мини-апп прочитает его через window.location.search (?ref=123456)
-    let appUrl = MINI_APP_URL || `https://t.me/${BOT_USERNAME}`;
-    if (param && param !== userId) {
-      appUrl += '?ref=' + encodeURIComponent(param);
-    }
+━━━━━━━━━━━━━━━━━━━
+👤 **Твой ID:** \`${userId}\`
+${startParam ? `🔗 **Пригласил:** \`${startParam}\`` : ''}
 
-    try {
-      await bot.sendMessage(chatId, welcomeText(firstName), {
-        parse_mode: 'MarkdownV2',
+Нажми на кнопку ниже, чтобы начать приключение!
+      `;
+
+      const options = {
+        parse_mode: 'Markdown',
         reply_markup: {
-          inline_keyboard: [[
-            { text: '🎮  Играть', web_app: { url: appUrl } },
-          ]],
-        },
-      });
-    } catch (e) {
-      console.error('sendMessage /start error:', e.message);
-    }
-  });
+          inline_keyboard: [
+            [
+              {
+                text: '🎮 ИГРАТЬ',
+                web_app: { url: webappUrl }
+              }
+            ],
+            [
+              {
+                text: '👥 Пригласить друзей',
+                callback_data: 'ref'
+              },
+              {
+                text: '📊 Статистика',
+                callback_data: 'profile'
+              }
+            ]
+          ]
+        }
+      };
 
-  // ═══════════════════════════════
-  //  /help
-  // ═══════════════════════════════
-  bot.onText(/^\/help$/, async (msg) => {
-    try {
-      await bot.sendMessage(msg.chat.id, helpText(), { parse_mode: 'MarkdownV2' });
-    } catch (e) {
-      console.error('sendMessage /help error:', e.message);
-    }
-  });
+      bot.sendMessage(chatId, message, options);
+    });
 
-  // ═══════════════════════════════
-  //  Любое другое сообщение
-  // ═══════════════════════════════
-  bot.on('message', async (msg) => {
-    if (msg.text && msg.text.startsWith('/')) return; // уже обработано
-    try {
-      await bot.sendMessage(msg.chat.id, welcomeText(msg.from.first_name || 'Игрок'), {
-        parse_mode: 'MarkdownV2',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '🎮  Играть', web_app: { url: MINI_APP_URL || `https://t.me/${BOT_USERNAME}` } },
-          ]],
-        },
-      });
-    } catch (e) {}
-  });
+    // ── /help ──
+    bot.onText(/\/help/, (msg) => {
+      bot.sendMessage(msg.chat.id, `
+📖 **Справка по командам:**
 
-  console.log('✅ Бот инициализирован');
-  return bot;
+/start — Начать игру
+/help — Эта справка
+/ref — Реферальная ссылка
+/profile — Мой профиль
+      `, { parse_mode: 'Markdown' });
+    });
+
+    // ── /ref ──
+    bot.onText(/\/ref/, (msg) => {
+      const userId = msg.from.id;
+      const refLink = `https://t.me/${BOT_USERNAME}?startapp=${userId}`;
+      bot.sendMessage(msg.chat.id, `
+👥 **Твоя реферальная ссылка:**
+
+\`${refLink}\`
+
+📌 **Как это работает:**
+1. Отправь ссылку другу
+2. Друг переходит по ссылке и запускает игру
+3. Ты получаешь +500 золота за каждые 5 уровней друга!
+
+💰 **Твой бонус:** ${await getPendingReward(userId)} золота
+      `, { parse_mode: 'Markdown' });
+    });
+
+    // ── /profile ──
+    bot.onText(/\/profile/, async (msg) => {
+      const userId = msg.from.id;
+      const profile = await getPlayerProfile(userId);
+      bot.sendMessage(msg.chat.id, `
+📊 **Твой профиль:**
+
+👤 Имя: ${profile.username}
+🎯 Уровень: ${profile.level}
+⚔️ Боевая мощь: ${profile.cp}
+🏰 Этаж: ${profile.floor}
+👾 Убийств: ${profile.killCount}
+🪙 Золото: ${profile.gold}
+💎 PIXR: ${profile.pixr}
+⭐ GRAM: ${profile.gram}
+      `, { parse_mode: 'Markdown' });
+    });
+
+    // ── Callback кнопки ──
+    bot.on('callback_query', async (query) => {
+      const chatId = query.message.chat.id;
+      const userId = query.from.id;
+      const data = query.data;
+      
+      try {
+        await bot.answerCallbackQuery(query.id);
+        
+        if (data === 'ref') {
+          const refLink = `https://t.me/${BOT_USERNAME}?startapp=${userId}`;
+          await bot.sendMessage(chatId, `
+👥 **Твоя реферальная ссылка:**
+
+\`${refLink}\`
+
+📌 **Как это работает:**
+1. Отправь ссылку другу
+2. Друг переходит по ссылке и запускает игру
+3. Ты получаешь +500 золота за каждые 5 уровней друга!
+
+💰 **Твой бонус:** ${await getPendingReward(userId)} золота
+          `, { parse_mode: 'Markdown' });
+        } else if (data === 'profile') {
+          const profile = await getPlayerProfile(userId);
+          await bot.sendMessage(chatId, `
+📊 **Твой профиль:**
+
+👤 Имя: ${profile.username}
+🎯 Уровень: ${profile.level}
+⚔️ Боевая мощь: ${profile.cp}
+🏰 Этаж: ${profile.floor}
+👾 Убийств: ${profile.killCount}
+🪙 Золото: ${profile.gold}
+💎 PIXR: ${profile.pixr}
+⭐ GRAM: ${profile.gram}
+          `, { parse_mode: 'Markdown' });
+        }
+      } catch (e) {
+        console.error('❌ [callback] error:', e.message);
+      }
+    });
+
+    // ── Ошибки ──
+    bot.on('polling_error', (error) => {
+      console.error('❌ Бот polling error:', error.message);
+    });
+
+    return bot;
+
+  } catch (e) {
+    console.error('❌ Ошибка инициализации бота:', e.message);
+    return null;
+  }
 }
 
-module.exports = { initBot };
+// ═══════════════════════════════
+//  Вспомогательные функции
+// ═══════════════════════════════
+
+function getGreeting(username) {
+  const hour = new Date().getHours();
+  let timeGreeting = 'Добрый день';
+  if (hour < 12) timeGreeting = '🌅 Доброе утро';
+  else if (hour < 18) timeGreeting = '☀️ Добрый день';
+  else if (hour < 22) timeGreeting = '🌇 Добрый вечер';
+  else timeGreeting = '🌙 Доброй ночи';
+  
+  const greetings = [
+    `${timeGreeting}, *${username}*! 👋`,
+    `${timeGreeting}, *${username}*! Рады тебя видеть! ✨`,
+    `${timeGreeting}, *${username}*! Добро пожаловать в PIXEL RPG! 🎮`,
+    `${timeGreeting}, *${username}*! Приключение начинается! ⚔️`,
+    `${timeGreeting}, *${username}*! Готов к битве? 🔥`,
+  ];
+  
+  return greetings[Math.floor(Math.random() * greetings.length)];
+}
+
+// ── Получение профиля из MongoDB ──
+async function getPlayerProfile(userId) {
+  try {
+    const mongoose = require('mongoose');
+    const Save = mongoose.model('Save');
+    
+    const doc = await Save.findOne({ tgId: String(userId) }).lean();
+    if (!doc) {
+      return {
+        username: 'Новичок',
+        level: 1,
+        cp: 0,
+        floor: 1,
+        killCount: 0,
+        gold: 0,
+        pixr: 0,
+        gram: 0,
+      };
+    }
+    
+    const data = doc.data || {};
+    return {
+      username: doc.firstName || doc.username || 'Игрок',
+      level: doc.level || 1,
+      cp: doc.cp || 0,
+      floor: doc.floor || 1,
+      killCount: data.killCount || 0,
+      gold: data.gold || 0,
+      pixr: data.pixr || 0,
+      gram: data.gram || 0,
+    };
+  } catch (e) {
+    console.error('❌ [getPlayerProfile] error:', e.message);
+    return {
+      username: 'Ошибка',
+      level: 0,
+      cp: 0,
+      floor: 0,
+      killCount: 0,
+      gold: 0,
+      pixr: 0,
+      gram: 0,
+    };
+  }
+}
+
+// ── Получение pending награды ──
+async function getPendingReward(userId) {
+  try {
+    const mongoose = require('mongoose');
+    const Save = mongoose.model('Save');
+    
+    const doc = await Save.findOne({ tgId: String(userId) }).lean();
+    if (!doc) return 0;
+    
+    const friends = await Save.find({ refBy: String(userId) })
+      .select('level -_id').lean();
+    
+    const milestones = doc.refMilestones || {};
+    let total = 0;
+    
+    friends.forEach(f => {
+      const paid = milestones[f.tgId] || 0;
+      const maxMilestone = Math.floor(f.level / 5) * 5;
+      if (maxMilestone > paid) {
+        total += ((maxMilestone - paid) / 5) * 500;
+      }
+    });
+    
+    return total;
+  } catch (e) {
+    console.error('❌ [getPendingReward] error:', e.message);
+    return 0;
+  }
+}
+
+// ── Остановка бота ──
+function stopBot() {
+  if (bot) {
+    bot.stopPolling();
+    bot = null;
+    console.log('🛑 Бот остановлен');
+  }
+}
+
+// ── Экспорт ──
+module.exports = {
+  initBot,
+  stopBot,
+  get bot() { return bot; }
+};
