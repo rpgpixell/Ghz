@@ -339,6 +339,7 @@ app.post('/save/partial', authMiddleware, async (req, res) => {
 /**
  * Превращает Mongoose-документ в чистый объект для фронтенда.
  */
+// server.js — docToSave()
 function docToSave(doc) {
   return {
     gold:      doc.gold,
@@ -364,14 +365,18 @@ function docToSave(doc) {
     inventory: doc.inventory || [],
     equipped:  doc.equipped,
     skills:    doc.skills || {},
+    // ✅ ДОБАВИТЬ ЭТУ СТРОКУ:
+    _ts:       doc.updatedAt ? new Date(doc.updatedAt).getTime() : Date.now(),
   };
 }
 
 // Поля которые разрешено патчить (whitelist)
+// server.js — ALLOWED_FLAT
 const ALLOWED_FLAT = [
   'gold','pixr','gram','level','xp','xpNeeded',
   'floor','maxFloor','killCount','charId',
   'hp','maxHp','potionLv','potions','potionThreshold',
+  '_ts', // ✅ ДОБАВИТЬ ЭТУ СТРОКУ
 ];
 const ALLOWED_NESTED = ['baseStats','stats','upg','bp','prem','equipped'];
 const ALLOWED_ARRAYS = ['inventory','skills'];

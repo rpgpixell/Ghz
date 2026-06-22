@@ -3,14 +3,13 @@
   api.js — Клиентский модуль сохранения/загрузки
   Pixel Runner RPG
 
-  СТРАТЕГИЯ СОХРАНЕНИЙ (МАКСИМАЛЬНО ПРОСТАЯ):
+  СТРАТЕГИЯ СОХРАНЕНИЙ (С MERGE):
   1. localStorage — мгновенное сохранение при каждом изменении
   2. Сервер — сохранение каждые 30 секунд
-  3. При загрузке: сервер → если ошибка, то localStorage
+  3. При загрузке: берем НОВЕЙШЕЕ (сервер vs локальное)
   4. При закрытии: только localStorage (гарантированно!)
-  5. НЕТ Telegram API, sendBeacon, fetch при закрытии
 
-  API.init()          — загрузка (сервер → кэш)
+  API.init()          — загрузка (merge сервер + локальное)
   API.save()          — сохранение на сервер (каждые 30 сек)
   API.saveLocal()     — мгновенное сохранение в localStorage
   API.partial()       — частичное обновление (сервер + кэш)
@@ -62,11 +61,13 @@ const API = (function() {
   function writeLocal(snapshot) {
     try {
       var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
-      localStorage.setItem(key, JSON.stringify({
+      // ✅ Добавляем timestamp для сравнения
+      var data = {
         data: snapshot,
         timestamp: Date.now(),
         userId: _userId
-      }));
+      };
+      localStorage.setItem(key, JSON.stringify(data));
       return true;
     } catch(e) {
       console.warn('[API] Local save failed:', e.message);
@@ -80,7 +81,10 @@ const API = (function() {
       var raw = localStorage.getItem(key);
       if (!raw) return null;
       var parsed = JSON.parse(raw);
-      return parsed.data;
+      return {
+        data: parsed.data,
+        timestamp: parsed.timestamp || 0
+      };
     } catch(e) {
       return null;
     }
@@ -91,6 +95,36 @@ const API = (function() {
       var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
       localStorage.removeItem(key);
     } catch(e) {}
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  MERGE — берем новейшее
+  // ══════════════════════════════════════════════════════
+
+  function mergeSaves(serverSave, localData) {
+    // Если нет локального — берем сервер
+    if (!localData) {
+      console.log('[API] No local save, using server');
+      return serverSave;
+    }
+    
+    // Если нет серверного — берем локальное
+    if (!serverSave) {
+      console.log('[API] No server save, using local');
+      return localData.data;
+    }
+    
+    // ✅ Сравниваем по timestamp
+    var localTs = localData.timestamp || 0;
+    var serverTs = serverSave._ts || 0;
+    
+    if (localTs > serverTs) {
+      console.log('[API] Using LOCAL save (newer by ' + Math.round((localTs - serverTs) / 1000) + 's)');
+      return localData.data;
+    }
+    
+    console.log('[API] Using SERVER save (newer or equal)');
+    return serverSave;
   }
 
   // ══════════════════════════════════════════════════════
@@ -152,6 +186,7 @@ const API = (function() {
       inventory: G.inventory.slice(),
       equipped:  Object.assign({}, G.equipped),
       skills:    Object.assign({}, G.skills),
+      _ts:       Date.now(),  // ✅ timestamp для сравнения
     };
   }
 
@@ -177,11 +212,28 @@ const API = (function() {
       _firstName = res.firstName || '';
       console.log('[API] Auth OK userId=' + _userId);
 
-      // ✅ Всегда берем с сервера
-      var charId = applySave(res.save);
+      var serverSave = res.save;
+      
+      // ✅ Читаем локальное сохранение
+      var localData = readLocal();
+      
+      // ✅ MERGE — берем новейшее
+      var bestSave = mergeSaves(serverSave, localData);
+      var charId = applySave(bestSave);
+      
+      // ✅ Если взяли локальное — отправляем на сервер
+      if (localData && localData.timestamp > (serverSave?._ts || 0)) {
+        console.log('[API] Local is newer, syncing to server...');
+        // Отправляем асинхронно
+        setTimeout(function() {
+          save().catch(function(e) {
+            console.warn('[API] Sync to server failed:', e.message);
+          });
+        }, 1000);
+      }
       
       // ✅ Обновляем локальное сохранение (кэш)
-      writeLocal(res.save);
+      writeLocal(buildSnapshot());
 
       // ✅ Серверное сохранение каждые 30 секунд
       _saveTimer = setInterval(function() {
@@ -199,10 +251,10 @@ const API = (function() {
       console.error('[API] Auth failed:', e.message);
       
       // ✅ Если сервер упал — пробуем локальное сохранение
-      var local = readLocal();
-      if (local) {
-        console.log('[API] Using local save');
-        return applySave(local);
+      var localData = readLocal();
+      if (localData && localData.data) {
+        console.log('[API] Using local save (server unavailable)');
+        return applySave(localData.data);
       }
       
       return null;
@@ -216,7 +268,7 @@ const API = (function() {
     writeLocal(snapshot);
   }
 
-  // ✅ Сохранение на сервер (каждые 30 секунд)
+  // ✅ Сохранение на сервер
   async function save() {
     if (!_initData || _isSaving) return;
     _isSaving = true;
