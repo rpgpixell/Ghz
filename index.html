@@ -28,10 +28,41 @@
 <div id="app">
 
   <!-- ══════════════════════════════════
+       ЭКРАН ЗАГРУЗКИ
+       Показывается первым, пока грузятся
+       данные с сервера и ресурсы
+       ══════════════════════════════════ -->
+  <div id="loadScreen">
+    <div class="ls-bg-particles" id="lsParticles"></div>
+
+    <div class="ls-logo">
+      <div class="ls-title">PIXEL RUNNER</div>
+      <div class="ls-subtitle">RPG</div>
+    </div>
+
+    <div class="ls-sprite-wrap">
+      <div class="ls-sprite-glow"></div>
+      <canvas id="lsCanvas" width="128" height="128"></canvas>
+    </div>
+
+    <div class="ls-progress-wrap">
+      <div class="ls-progress-track">
+        <div class="ls-progress-fill" id="lsProgressFill"></div>
+      </div>
+    </div>
+    <div class="ls-status" id="lsStatus">Инициализация...</div>
+
+    <div class="ls-user" id="lsUser">
+      <div class="ls-user-avatar" id="lsUserAvatar">?</div>
+      <div class="ls-user-name"   id="lsUserName">Подключение к Telegram...</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════
        ЭКРАН ВЫБОРА ПЕРСОНАЖА
        Показывается до старта игры
        ══════════════════════════════════ -->
-  <div id="charSelect">
+  <div id="charSelect" class="hidden">
     <div class="cs-bg"></div>
     <canvas class="cs-particles" id="csParticles"></canvas>
 

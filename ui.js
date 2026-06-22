@@ -404,21 +404,10 @@ function confirmChar() {
   G_CHAR = CHARS[_csSelected];
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
-
-  // Инициализируем систему сохранений, загружаем сейв, затем стартуем
-  SaveSystem.init(_csSelected).then(function(result) {
-    // Если загрузился сейв — применяем персонажа из сейва (или выбранного)
-    var savedChar = result.data && result.data.charId;
-    if (savedChar && CHARS[savedChar]) {
-      G_CHAR = CHARS[savedChar];
-      applyCharacter(G_CHAR);
-    }
-    recalcStats();
-    startGame();
-  }).catch(function() {
-    // На случай ошибки — просто стартуем
-    startGame();
-  });
+  // Сообщаем SaveSystem какого персонажа выбрал игрок
+  if (typeof SaveSystem !== 'undefined') SaveSystem.setCharId(_csSelected);
+  recalcStats();
+  startGame();
 }
 
 function applyCharacter(ch) {
@@ -496,15 +485,5 @@ function initCsParticles() {
   tick();
 }
 
-// ── Инициализация экрана выбора при загрузке страницы ──
-window.addEventListener('load', function() {
-  initCharSelectSprites();
-  initCsParticles();
-});
-
-// ── resize и Telegram SDK ──
+// ── resize ──
 window.addEventListener('resize', resize);
-if (window.Telegram && window.Telegram.WebApp) {
-  Telegram.WebApp.ready();
-  Telegram.WebApp.expand();
-}
