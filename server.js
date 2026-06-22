@@ -334,6 +334,7 @@ function docToSave(doc) {
     inventory: doc.inventory || [],
     equipped:  doc.equipped,
     skills:    doc.skills || {},
+    _ts:       doc.updatedAt ? new Date(doc.updatedAt).getTime() : 0,
   };
 }
 

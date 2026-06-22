@@ -56,13 +56,13 @@ const API = (function() {
   // ══════════════════════════════════════════════════════
 
   // Сохранить снапшот локально — синхронно, 0ms
+  // Не пишем если персонаж ещё не выбран — иначе затрём charId в localStorage
   function writeLocal(snapshot) {
+    if (!snapshot.charId) return;  // нет смысла писать без персонажа
     try {
-      // Привязываем к userId чтобы не смешивать аккаунты
       var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
       localStorage.setItem(key, JSON.stringify(snapshot));
     } catch(e) {
-      // localStorage может быть заполнен — не критично
       console.warn('[API] localStorage write failed:', e.message);
     }
   }
@@ -79,12 +79,19 @@ const API = (function() {
   }
 
   // Выбрать новейшее из двух сохранений по timestamp
+  // Если локальное новее, но charId=null, а серверное имеет charId — берём серверное
   function mergeSaves(serverSave, localSave) {
     if (!localSave) return serverSave;
     if (!serverSave) return localSave;
     var localTs  = localSave._ts  || 0;
     var serverTs = serverSave._ts || 0;
+    // Если локальное новее
     if (localTs > serverTs) {
+      // Но charId потерян в локальном — берём серверное
+      if (!localSave.charId && serverSave.charId) {
+        console.log('[API] Local newer but charId missing — using server save');
+        return serverSave;
+      }
       console.log('[API] Using local save (newer by ' + Math.round((localTs - serverTs) / 1000) + 's)');
       return localSave;
     }
