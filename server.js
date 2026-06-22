@@ -3,21 +3,7 @@
   server.js — Backend для Pixel Runner RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
 
-  Роуты:
-    GET  /                    — health-check
-    POST /api/load            — { initData, startParam }  -> { ok, save, user }
-    POST /api/save            — { initData, data }        -> { ok, updatedAt }
-    POST /api/character       — { initData, charId }      -> { ok }
-    GET  /api/leaderboard     — топ игроков по CP
-    POST /api/ref/friends     — { initData }              -> { ok, refLink, friends, pendingGold }
-    POST /api/ref/claim       — { initData }              -> { ok, goldEarned }
-
-  ENV (Railway -> Variables):
-    MONGODB_URI    — строка подключения MongoDB Atlas
-    BOT_TOKEN      — токен бота из @BotFather
-    BOT_USERNAME   — username бота (без @), напр. PixelRunnerBot
-    PORT           — задаётся Railway автоматически
-    ALLOW_INSECURE — '1' чтобы пропускать проверку подписи (только для теста)
+  🔥 FIXED: теперь данные привязаны к tgId из initData
   ══════════════════════════════════════════════════════
 */
 
@@ -30,19 +16,17 @@ const app = express();
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
 if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не задан — реферальные ссылки сломаны!');
 const REF_GOLD_PER_MILESTONE = 500;
-const REF_MILESTONE_STEP     = 5;   // каждые 5 уровней друга
+const REF_MILESTONE_STEP     = 5;
 
-// ── Простой in-memory rate limiter (без npm пакета) ──
-// maxReqs запросов за windowMs миллисекунд на одного пользователя
+// ── Rate limiter ──
 const _rl = new Map();
 function rateLimit(tgId, maxReqs, windowMs) {
   const now = Date.now();
   let e = _rl.get(tgId);
   if (!e || now > e.reset) { _rl.set(tgId, { n: 1, reset: now + windowMs }); return false; }
-  if (++e.n > maxReqs) return true; // лимит превышен
+  if (++e.n > maxReqs) return true;
   return false;
 }
-// Чистим старые записи раз в 5 минут
 setInterval(() => { const now = Date.now(); _rl.forEach((v, k) => { if (now > v.reset) _rl.delete(k); }); }, 300000);
 
 // ── CORS ──
@@ -71,16 +55,12 @@ const SaveSchema = new mongoose.Schema({
   firstName: { type: String, default: '' },
   charId:    { type: String, default: null },
   data:      { type: mongoose.Schema.Types.Mixed, default: null },
-  // Денормализовано для лидерборда
   level:     { type: Number, default: 1 },
   cp:        { type: Number, default: 0 },
   floor:     { type: Number, default: 1 },
   updatedAt:    { type: Number, default: 0 },
-  refClaimVer:  { type: Number, default: 0 }, // версия для optimistic lock в /api/ref/claim
-  // Реферальная система
-  refBy:        { type: String, default: null },  // tgId пригласившего
-  // Для каждого друга — максимальный уже вознаграждённый уровень
-  // { "friendTgId": 10, "anotherFriend": 5 }
+  refClaimVer:  { type: Number, default: 0 },
+  refBy:        { type: String, default: null },
   refMilestones: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { minimize: false });
 
@@ -110,7 +90,6 @@ function verifyTelegram(initData) {
     if (calc !== hash) return null;
   }
 
-  // Проверка auth_date: не принимаем initData старше 24 часов
   const authDate = parseInt(params.get('auth_date') || '0', 10);
   if (authDate && (Math.floor(Date.now() / 1000) - authDate) > 86400) return null;
 
@@ -128,21 +107,22 @@ function verifyTelegram(initData) {
 
 function authUser(req, res) {
   const tg = verifyTelegram(req.body && req.body.initData);
-  if (!tg) { res.status(401).json({ ok: false, error: 'auth_failed' }); return null; }
+  if (!tg) { 
+    console.warn('❌ [authUser] Ошибка авторизации');
+    res.status(401).json({ ok: false, error: 'auth_failed' }); 
+    return null; 
+  }
   return tg;
 }
 
 // ═══════════════════════════════
-//  Утилита: посчитать pending gold реферера
-//  refMilestones — объект { friendId: highestPaidLevel }
-//  friends — массив { tgId, level }
+//  Утилита: посчитать pending gold
 // ═══════════════════════════════
 function calcPendingGold(refMilestones, friends) {
   let gold = 0;
   const newMilestones = Object.assign({}, refMilestones);
   friends.forEach(f => {
     const paid = newMilestones[f.tgId] || 0;
-    // сколько ещё не оплаченных "пятёрок"
     const maxMilestone = Math.floor(f.level / REF_MILESTONE_STEP) * REF_MILESTONE_STEP;
     if (maxMilestone > paid) {
       const count = (maxMilestone - paid) / REF_MILESTONE_STEP;
@@ -162,24 +142,39 @@ app.get('/', (req, res) => {
 
 // ── Загрузка прогресса ──
 app.post('/api/load', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
-  // startParam может прийти из initData (Telegram парсит start_param автоматически)
-  // или явно из тела запроса как fallback
+  const tg = authUser(req, res); 
+  if (!tg) return;
+  
   const startParam = tg.startParam || (req.body && req.body.startParam) || '';
+  console.log(`🟢 [load] tgId: ${tg.id}, startParam: ${startParam || 'none'}`);
+  
   try {
     let doc = await Save.findOne({ tgId: tg.id });
 
-    // Новый пользователь пришёл по реферальной ссылке
     if (!doc) {
       const refBy = (startParam && startParam !== tg.id) ? startParam : null;
       doc = await Save.create({
-        tgId: tg.id, username: tg.username, firstName: tg.firstName,
-        refBy, refMilestones: {},
+        tgId: tg.id, 
+        username: tg.username, 
+        firstName: tg.firstName,
+        refBy, 
+        refMilestones: {},
+        data: null,
       });
+      console.log(`🆕 [load] Новый пользователь: ${tg.id}, refBy: ${refBy || 'none'}`);
     } else if (!doc.refBy && startParam && startParam !== tg.id) {
-      // Уже есть аккаунт но реферер не был задан (открыл ссылку повторно)
       await Save.updateOne({ tgId: tg.id }, { $set: { refBy: startParam } });
       doc.refBy = startParam;
+      console.log(`🔗 [load] Добавлен реферер для ${tg.id}: ${startParam}`);
+    }
+
+    // ⚠️ ВАЖНО: проверяем, что данные в БД принадлежат этому пользователю
+    // Если в data есть tgId и он не совпадает — это ошибка
+    if (doc.data && doc.data.tgId && doc.data.tgId !== tg.id) {
+      console.error(`❌ [load] Несоответствие tgId! БД: ${doc.data.tgId}, запрос: ${tg.id}`);
+      // Исправляем: перезаписываем data с правильным tgId
+      doc.data.tgId = tg.id;
+      await doc.save();
     }
 
     res.json({
@@ -192,27 +187,45 @@ app.post('/api/load', async (req, res) => {
       user: { id: tg.id, username: tg.username, firstName: tg.firstName },
     });
   } catch (e) {
-    console.error('load error:', e.message);
+    console.error('❌ [load] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
 // ── Сохранение полного снапшота ──
 app.post('/api/save', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
-  // 8 запросов за 15 сек на пользователя (норма: 1/15с + до 7 структурных действий)
-  if (rateLimit(tg.id, 8, 15000)) return res.status(429).json({ ok: false, error: 'rate_limit' });
+  const tg = authUser(req, res); 
+  if (!tg) return;
+  
+  if (rateLimit(tg.id, 8, 15000)) {
+    return res.status(429).json({ ok: false, error: 'rate_limit' });
+  }
+  
   const data = req.body && req.body.data;
   if (!data || typeof data !== 'object') {
     return res.status(400).json({ ok: false, error: 'bad_data' });
   }
+
+  // ⚠️ КРИТИЧНО: проверяем, что data.tgId совпадает с tg.id из авторизации
+  if (data.tgId && data.tgId !== tg.id) {
+    console.error(`❌ [save] Попытка сохранить чужие данные! tgId из запроса: ${tg.id}, tgId в data: ${data.tgId}`);
+    return res.status(403).json({ ok: false, error: 'user_mismatch' });
+  }
+
+  // Принудительно устанавливаем правильный tgId
+  data.tgId = tg.id;
+  
   const clientTs = Number(data.updatedAt) || Date.now();
+  console.log(`💾 [save] tgId: ${tg.id}, level: ${data.level || 1}, cp: ${data.cp || 0}`);
+  
   try {
     await Save.updateOne(
       { tgId: tg.id },
       { $set: {
-        tgId: tg.id, username: tg.username, firstName: tg.firstName,
-        charId: data.charId || null, data,
+        username: tg.username, 
+        firstName: tg.firstName,
+        charId: data.charId || null, 
+        data,
         level: Number(data.level) || 1,
         cp:    Number(data.cp)    || 0,
         floor: Number(data.floor) || 1,
@@ -222,59 +235,86 @@ app.post('/api/save', async (req, res) => {
     );
     res.json({ ok: true, updatedAt: clientTs });
   } catch (e) {
-    console.error('save error:', e.message);
+    console.error('❌ [save] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
 // ── Выбор персонажа ──
 app.post('/api/character', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
+  const tg = authUser(req, res); 
+  if (!tg) return;
+  
   const charId = req.body && req.body.charId;
-  if (!charId) return res.status(400).json({ ok: false, error: 'bad_char' });
+  if (!charId) {
+    return res.status(400).json({ ok: false, error: 'bad_char' });
+  }
+  
+  console.log(`🎭 [character] tgId: ${tg.id}, charId: ${charId}`);
+  
   try {
-    await Save.updateOne(
-      { tgId: tg.id },
-      { $set: { tgId: tg.id, username: tg.username, firstName: tg.firstName, charId } },
-      { upsert: true }
-    );
+    // Сначала проверяем, существует ли документ
+    let doc = await Save.findOne({ tgId: tg.id });
+    if (!doc) {
+      // Создаём новый документ с правильным tgId
+      doc = await Save.create({
+        tgId: tg.id,
+        username: tg.username,
+        firstName: tg.firstName,
+        charId: charId,
+        data: { tgId: tg.id, charId: charId },
+      });
+    } else {
+      // Обновляем существующий
+      doc.charId = charId;
+      if (!doc.data) doc.data = {};
+      doc.data.charId = charId;
+      doc.data.tgId = tg.id;
+      await doc.save();
+    }
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ ok: false, error: 'server_error' }); }
+  } catch (e) { 
+    console.error('❌ [character] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' }); 
+  }
 });
 
 // ── Лидерборд ──
 app.get('/api/leaderboard', async (req, res) => {
-  // Простая защита: проверяем наличие tgId query-параметра как минимальный барьер от спама
-  // Полная HMAC-проверка не нужна — данные публичные, но отсекаем случайных ботов
   if (!req.query.tgId) return res.status(401).json({ ok: false, error: 'missing_id' });
-  if (rateLimit('lb_' + req.query.tgId, 5, 60000)) return res.status(429).json({ ok: false, error: 'rate_limit' });
+  if (rateLimit('lb_' + req.query.tgId, 5, 60000)) {
+    return res.status(429).json({ ok: false, error: 'rate_limit' });
+  }
   try {
     const top = await Save.find({ charId: { $ne: null } })
       .sort({ cp: -1, level: -1 }).limit(50)
       .select('username firstName level cp floor charId -_id').lean();
     res.json({ ok: true, top });
-  } catch (e) { res.status(500).json({ ok: false, error: 'server_error' }); }
+  } catch (e) { 
+    console.error('❌ [leaderboard] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' }); 
+  }
 });
 
 // ═══════════════════════════════
 //  РЕФЕРАЛЬНАЯ СИСТЕМА
 // ═══════════════════════════════
 
-// ── Список друзей + реферальная ссылка + сколько gold можно забрать ──
 app.post('/api/ref/friends', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
+  const tg = authUser(req, res); 
+  if (!tg) return;
+  
+  console.log(`👥 [ref/friends] tgId: ${tg.id}`);
+  
   try {
     const doc = await Save.findOne({ tgId: tg.id })
       .select('refMilestones -_id').lean();
     const milestones = (doc && doc.refMilestones) || {};
 
-    // Все игроки, которых пригласил этот пользователь
     const friends = await Save.find({ refBy: tg.id })
       .select('tgId firstName username level charId -_id').lean();
 
-    // Считаем сколько золота можно забрать (без записи в БД)
     const { gold: pendingGold } = calcPendingGold(milestones, friends);
-
     const refLink = `https://t.me/${BOT_USERNAME}?startapp=${tg.id}`;
 
     res.json({
@@ -285,26 +325,29 @@ app.post('/api/ref/friends', async (req, res) => {
         name:    f.firstName || f.username || ('Игрок ' + f.tgId.slice(-4)),
         level:   f.level || 1,
         charId:  f.charId,
-        // следующая ступень вознаграждения для этого друга
         nextMilestone: (Math.floor(((milestones[f.tgId] || 0) / REF_MILESTONE_STEP) + 1)) * REF_MILESTONE_STEP,
         paid: milestones[f.tgId] || 0,
       })),
       pendingGold,
     });
   } catch (e) {
-    console.error('ref/friends error:', e.message);
+    console.error('❌ [ref/friends] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Забрать награды за друзей ──
-// Защита от race condition: in-memory lock на время транзакции
 const _claiming = new Set();
 app.post('/api/ref/claim', async (req, res) => {
-  const tg = authUser(req, res); if (!tg) return;
-  // Блокируем параллельные claim от одного пользователя
-  if (_claiming.has(tg.id)) return res.status(429).json({ ok: false, error: 'in_progress' });
+  const tg = authUser(req, res); 
+  if (!tg) return;
+  
+  if (_claiming.has(tg.id)) {
+    return res.status(429).json({ ok: false, error: 'in_progress' });
+  }
+  
   _claiming.add(tg.id);
+  console.log(`💰 [ref/claim] tgId: ${tg.id}`);
+  
   try {
     const doc = await Save.findOne({ tgId: tg.id });
     if (!doc) return res.json({ ok: true, goldEarned: 0 });
@@ -315,24 +358,34 @@ app.post('/api/ref/claim', async (req, res) => {
     const { gold, newMilestones } = calcPendingGold(doc.refMilestones || {}, friends);
     if (gold === 0) return res.json({ ok: true, goldEarned: 0 });
 
-    // Атомарное обновление: используем $set с проверкой что milestones не изменились
-    // (optimistic lock через refClaimVer)
-    const updateFields = { refMilestones: newMilestones, $inc: { refClaimVer: 1 } };
-    if (doc.data && typeof doc.data.gold === 'number') {
+    // Убеждаемся, что data существует и имеет правильный tgId
+    if (!doc.data) doc.data = { tgId: tg.id };
+    if (doc.data.tgId !== tg.id) doc.data.tgId = tg.id;
+    
+    if (typeof doc.data.gold === 'number') {
       doc.data.gold += gold;
-      updateFields.data = doc.data;
+    } else {
+      doc.data.gold = gold;
     }
+
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, refClaimVer: doc.refClaimVer || 0 },
-      { $set: { refMilestones: newMilestones, data: doc.data }, $inc: { refClaimVer: 1 } },
+      { 
+        $set: { 
+          refMilestones: newMilestones, 
+          data: doc.data 
+        }, 
+        $inc: { refClaimVer: 1 } 
+      },
       { new: false }
     );
-    // Если result null — параллельный процесс уже обновил запись
+    
     if (!result) return res.json({ ok: true, goldEarned: 0, error: 'concurrent' });
 
+    console.log(`✅ [ref/claim] tgId: ${tg.id}, goldEarned: ${gold}`);
     res.json({ ok: true, goldEarned: gold });
   } catch (e) {
-    console.error('ref/claim error:', e.message);
+    console.error('❌ [ref/claim] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   } finally {
     _claiming.delete(tg.id);
@@ -342,6 +395,5 @@ app.post('/api/ref/claim', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('🚀 Server on :' + PORT);
-  // Инициализируем бота после старта сервера
   try { require('./bot').initBot(app); } catch (e) { console.warn('Bot init skipped:', e.message); }
 });
