@@ -410,7 +410,8 @@ function confirmChar() {
   startGame();
 }
 
-function applyCharacter(ch) {
+// keepHp=true — не трогать G.hp/G.maxHp (при загрузке сейва)
+function applyCharacter(ch, keepHp) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
@@ -420,9 +421,11 @@ function applyCharacter(ch) {
   window.ATK_FW_CUR      = ch.atkFW;
   window.IDLE_FRAMES_CUR = ch.idleFrames;
   window.IDLE_FW_CUR     = ch.idleFW;
-  G.baseStats = Object.assign({}, ch.baseStats);
-  Object.assign(G.stats, ch.baseStats);
-  G.hp = G.stats.hp; G.maxHp = G.stats.hp;
+  if (!keepHp) {
+    G.baseStats = Object.assign({}, ch.baseStats);
+    Object.assign(G.stats, ch.baseStats);
+    G.hp = G.stats.hp; G.maxHp = G.stats.hp;
+  }
   // аватар теперь SVG, не трогаем
 }
 
