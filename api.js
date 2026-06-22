@@ -3,18 +3,21 @@
   api.js — Клиентский модуль сохранения/загрузки
   Pixel Runner RPG
 
-  Стратегия сохранений:
+  СТРАТЕГИЯ СОХРАНЕНИЙ:
   1. Сервер — единственный источник истины
-  2. Автосохранение каждые 20 сек
-  3. При старте — загрузка с сервера
-  4. sendBeacon при закрытии
+  2. localStorage — аварийный кэш (только при ошибках!)
+  3. Автосохранение каждые 20 сек
+  4. При старте: сервер → если ошибка, то кэш
+  5. При сохранении: сервер → если ошибка, то кэш
+  6. При закрытии: Telegram WebApp API + fetch + кэш
 
-  API.init()          — авторизация + загрузка с сервера
-  API.save()          — полное сохранение на сервер
-  API.saveBeacon()    — sendBeacon при закрытии
-  API.partial(fields) — частичный патч сервера
+  API.init()          — авторизация + загрузка (сервер → кэш)
+  API.save()          — полное сохранение (сервер → кэш)
+  API.saveOnClose()   — сохранение при закрытии (все методы)
+  API.partial(fields) — частичный патч (сервер → кэш)
   API.markDirty()     — пометить, что нужно сохранить
-  API.savedHp         — HP из сохранения (до applyCharacter)
+  API.savedHp         — HP из сохранения
+  API.restoreFromCache() — экстренное восстановление
   ══════════════════════════════════════════════════════
 */
 
@@ -22,6 +25,7 @@ const API = (function() {
   'use strict';
 
   const BASE_URL = 'https://ghz-production.up.railway.app';
+  const LS_KEY = 'pixelrpg_emergency';
 
   let _initData = '';
   let _userId = '';
@@ -30,6 +34,7 @@ const API = (function() {
   let _saveTimer = null;
   let _dirty = false;
   let _savedHp = null;
+  let _isSaving = false;
 
   function getInitData() {
     if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
@@ -54,9 +59,60 @@ const API = (function() {
   }
 
   // ══════════════════════════════════════════════════════
-  //  Применение сохранения к G
-  //  HP запоминаем в _savedHp — восстановим ПОСЛЕ applyCharacter
+  //  АВАРИЙНЫЙ КЭШ (localStorage)
+  //  ТОЛЬКО при ошибках сервера!
   // ══════════════════════════════════════════════════════
+
+  function writeEmergencyCache(snapshot) {
+    try {
+      var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
+      localStorage.setItem(key, JSON.stringify({
+        data: snapshot,
+        timestamp: Date.now(),
+        userId: _userId
+      }));
+      console.log('[API] Emergency cache saved');
+      return true;
+    } catch(e) {
+      console.warn('[API] Emergency cache write failed:', e.message);
+      return false;
+    }
+  }
+
+  function readEmergencyCache() {
+    try {
+      var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
+      var raw = localStorage.getItem(key);
+      if (!raw) return null;
+      
+      var parsed = JSON.parse(raw);
+      // ✅ Кэш не старше 1 часа
+      if (Date.now() - parsed.timestamp > 3600000) {
+        console.log('[API] Emergency cache expired');
+        localStorage.removeItem(key);
+        return null;
+      }
+      
+      console.log('[API] Emergency cache found from', new Date(parsed.timestamp));
+      return parsed.data;
+    } catch(e) {
+      console.warn('[API] Emergency cache read failed:', e.message);
+      return null;
+    }
+  }
+
+  function clearEmergencyCache() {
+    try {
+      var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
+      localStorage.removeItem(key);
+      console.log('[API] Emergency cache cleared');
+    } catch(e) {}
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  ПРИМЕНЕНИЕ СОХРАНЕНИЯ
+  // ══════════════════════════════════════════════════════
+
   function applySave(save) {
     if (!save) return null;
 
@@ -69,7 +125,6 @@ const API = (function() {
       if (save[k] !== undefined && save[k] !== null) G[k] = save[k];
     });
 
-    // HP отдельно — applyCharacter перезапишет, восстановим потом
     if (save.hp !== undefined && save.hp !== null) {
       _savedHp = { hp: save.hp, maxHp: save.maxHp };
     }
@@ -88,7 +143,6 @@ const API = (function() {
     return save.charId || null;
   }
 
-  // ── Снапшот G ──
   function buildSnapshot() {
     return {
       charId:    window.G_CHAR ? window.G_CHAR.id : null,
@@ -118,31 +172,36 @@ const API = (function() {
   }
 
   // ══════════════════════════════════════════════════════
-  //  Публичное API — ТОЛЬКО СЕРВЕР
+  //  ПУБЛИЧНОЕ API
   // ══════════════════════════════════════════════════════
 
   async function init() {
     _initData = getInitData();
     if (!_initData) {
-      console.warn('[API] No initData — offline mode');
+      console.warn('[API] No initData');
       return null;
     }
+
     try {
       var res = await apiFetch('/auth', {
         method: 'POST',
         body: JSON.stringify({ initData: _initData }),
       });
+      
       _userId    = res.userId;
       _photoUrl  = res.photoUrl  || '';
       _firstName = res.firstName || '';
-      console.log('[API] Auth OK userId=' + _userId + ' isNew=' + res.isNew);
+      console.log('[API] Auth OK userId=' + _userId);
 
       // ✅ Всегда берем с сервера
       var charId = applySave(res.save);
+      
+      // ✅ Очищаем аварийный кэш после успешной загрузки
+      clearEmergencyCache();
 
       // Автосохранение каждые 20 сек
       _saveTimer = setInterval(function() {
-        if (_dirty) {
+        if (_dirty && !_isSaving) {
           save().catch(function(e) {
             console.warn('[API] Auto-save failed:', e.message);
           });
@@ -151,45 +210,106 @@ const API = (function() {
       }, 20000);
 
       return charId;
+
     } catch (e) {
       console.error('[API] Auth failed:', e.message);
+      
+      // ✅ Если сервер упал — пробуем аварийный кэш
+      var emergency = readEmergencyCache();
+      if (emergency) {
+        console.log('[API] Using emergency cache');
+        return applySave(emergency);
+      }
+      
       return null;
     }
   }
 
-  // Полное сохранение: только сервер
+  // Полное сохранение: сервер → если ошибка, то кэш
   async function save() {
-    if (!_initData) return;
+    if (!_initData || _isSaving) return;
+    
+    _isSaving = true;
     var snapshot = buildSnapshot();
+    
     try {
       await apiFetch('/save', {
         method: 'POST',
         body: JSON.stringify(snapshot),
       });
+      
+      // ✅ Если успешно — очищаем аварийный кэш
+      clearEmergencyCache();
       console.log('[API] Save OK');
+      
     } catch (e) {
       console.error('[API] Save failed:', e.message);
+      
+      // ✅ Если сервер недоступен — сохраняем в аварийный кэш
+      writeEmergencyCache(snapshot);
       throw e;
+      
+    } finally {
+      _isSaving = false;
     }
   }
 
-  // sendBeacon при закрытии — только сервер
-  function saveBeacon() {
+  // ⚠️ ГАРАНТИРОВАННОЕ сохранение при закрытии!
+  function saveOnClose() {
     if (!_initData) return;
+    
     var snapshot = buildSnapshot();
-    var payload = Object.assign({}, snapshot, { _initData: _initData });
-    var blob = new Blob(
-      [JSON.stringify(payload)],
-      { type: 'application/json' }
-    );
-    navigator.sendBeacon(BASE_URL + '/save/beacon', blob);
-    console.log('[API] Beacon sent');
+    
+    // ✅ 1. Всегда пишем в localStorage (гарантированно!)
+    writeEmergencyCache(snapshot);
+    
+    // ✅ 2. Пробуем отправить через Telegram WebApp (надежнее всего)
+    try {
+      if (window.Telegram && window.Telegram.WebApp) {
+        window.Telegram.WebApp.sendData(JSON.stringify({
+          action: 'save',
+          data: snapshot
+        }));
+        console.log('[API] Data sent via Telegram.sendData');
+      }
+    } catch (e) {
+      console.warn('[API] Telegram.sendData failed:', e.message);
+    }
+    
+    // ✅ 3. Пробуем через fetch + keepalive
+    try {
+      var payload = Object.assign({}, snapshot, { _initData: _initData });
+      fetch(BASE_URL + '/save/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(function() {});
+      console.log('[API] Close save sent via fetch');
+    } catch (e) {
+      console.warn('[API] Fetch close failed:', e.message);
+    }
+    
+    // ✅ 4. sendBeacon как последняя надежда (для старых браузеров)
+    try {
+      var blob = new Blob(
+        [JSON.stringify({ _initData: _initData, data: snapshot })],
+        { type: 'application/json' }
+      );
+      navigator.sendBeacon(BASE_URL + '/save/beacon', blob);
+      console.log('[API] Beacon sent on close');
+    } catch (e) {
+      console.warn('[API] Beacon failed:', e.message);
+    }
   }
 
-  // Частичный патч сервера
+  // Частичный патч
   async function partial(fields) {
-    if (!_initData) return;
+    if (!_initData || _isSaving) return;
     _dirty = false;
+    
+    var snapshot = buildSnapshot();
+    
     try {
       await apiFetch('/save/partial', {
         method: 'POST',
@@ -198,6 +318,8 @@ const API = (function() {
       console.log('[API] Partial OK');
     } catch (e) {
       console.error('[API] Partial failed:', e.message);
+      // ✅ При ошибке — сохраняем полный снапшот в кэш
+      writeEmergencyCache(snapshot);
       throw e;
     }
   }
@@ -206,12 +328,24 @@ const API = (function() {
     _dirty = true;
   }
 
+  // Экстренное восстановление из кэша
+  function restoreFromCache() {
+    var emergency = readEmergencyCache();
+    if (emergency) {
+      applySave(emergency);
+      console.log('[API] Restored from emergency cache');
+      return true;
+    }
+    return false;
+  }
+
   return {
-    init:        init,
-    save:        save,
-    saveBeacon:  saveBeacon,
-    partial:     partial,
-    markDirty:   markDirty,
+    init:           init,
+    save:           save,
+    saveOnClose:    saveOnClose,
+    partial:        partial,
+    markDirty:      markDirty,
+    restoreFromCache: restoreFromCache,
     get loaded()    { return !!_userId; },
     get userId()    { return _userId; },
     get savedHp()   { return _savedHp; },

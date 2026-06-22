@@ -4,7 +4,8 @@
   Содержит: renderUpgrades, buyUpgrade, renderFloors,
   openFloorLoot, goToFloor, renderRating, renderWallet,
   switchTab, экран выбора персонажа (selectChar,
-  confirmChar, applyCharacter, startGame, анимации)
+  confirmChar, applyCharacter, startGame, анимации),
+  Telegram WebApp интеграция
   ══════════════════════════════════════════════════════
 */
 
@@ -485,7 +486,46 @@ function initCsParticles() {
   tick();
 }
 
-// ── Инициализация экрана выбора при загрузке страницы ──
+// ══════════════════════════════════════════════════════
+//  TELEGRAM WEBAPP ИНТЕГРАЦИЯ
+// ══════════════════════════════════════════════════════
+
+function initTelegramWebApp() {
+  if (!window.Telegram || !window.Telegram.WebApp) {
+    console.warn('[Telegram] WebApp not available');
+    return;
+  }
+
+  var tg = window.Telegram.WebApp;
+  
+  // Сообщаем, что приложение готово
+  tg.ready();
+  
+  // Растягиваем на весь экран
+  tg.expand();
+  
+  // ОСНОВНОЙ МЕТОД: при закрытии Telegram WebApp
+  tg.onEvent('viewportChanged', function() {
+    // Если приложение свернулось или закрылось
+    if (tg.isExpanded === false) {
+      console.log('[Telegram] Closing, saving...');
+      API.saveOnClose();
+    }
+  });
+  
+  // При изменении темы (тоже сигнал о перезагрузке)
+  tg.onEvent('themeChanged', function() {
+    console.log('[Telegram] Theme changed, saving...');
+    API.saveOnClose();
+  });
+  
+  console.log('[Telegram] WebApp initialized');
+}
+
+// ══════════════════════════════════════════════════════
+//  ИНИЦИАЛИЗАЦИЯ
+// ══════════════════════════════════════════════════════
+
 window.addEventListener('load', async function() {
   // Telegram SDK
   if (window.Telegram && window.Telegram.WebApp) {
@@ -548,6 +588,10 @@ window.addEventListener('load', async function() {
     }
 
     document.getElementById('charSelect').classList.add('hidden');
+    
+    // ✅ Инициализируем Telegram WebApp после загрузки
+    initTelegramWebApp();
+    
     startGame();
   }
   // Иначе — показываем экран выбора
@@ -557,17 +601,17 @@ window.addEventListener('load', async function() {
 window.addEventListener('resize', resize);
 
 // ── Принудительное сохранение при закрытии/сворачивании ──
-// sendBeacon — гарантированная отправка даже при закрытии вкладки
+// ✅ Все методы сохранения при закрытии
 window.addEventListener('beforeunload', function() {
-  if (G_CHAR) API.saveBeacon();
+  if (G_CHAR) API.saveOnClose();
 });
+
 window.addEventListener('pagehide', function() {
-  if (G_CHAR) API.saveBeacon();
+  if (G_CHAR) API.saveOnClose();
 });
+
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'hidden' && G_CHAR) {
-    // Сначала beacon (синхронно), потом async save для надёжности
-    API.saveBeacon();
-    API.save();
+    API.saveOnClose();
   }
 });
