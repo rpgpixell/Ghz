@@ -246,22 +246,25 @@
     SYNC.dirtyTimer = setTimeout(pushServer, 1200);
   }
 
-  // Флаш при закрытии/сворачивании.
-  // sendBeacon не работает в Telegram WebView — используем обычный fetch.
-  // localStorage — главная страховка (синхронно, не теряется никогда).
-  function flush() {
-    if (!SYNC.started) return;
-    var snap = serializeState();
-    writeLocal(snap);           // всегда в localStorage синхронно
-    if (!SYNC.online) return;
-    try {
-      fetch(API + '/api/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT, data: snap }),
-      });
-    } catch (e) {}
+function flush() {
+  if (!SYNC.started) return;
+  
+  var snap = serializeState();
+  writeLocal(snap); // всегда в localStorage синхронно
+  
+  if (!SYNC.online) return;
+  
+  try {
+    fetch(API + '/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: TG_INIT, data: snap }),
+      keepalive: true // ← ДОБАВИТЬ ЭТУ СТРОКУ
+    }).catch(function() {}); // ← ДОБАВИТЬ ЭТУ СТРОКУ
+  } catch (e) {
+    // Игнорируем ошибки
   }
+}
 
   // ───────────────────────────────
   //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
