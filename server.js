@@ -284,7 +284,7 @@ async function authMiddleware(req, res, next) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ 
+  return res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
     mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
@@ -316,7 +316,7 @@ app.post('/api/auth/init', authMiddleware, async (req, res) => {
       await statsDoc.save();
     }
     
-    res.json({
+    return res.json({
       success: true,
       user: {
         id: userDoc.telegramId,
@@ -329,7 +329,7 @@ app.post('/api/auth/init', authMiddleware, async (req, res) => {
     
   } catch (error) {
     console.error('Init error:', error);
-    res.status(500).json({ error: 'Failed to initialize user' });
+    return res.status(500).json({ error: 'Failed to initialize user' });
   }
 });
 
@@ -339,12 +339,10 @@ app.post('/api/save', authMiddleware, async (req, res) => {
     const { telegramId } = req;
     const data = req.body;
     
-    // Проверяем, что данные пришли
     if (!data || Object.keys(data).length === 0) {
       return res.status(400).json({ error: 'No data provided' });
     }
     
-    // Находим статистику пользователя
     let stats = await UserStats.findOne({ telegramId });
     if (!stats) {
       stats = new UserStats({ telegramId });
@@ -445,7 +443,7 @@ app.post('/api/save', authMiddleware, async (req, res) => {
       { lastSaveAt: new Date() }
     );
     
-    res.json({
+    return res.json({
       success: true,
       savedAt: stats.updatedAt,
       message: 'Progress saved successfully'
@@ -453,7 +451,7 @@ app.post('/api/save', authMiddleware, async (req, res) => {
     
   } catch (error) {
     console.error('Save error:', error);
-    res.status(500).json({ error: 'Failed to save progress' });
+    return res.status(500).json({ error: 'Failed to save progress' });
   }
 });
 
@@ -467,14 +465,14 @@ app.get('/api/load', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'User stats not found' });
     }
     
-    res.json({
+    return res.json({
       success: true,
       stats: stats
     });
     
   } catch (error) {
     console.error('Load error:', error);
-    res.status(500).json({ error: 'Failed to load progress' });
+    return res.status(500).json({ error: 'Failed to load progress' });
   }
 });
 
@@ -536,7 +534,7 @@ app.get('/api/leaderboard', async (req, res) => {
     // Получаем общее количество игроков
     const total = await UserStats.countDocuments();
     
-    res.json({
+    return res.json({
       success: true,
       leaderboard,
       total,
@@ -546,11 +544,11 @@ app.get('/api/leaderboard', async (req, res) => {
     
   } catch (error) {
     console.error('Leaderboard error:', error);
-    res.status(500).json({ error: 'Failed to get leaderboard' });
+    return res.status(500).json({ error: 'Failed to get leaderboard' });
   }
 });
 
-// ── 5. GET USER STATS — получение статистики конкретного игрока ──
+// ── 5. GET USER STATS ──
 app.get('/api/user/:telegramId', async (req, res) => {
   try {
     const { telegramId } = req.params;
@@ -562,7 +560,7 @@ app.get('/api/user/:telegramId', async (req, res) => {
     
     const user = await User.findOne({ telegramId });
     
-    res.json({
+    return res.json({
       success: true,
       user: {
         id: stats.telegramId,
@@ -582,23 +580,20 @@ app.get('/api/user/:telegramId', async (req, res) => {
     
   } catch (error) {
     console.error('Get user error:', error);
-    res.status(500).json({ error: 'Failed to get user stats' });
+    return res.status(500).json({ error: 'Failed to get user stats' });
   }
 });
 
-// ── 6. RESET — сброс прогресса (danger!) ──
+// ── 6. RESET — сброс прогресса ──
 app.post('/api/reset', authMiddleware, async (req, res) => {
   try {
     const { telegramId } = req;
     
-    // Удаляем статистику
     await UserStats.findOneAndDelete({ telegramId });
-    
-    // Создаём новую
     const newStats = new UserStats({ telegramId });
     await newStats.save();
     
-    res.json({
+    return res.json({
       success: true,
       message: 'Progress reset successfully',
       stats: newStats
@@ -606,11 +601,11 @@ app.post('/api/reset', authMiddleware, async (req, res) => {
     
   } catch (error) {
     console.error('Reset error:', error);
-    res.status(500).json({ error: 'Failed to reset progress' });
+    return res.status(500).json({ error: 'Failed to reset progress' });
   }
 });
 
-// ── 7. UPDATE CHARACTER — смена персонажа ──
+// ── 7. UPDATE CHARACTER ──
 app.post('/api/character', authMiddleware, async (req, res) => {
   try {
     const { telegramId } = req;
@@ -622,10 +617,7 @@ app.post('/api/character', authMiddleware, async (req, res) => {
     
     const stats = await UserStats.findOneAndUpdate(
       { telegramId },
-      { 
-        character,
-        updatedAt: new Date()
-      },
+      { character, updatedAt: new Date() },
       { new: true }
     );
     
@@ -633,18 +625,18 @@ app.post('/api/character', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'User stats not found' });
     }
     
-    res.json({
+    return res.json({
       success: true,
       stats
     });
     
   } catch (error) {
     console.error('Character update error:', error);
-    res.status(500).json({ error: 'Failed to update character' });
+    return res.status(500).json({ error: 'Failed to update character' });
   }
 });
 
-// ── 8. BATTLE PASS — покупка BP ──
+// ── 8. BATTLE PASS ──
 app.post('/api/bp/buy', authMiddleware, async (req, res) => {
   try {
     const { telegramId } = req;
@@ -666,7 +658,7 @@ app.post('/api/bp/buy', authMiddleware, async (req, res) => {
     stats.bp.active = true;
     await stats.save();
     
-    res.json({
+    return res.json({
       success: true,
       message: 'Battle Pass activated',
       stats
@@ -674,11 +666,11 @@ app.post('/api/bp/buy', authMiddleware, async (req, res) => {
     
   } catch (error) {
     console.error('BP buy error:', error);
-    res.status(500).json({ error: 'Failed to buy Battle Pass' });
+    return res.status(500).json({ error: 'Failed to buy Battle Pass' });
   }
 });
 
-// ── 9. PREMIUM — покупка Premium ──
+// ── 9. PREMIUM ──
 app.post('/api/premium/buy', authMiddleware, async (req, res) => {
   try {
     const { telegramId } = req;
@@ -704,17 +696,14 @@ app.post('/api/premium/buy', authMiddleware, async (req, res) => {
     }
     
     stats.gram -= TIERS[tier].cost;
-    
-    // Если уже активен — продлеваем
     const now = Date.now();
     const currentExpiry = stats.prem.expiresAt || 0;
     const baseExpiry = currentExpiry > now ? currentExpiry : now;
     stats.prem.tier = tier;
     stats.prem.expiresAt = baseExpiry + TIERS[tier].days * 86400000;
-    
     await stats.save();
     
-    res.json({
+    return res.json({
       success: true,
       message: `${TIERS[tier].name} Premium activated`,
       stats
@@ -722,14 +711,14 @@ app.post('/api/premium/buy', authMiddleware, async (req, res) => {
     
   } catch (error) {
     console.error('Premium buy error:', error);
-    res.status(500).json({ error: 'Failed to buy Premium' });
+    return res.status(500).json({ error: 'Failed to buy Premium' });
   }
 });
 
 // ── Error handling ──
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
-  res.status(500).json({ 
+  return res.status(500).json({ 
     error: 'Internal server error',
     message: err.message 
   });
