@@ -379,22 +379,34 @@ function confirmChar() {
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
+  // Сохраняем charId сразу после выбора персонажа
+  if (typeof triggerSave === 'function') triggerSave();
 }
 
-// Автозапуск с сохранённым персонажем (вызывается из state.js после загрузки)
+// Автозапуск с сохранённым персонажем (вызывается из state.js)
 function confirmCharById(charId) {
   if (!CHARS[charId]) return;
   Object.values(_csSpriteTimers).forEach(clearInterval);
   if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
   _csSelected = charId;
   G_CHAR = CHARS[charId];
-  applyCharacter(G_CHAR);
-  // Восстанавливаем статы из сохранения (applyCharacter сбросил их на дефолт персонажа)
+  // Применяем спрайты персонажа но НЕ сбрасываем статы
+  var ch = G_CHAR;
+  spriteRun.src  = ch.runSrc;
+  spriteAtk.src  = ch.atkSrc;
+  spriteIdle.src = ch.idleSrc;
+  window.RUN_FRAMES_CUR  = ch.runFrames;
+  window.RUN_FW_CUR      = ch.runFW;
+  window.ATK_FRAMES_CUR  = ch.atkFrames;
+  window.ATK_FW_CUR      = ch.atkFW;
+  window.IDLE_FRAMES_CUR = ch.idleFrames;
+  window.IDLE_FW_CUR     = ch.idleFW;
+  // Восстанавливаем сохранённые статы (не дефолтные)
   if (G._savedBaseStats) {
     G.baseStats = Object.assign({}, G._savedBaseStats);
     Object.assign(G.stats, G._savedBaseStats);
     G.maxHp = G.baseStats.hp;
-    G.hp    = Math.min(G.hp, G.maxHp);
+    G.hp    = Math.min(G.hp || G.maxHp, G.maxHp);
   }
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
@@ -413,7 +425,7 @@ function applyCharacter(ch) {
   G.baseStats = Object.assign({}, ch.baseStats);
   Object.assign(G.stats, ch.baseStats);
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;
-  // аватар теперь SVG, не трогаем
+  // аватар SVG — не трогаем
 }
 
 function startGame() {

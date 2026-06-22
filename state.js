@@ -70,7 +70,7 @@ let _saveDebounceTm = null;
 
 // ── Инициализация Telegram ──
 function tgInit() {
-  const tg = window.Telegram && window.Telegram.WebApp;
+  var tg = window.Telegram && window.Telegram.WebApp;
   if (!tg) { console.warn('Not in Telegram, offline mode'); return; }
   tg.ready();
   tg.expand();
@@ -79,29 +79,26 @@ function tgInit() {
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'hidden') _saveNow();
   });
-  // FIX: была _saveSoon (не определена) → triggerSave
-  setInterval(triggerSave, 30000);
+  setInterval(triggerSave, 30000); // FIX: был _saveSoon (не определена)
 }
 
 // ── Авторизация и загрузка сохранения ──
 async function _authAndLoad() {
   _showLoadingScreen(true, 'Подключение...');
-
-  // Минимум 2.5с на экране загрузки — чтобы все скрипты успели выполниться
   var minWait = new Promise(function(r) { setTimeout(r, 2500); });
 
   var savedCharId = null;
   try {
-    var res = await fetch(API_URL + '/auth', {
+    var res  = await fetch(API_URL + '/auth', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'TMA ' + _tgInitData }
     });
     var data = await res.json();
     if (data.ok && data.save) {
       _applyServerSave(data.save);
-      if (!data.isNew && data.save.charId) {
+      if (data.save.charId) {
         savedCharId = data.save.charId;
-        _showLoadingScreen(true, 'Загрузка сохранения...');
+        _showLoadingScreen(true, 'Загрузка персонажа...');
       }
     }
   } catch(e) {
@@ -109,20 +106,21 @@ async function _authAndLoad() {
     _showLoadingScreen(true, 'Оффлайн режим...');
   }
 
-  // Дожидаемся минимального времени показа
+  // Ждём минимум 2.5с — чтобы скрипты успели загрузиться
   await minWait;
   _showLoadingScreen(false);
 
-  // Если есть сохранённый персонаж — автозапуск без экрана выбора
-  if (savedCharId && window.CHARS && window.CHARS[savedCharId]) {
+  // Если есть сохранённый персонаж — запускаем без экрана выбора
+  if (savedCharId) {
     var attempts = 0;
     var tryStart = setInterval(function() {
       attempts++;
-      if (typeof confirmCharById === 'function') {
+      if (typeof confirmCharById === 'function' && window.CHARS && window.CHARS[savedCharId]) {
         clearInterval(tryStart);
         confirmCharById(savedCharId);
-      } else if (attempts > 30) {
+      } else if (attempts > 40) {
         clearInterval(tryStart);
+        console.warn('confirmCharById not found, showing charSelect');
       }
     }, 100);
   }
@@ -135,10 +133,9 @@ function _applyServerSave(save) {
                 'inventory','equipped','skills','bp','prem'];
   fields.forEach(function(f) { if (save[f] != null) G[f] = save[f]; });
   if (save.baseStats) {
-    G.baseStats = Object.assign({}, save.baseStats);
+    G.baseStats      = Object.assign({}, save.baseStats);
+    G._savedBaseStats = Object.assign({}, save.baseStats); // для confirmCharById
     Object.assign(G.stats, save.baseStats);
-    // Сохраняем отдельно — confirmCharById восстановит после applyCharacter
-    G._savedBaseStats = Object.assign({}, save.baseStats);
   }
   if (save.charId) G._savedCharId = save.charId;
 }
@@ -146,13 +143,14 @@ function _applyServerSave(save) {
 // ── Собрать данные для сохранения ──
 function _buildSavePayload() {
   return {
-    charId: (window.G_CHAR && window.G_CHAR.id) || G._savedCharId || null,
-    gold: G.gold, pixr: G.pixr, gram: G.gram,
-    level: G.level, xp: G.xp, xpNeeded: G.xpNeeded,
-    floor: G.floor, maxFloor: G.maxFloor, hp: G.hp, maxHp: G.maxHp,
-    killCount: G.killCount, upg: G.upg, potionLv: G.potionLv, potions: G.potions,
+    charId:    (window.G_CHAR && window.G_CHAR.id) || G._savedCharId || null,
+    gold:      G.gold,      pixr:     G.pixr,     gram:     G.gram,
+    level:     G.level,     xp:       G.xp,       xpNeeded: G.xpNeeded,
+    floor:     G.floor,     maxFloor: G.maxFloor,
+    hp:        G.hp,        maxHp:    G.maxHp,     killCount: G.killCount,
+    upg:       G.upg,       potionLv: G.potionLv,  potions:  G.potions,
     baseStats: G.baseStats, inventory: G.inventory, equipped: G.equipped,
-    skills: G.skills, bp: G.bp, prem: G.prem
+    skills:    G.skills,    bp:       G.bp,        prem:     G.prem,
   };
 }
 
@@ -168,13 +166,13 @@ async function _saveNow() {
   } catch(e) { console.error('Save failed:', e); }
 }
 
-// ── Debounce 3с — вызывается при важных действиях ──
+// ── Debounce 3с ──
 function triggerSave() {
   clearTimeout(_saveDebounceTm);
   _saveDebounceTm = setTimeout(_saveNow, 3000);
 }
 
-// ── Загрузочный экран с анимированным статусом ──
+// ── Загрузочный экран ──
 function _showLoadingScreen(show, statusText) {
   var el = document.getElementById('tgLoadScreen');
   if (!el && show) {
@@ -182,67 +180,47 @@ function _showLoadingScreen(show, statusText) {
     el.id = 'tgLoadScreen';
     el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#0d0d1a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;';
     el.innerHTML =
-      // pixel-art лого
       '<svg width="64" height="64" viewBox="0 0 16 16" fill="none" style="image-rendering:pixelated">' +
-        // мечи крест
-        '<rect x="1" y="1" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="3" y="3" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="5" y="5" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="7" y="7" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="9" y="9" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="11" y="11" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="13" y="1" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="11" y="3" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="9" y="5" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="5" y="9" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="3" y="11" width="2" height="2" fill="#f5c542"/>' +
-        '<rect x="1" y="13" width="2" height="2" fill="#f5c542"/>' +
-        // гарда
-        '<rect x="5" y="7" width="2" height="2" fill="#c8a000"/>' +
-        '<rect x="9" y="7" width="2" height="2" fill="#c8a000"/>' +
-        '<rect x="7" y="5" width="2" height="2" fill="#c8a000"/>' +
-        '<rect x="7" y="9" width="2" height="2" fill="#c8a000"/>' +
+        '<rect x="1" y="1" width="2" height="2" fill="#f5c542"/><rect x="3" y="3" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="5" y="5" width="2" height="2" fill="#f5c542"/><rect x="7" y="7" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="9" y="9" width="2" height="2" fill="#f5c542"/><rect x="11" y="11" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="13" y="1" width="2" height="2" fill="#f5c542"/><rect x="11" y="3" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="9" y="5" width="2" height="2" fill="#f5c542"/><rect x="5" y="9" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="3" y="11" width="2" height="2" fill="#f5c542"/><rect x="1" y="13" width="2" height="2" fill="#f5c542"/>' +
+        '<rect x="5" y="7" width="2" height="2" fill="#c8a000"/><rect x="9" y="7" width="2" height="2" fill="#c8a000"/>' +
+        '<rect x="7" y="5" width="2" height="2" fill="#c8a000"/><rect x="7" y="9" width="2" height="2" fill="#c8a000"/>' +
       '</svg>' +
       '<div style="text-align:center;">' +
-        '<div style="font-family:Courier New,monospace;color:#f5c542;font-size:15px;font-weight:bold;letter-spacing:3px;margin-bottom:6px;">PIXEL RUNNER RPG</div>' +
+        '<div style="font-family:Courier New,monospace;color:#f5c542;font-size:15px;font-weight:bold;letter-spacing:3px;margin-bottom:8px;">PIXEL RUNNER RPG</div>' +
         '<div id="tgLoadStatus" style="font-family:Courier New,monospace;color:#778;font-size:10px;letter-spacing:1px;">Загрузка...</div>' +
       '</div>' +
-      // прогресс-бар
       '<div style="width:160px;height:4px;background:#111130;border-radius:2px;overflow:hidden;border:1px solid #2a2a5a;">' +
-        '<div id="tgLoadBar" style="height:100%;width:0%;background:linear-gradient(90deg,#5b1f8a,#f5c542);border-radius:2px;transition:width 0.4s ease;"></div>' +
+        '<div id="tgLoadBar" style="height:100%;width:0%;background:linear-gradient(90deg,#5b1f8a,#f5c542);border-radius:2px;transition:width 0.3s;"></div>' +
       '</div>';
     var st = document.createElement('style');
-    st.textContent = '@keyframes tgSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}';
+    st.textContent = '';
     document.head.appendChild(st);
     document.body.appendChild(el);
-
     // Анимация прогресс-бара
     var pct = 0;
-    var barTimer = setInterval(function() {
-      pct = Math.min(pct + (Math.random() * 8 + 3), 90);
-      var bar = document.getElementById('tgLoadBar');
-      if (bar) bar.style.width = pct + '%';
-      else clearInterval(barTimer);
+    el._barTimer = setInterval(function() {
+      pct = Math.min(pct + Math.random() * 10 + 4, 88);
+      var b = document.getElementById('tgLoadBar');
+      if (b) b.style.width = pct + '%';
     }, 200);
-    el._barTimer = barTimer;
   }
-
   if (!el) return;
-
   if (show) {
     el.style.display = 'flex';
     if (statusText) {
-      var st = document.getElementById('tgLoadStatus');
-      if (st) st.textContent = statusText;
+      var s = document.getElementById('tgLoadStatus');
+      if (s) s.textContent = statusText;
     }
   } else {
-    // Завершаем бар до 100% и скрываем
     clearInterval(el._barTimer);
-    var bar = document.getElementById('tgLoadBar');
-    if (bar) bar.style.width = '100%';
-    setTimeout(function() {
-      if (el) el.style.display = 'none';
-    }, 400);
+    var b = document.getElementById('tgLoadBar');
+    if (b) b.style.width = '100%';
+    setTimeout(function() { if (el) el.style.display = 'none'; }, 350);
   }
 }
 
