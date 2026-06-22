@@ -187,7 +187,6 @@ function update(dt) {
         atkFired = true;
         const _ptype = G_CHAR ? G_CHAR.id : 'fire';
         if (_ptype === 'light') {
-          // Молния — мгновенный урон, объект только для анимации вспышки
           var _m = atkTarget;
           var _dmg = atkDmg;
           if (_m && _m.hp > 0) {
@@ -265,7 +264,6 @@ function update(dt) {
               player.state = 'hurt'; player.invincible = 0.6;
               spawnParticles(player.worldX, player.y + 18, '#f44', 5);
               showDmgPop(dmg, PLAYER_SCREEN_X, player.y, '#f44');
-              // Отражение урона (скилл Люмос)
               if (skillBuffs.reflect && skillBuffs.reflect.timer > 0 && m.hp > 0) {
                 var refDmg = Math.max(1, Math.floor(dmg * skillBuffs.reflect.pct));
                 m.hp = Math.max(0, m.hp - refDmg);
@@ -286,7 +284,6 @@ function update(dt) {
 
   // ── Движение снарядов ──
   fireballs = fireballs.filter(function(fb) {
-    // Молния — только анимация, урон уже нанесён
     if (fb.ptype === 'light') {
       fb.life -= dt;
       return fb.life > 0;
@@ -304,7 +301,6 @@ function update(dt) {
       var mx2 = fb.targetM.worldX - worldX;
       showDmgPop(fb.crit ? dmg + '!' : dmg, mx2, fb.targetM.y - 5, fb.crit ? '#fa0' : '#fff');
       if (fb.onHit) fb.onHit(dmg);
-      // Вампиризм Люмоса (1% лечение)
       if (G_CHAR && G_CHAR.perk === 'life_drain') {
         var heal = Math.max(1, Math.floor(dmg * 0.01));
         G.hp = Math.min(G.maxHp, G.hp + heal);
@@ -345,7 +341,6 @@ function update(dt) {
     return true;
   });
 
-  // Удаляем монстров далеко позади
   monsters = monsters.filter(m => m.worldX > player.worldX - W * 0.6);
 }
 
@@ -364,7 +359,6 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
-    // ✅ Левел-ап — критическое событие, сохраняем сразу
     API.partial({ 
       level: G.level, 
       xp: G.xp, 
@@ -377,7 +371,6 @@ function gainXP(amount) {
       console.warn('[Game] Level-up save failed:', e.message);
     });
   }
-  // ✅ Простое получение XP — помечаем dirty для автосохранения
   API.markDirty();
 }
 
@@ -408,10 +401,17 @@ function gameOverSequence() {
       : 'Вы погибли в бою';
   }
   if (modal) modal.classList.remove('hidden');
-  // ✅ Смерть — критическое событие
-  API.save().catch(function(e) {
+  
+  // ✅ Сохраняем критические данные через partial
+  API.partial({ 
+    gold: G.gold, 
+    hp: G.hp, 
+    maxHp: G.maxHp 
+  }).catch(function(e) {
     console.warn('[Game] Death save failed:', e.message);
   });
+  // ✅ Мгновенно локально
+  API.saveLocal();
 }
 
 function revivePlayer() {
@@ -424,7 +424,7 @@ function revivePlayer() {
 }
 
 // ═══════════════════════════════
-//  HUD UPDATE — обновление полосок HP/XP и цифр
+//  HUD UPDATE
 // ═══════════════════════════════
 function updateHUD() {
   const hpPct = Math.max(0, (G.hp / G.maxHp) * 100);
@@ -440,7 +440,7 @@ function updateHUD() {
 }
 
 // ═══════════════════════════════
-//  TOUCH / TAP — атака при тапе на монстра
+//  TOUCH / TAP
 // ═══════════════════════════════
 canvas.addEventListener('touchstart', function(e) {
   e.preventDefault();
@@ -457,7 +457,7 @@ canvas.addEventListener('touchstart', function(e) {
 function attackMonster(m) {}
 
 // ═══════════════════════════════
-//  ВСПЫШКА (красная при нехватке золота/CP)
+//  ВСПЫШКА
 // ═══════════════════════════════
 function flashRed() {
   const hud = document.getElementById('hud');
@@ -611,7 +611,6 @@ function buyBattlePass() {
   G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
   G.bp.active = true;
   renderBattlePass();
-  // ✅ Критическое событие
   API.partial({ gram: G.gram, bp: G.bp }).catch(function(e) {
     console.warn('[Game] BP purchase save failed:', e.message);
   });
@@ -625,7 +624,6 @@ function claimBpReward(idx) {
   r.apply();
   G.bp.claimed.push(idx);
   renderBattlePass();
-  // ✅ Критическое событие
   API.save().catch(function(e) {
     console.warn('[Game] BP claim save failed:', e.message);
   });
@@ -635,7 +633,6 @@ function renderBattlePass() {
   var active = G.bp.active;
   var claimed = G.bp.claimed || [];
 
-  // Статус
   var statusEl = document.getElementById('bpStatus');
   if (active) {
     statusEl.innerHTML = '✅ Battle Pass активен · Уровень <b>' + G.level + '</b>';
@@ -645,11 +642,9 @@ function renderBattlePass() {
     statusEl.style.color = '#aaa';
   }
 
-  // Кнопка покупки
   var buyRow = document.getElementById('bpBuyRow');
   buyRow.classList.toggle('hidden', active);
 
-  // Список наград
   var list = document.getElementById('bpRewardsList');
   list.innerHTML = '';
   BP_REWARDS.forEach(function(r, idx) {
@@ -723,13 +718,11 @@ function buyPrem(tier) {
     return;
   }
   G.gram = parseFloat(((G.gram || 0) - t.cost).toFixed(3));
-  // Если уже активен — продлеваем
   var base = (G.prem && G.prem.expiresAt > Date.now()) ? G.prem.expiresAt : Date.now();
   G.prem = { tier: tier, expiresAt: base + t.days * 86400000 };
   updatePremStatus();
   closePremModal();
   showDmgPop('PREM: ' + t.name + '!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
-  // ✅ Критическое событие
   API.partial({ gram: G.gram, prem: G.prem }).catch(function(e) {
     console.warn('[Game] Premium purchase save failed:', e.message);
   });

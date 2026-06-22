@@ -348,6 +348,7 @@ function invSelectAll() {
   renderInventory();
 }
 function invDeselectAll() { _invSelected = {}; renderInventory(); }
+
 function deleteSelected() {
   var ids = Object.keys(_invSelected).map(Number);
   if (!ids.length) return;
@@ -360,6 +361,9 @@ function deleteSelected() {
   });
   _invSelected = {};
   updateHUD(); renderInventory();
+  
+  // ✅ Сохраняем изменения
+  API.markDirty();
 }
 
 // ── Закрытие модалки предмета ──

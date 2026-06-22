@@ -10,7 +10,7 @@
   4. При закрытии: только localStorage (гарантированно!)
 
   API.init()          — загрузка (merge сервер + локальное)
-  API.save()          — сохранение на сервер (каждые 30 сек)
+  API.save()          — сохранение на сервер (с retry)
   API.saveLocal()     — мгновенное сохранение в localStorage
   API.partial()       — частичное обновление (сервер + кэш)
   API.markDirty()     — пометить для серверного сохранения
@@ -61,7 +61,6 @@ const API = (function() {
   function writeLocal(snapshot) {
     try {
       var key = _userId ? LS_KEY + '_' + _userId : LS_KEY;
-      // ✅ Добавляем timestamp для сравнения
       var data = {
         data: snapshot,
         timestamp: Date.now(),
@@ -102,19 +101,16 @@ const API = (function() {
   // ══════════════════════════════════════════════════════
 
   function mergeSaves(serverSave, localData) {
-    // Если нет локального — берем сервер
     if (!localData) {
       console.log('[API] No local save, using server');
       return serverSave;
     }
     
-    // Если нет серверного — берем локальное
     if (!serverSave) {
       console.log('[API] No server save, using local');
       return localData.data;
     }
     
-    // ✅ Сравниваем по timestamp
     var localTs = localData.timestamp || 0;
     var serverTs = serverSave._ts || 0;
     
@@ -162,32 +158,25 @@ const API = (function() {
   }
 
   function buildSnapshot() {
-    return {
-      charId:    window.G_CHAR ? window.G_CHAR.id : null,
-      gold:      G.gold,
-      pixr:      G.pixr,
-      gram:      G.gram,
-      level:     G.level,
-      xp:        G.xp,
-      xpNeeded:  G.xpNeeded,
-      floor:     G.floor,
-      maxFloor:  G.maxFloor,
-      killCount: G.killCount,
-      hp:        G.hp,
-      maxHp:     G.maxHp,
-      baseStats: Object.assign({}, G.baseStats),
-      stats:     Object.assign({}, G.stats),
-      upg:       Object.assign({}, G.upg),
-      potionLv:  G.potionLv  || 0,
-      potions:   G.potions   || 0,
-      potionThreshold: G.potionThreshold || 30,
-      bp:        { active: G.bp.active, claimed: G.bp.claimed.slice() },
-      prem:      { tier: G.prem.tier, expiresAt: G.prem.expiresAt },
-      inventory: G.inventory.slice(),
-      equipped:  Object.assign({}, G.equipped),
-      skills:    Object.assign({}, G.skills),
-      _ts:       Date.now(),  // ✅ timestamp для сравнения
+    var data = {
+      charId: window.G_CHAR ? window.G_CHAR.id : null,
+      _ts: Date.now(),
     };
+    
+    // Скаляры
+    ['gold','pixr','gram','level','xp','xpNeeded','floor','maxFloor','killCount',
+     'hp','maxHp','potionLv','potions','potionThreshold'
+    ].forEach(function(k) {
+      data[k] = G[k];
+    });
+    
+    // Вложенные объекты
+    ['baseStats','stats','upg','bp','prem','equipped','skills'].forEach(function(k) {
+      data[k] = Object.assign({}, G[k]);
+    });
+    
+    data.inventory = G.inventory.slice();
+    return data;
   }
 
   // ══════════════════════════════════════════════════════
@@ -195,6 +184,7 @@ const API = (function() {
   // ══════════════════════════════════════════════════════
 
   async function init() {
+    var startTime = Date.now();
     _initData = getInitData();
     if (!_initData) {
       console.warn('[API] No initData');
@@ -213,18 +203,13 @@ const API = (function() {
       console.log('[API] Auth OK userId=' + _userId);
 
       var serverSave = res.save;
-      
-      // ✅ Читаем локальное сохранение
       var localData = readLocal();
-      
-      // ✅ MERGE — берем новейшее
       var bestSave = mergeSaves(serverSave, localData);
       var charId = applySave(bestSave);
       
-      // ✅ Если взяли локальное — отправляем на сервер
+      // Если взяли локальное — отправляем на сервер
       if (localData && localData.timestamp > (serverSave?._ts || 0)) {
         console.log('[API] Local is newer, syncing to server...');
-        // Отправляем асинхронно
         setTimeout(function() {
           save().catch(function(e) {
             console.warn('[API] Sync to server failed:', e.message);
@@ -232,10 +217,10 @@ const API = (function() {
         }, 1000);
       }
       
-      // ✅ Обновляем локальное сохранение (кэш)
+      // Обновляем локальное сохранение (кэш)
       writeLocal(buildSnapshot());
 
-      // ✅ Серверное сохранение каждые 30 секунд
+      // Серверное сохранение каждые 30 секунд
       _saveTimer = setInterval(function() {
         if (_dirty && !_isSaving) {
           save().catch(function(e) {
@@ -245,12 +230,12 @@ const API = (function() {
         }
       }, 30000);
 
+      console.log('[API] Init completed in ' + (Date.now() - startTime) + 'ms');
       return charId;
 
     } catch (e) {
       console.error('[API] Auth failed:', e.message);
       
-      // ✅ Если сервер упал — пробуем локальное сохранение
       var localData = readLocal();
       if (localData && localData.data) {
         console.log('[API] Using local save (server unavailable)');
@@ -268,32 +253,41 @@ const API = (function() {
     writeLocal(snapshot);
   }
 
-  // ✅ Сохранение на сервер
-  async function save() {
+  // ✅ Сохранение на сервер с повторными попытками
+  async function save(retries) {
+    retries = retries || 3;
     if (!_initData || _isSaving) return;
     _isSaving = true;
     var snapshot = buildSnapshot();
     
-    try {
-      await apiFetch('/save', {
-        method: 'POST',
-        body: JSON.stringify(snapshot),
-      });
-      // ✅ После успеха — обновляем локальное сохранение
-      writeLocal(snapshot);
-      console.log('[API] Server save OK');
-    } catch (e) {
-      console.error('[API] Server save failed:', e.message);
-      throw e;
-    } finally {
-      _isSaving = false;
+    for (var attempt = 0; attempt < retries; attempt++) {
+      try {
+        await apiFetch('/save', {
+          method: 'POST',
+          body: JSON.stringify(snapshot),
+        });
+        writeLocal(snapshot);
+        _dirty = false;
+        console.log('[API] Server save OK');
+        _isSaving = false;
+        return;
+      } catch (e) {
+        console.warn('[API] Save attempt ' + (attempt + 1) + '/' + retries + ' failed:', e.message);
+        if (attempt === retries - 1) {
+          _dirty = true;
+          _isSaving = false;
+          throw e;
+        }
+        // Экспоненциальная задержка
+        await new Promise(function(r) { setTimeout(r, 1000 * Math.pow(2, attempt)); });
+      }
     }
+    _isSaving = false;
   }
 
   // ✅ Частичное обновление (сервер + локально)
   async function partial(fields) {
     if (!_initData || _isSaving) return;
-    _dirty = false;
     
     var snapshot = buildSnapshot();
     
@@ -302,13 +296,13 @@ const API = (function() {
         method: 'POST',
         body: JSON.stringify({ fields: fields }),
       });
-      // ✅ Обновляем локальное сохранение
       writeLocal(snapshot);
+      _dirty = false;
       console.log('[API] Partial OK');
     } catch (e) {
       console.error('[API] Partial failed:', e.message);
-      // ✅ При ошибке — все равно сохраняем локально
       writeLocal(snapshot);
+      _dirty = true; // ✅ Помечаем для повторной попытки
       throw e;
     }
   }
@@ -316,7 +310,6 @@ const API = (function() {
   // ✅ Пометить, что нужно сохранить на сервер + мгновенно локально
   function markDirty() {
     _dirty = true;
-    // ✅ Мгновенно сохраняем локально!
     saveLocal();
   }
 

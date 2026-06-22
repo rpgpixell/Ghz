@@ -378,14 +378,15 @@ function switchTab(tab) {
   if (tab === 'wallet')   renderWallet();
 }
 
-// ═══════════════════════════════
+// ══════════════════════════════════════════════════════
 //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
-// ═══════════════════════════════
+// ══════════════════════════════════════════════════════
+
 let _csSelected      = null;
 let _csParticleTimer = null;
 let _csSpriteTimers  = {};
 let _csIdleImgs      = {};
-var G_CHAR           = null;  // задаётся после выбора (var — чтобы window.G_CHAR работал из api.js)
+var G_CHAR           = null;
 
 function selectChar(id) {
   _csSelected = id;
@@ -404,8 +405,10 @@ function confirmChar() {
   G_CHAR = CHARS[_csSelected];
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
-  // Сохраняем выбор персонажа сразу
-  API.save();
+  
+  // ✅ Вместо API.save() используем markDirty (мгновенно локально)
+  API.markDirty();
+  
   startGame();
 }
 
