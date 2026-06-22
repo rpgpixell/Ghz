@@ -340,47 +340,97 @@ function flush() {
   }
 
   function boot() {
-    lsInitStars();
-    lsSetStatus('Подключение', 10);
-    initTelegram();
+  lsInitStars();
+  lsSetStatus('Подключение', 10);
+  initTelegram();
 
-    var local = readLocal();
+  var local = readLocal();
 
-    // 1) Мгновенный старт из локального кеша (пока идёт запрос на сервер)
-    if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
-      lsSetStatus('Загрузка данных', 40);
-      bootFromSnapshot(local);
-    }
+  // 1) Мгновенный старт из локального кеша (пока идёт запрос на сервер)
+  if (local && local.charId && typeof CHARS !== 'undefined' && CHARS[local.charId]) {
+    lsSetStatus('Загрузка данных', 40);
+    bootFromSnapshot(local);
+  }
 
-    // Таймаут: если сервер не ответил за 6 сек — скрываем экран всё равно
-    var lsTimeout = setTimeout(function () { lsHide(); }, 6000);
+  // Таймаут: если сервер не ответил за 6 сек — скрываем экран всё равно
+  var lsTimeout = setTimeout(function () { lsHide(); }, 6000);
 
-    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
+  lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
 
-    // 2) Сверка с сервером
-    serverLoad().then(function (r) {
-      clearTimeout(lsTimeout);
-      var server = r && r.save;
-      if (server && server.data && server.data.charId &&
-          typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
-        lsSetStatus('Применение данных', 85);
-        var sTs = server.updatedAt || 0;
-        var lTs = (local && local.updatedAt) || 0;
-        if (!SYNC.started) {
-          bootFromSnapshot(server.data);
-        } else if (sTs > lTs + 3000) {
-          hotApply(server.data);
+  // 2) Сверка с сервером
+  serverLoad().then(function (r) {
+    clearTimeout(lsTimeout);
+    
+    var server = r && r.save;
+    var hasServerData = server && server.data && server.data.charId &&
+                        typeof CHARS !== 'undefined' && CHARS[server.data.charId];
+
+    // =============================================
+    // НОВАЯ ЛОГИКА: если на сервере ПУСТО — сбрасываем всё
+    // =============================================
+    if (r && r.ok && !hasServerData) {
+      // На сервере нет данных — удаляем localStorage
+      try {
+        localStorage.removeItem(LS_KEY);
+      } catch (e) {}
+      
+      // Если игра уже запущена — перезагружаем страницу
+      if (SYNC.started) {
+        location.reload();
+        return;
+      }
+      
+      // Если игра не запущена — показываем экран выбора
+      lsSetStatus('Новый игрок', 50);
+      
+      // Останавливаем текущие анимации выбора персонажа
+      stopCharSelectAnims();
+      
+      // Показываем экран выбора персонажа
+      var cs = document.getElementById('charSelect');
+      if (cs) {
+        cs.classList.remove('hidden');
+        // Переинициализируем выбор персонажа
+        if (typeof initCharSelect === 'function') {
+          initCharSelect();
+        }
+        // Сбрасываем состояние выбора
+        if (typeof window._csSelected === 'object') {
+          window._csSelected = null;
+        }
+        // Обновляем кнопку подтверждения
+        if (typeof updateConfirmBtn === 'function') {
+          updateConfirmBtn();
         }
       }
-    }).catch(function () {
-      clearTimeout(lsTimeout);
-    }).then(function () {
-      SYNC.booted = true;
-      startSyncLoops();
-      if (SYNC.online && SYNC.started) pushServer();
+      
       lsHide();
-    });
-  }
+      return;
+    }
+
+    // Если на сервере ЕСТЬ данные — применяем их
+    if (hasServerData) {
+      lsSetStatus('Применение данных', 85);
+      var sTs = server.updatedAt || 0;
+      var lTs = (local && local.updatedAt) || 0;
+      
+      if (!SYNC.started) {
+        bootFromSnapshot(server.data);
+      } else if (sTs > lTs + 3000) {
+        hotApply(server.data);
+      }
+    }
+    
+  }).catch(function () {
+    clearTimeout(lsTimeout);
+    // Если сервер не ответил — оставляем локальные данные (офлайн режим)
+  }).then(function () {
+    SYNC.booted = true;
+    startSyncLoops();
+    if (SYNC.online && SYNC.started) pushServer();
+    lsHide();
+  });
+}
 
   // ───────────────────────────────
   //  ХУКИ: выбор персонажа + структурные действия
