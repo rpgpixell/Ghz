@@ -2,7 +2,7 @@
   ══════════════════════════════════════════════════════
   server.js — Backend для PIXEL RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
-  + Админ-панель
+  + Админ-панель (рефералы + выдача предметов)
   ══════════════════════════════════════════════════════
 */
 
@@ -672,6 +672,125 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
   }
 });
 
+// ── ПОЛУЧИТЬ РЕФЕРАЛОВ ПОЛЬЗОВАТЕЛЯ ──
+app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
+  try {
+    const { tgId } = req.params;
+    
+    const referrals = await Save.find({ refBy: tgId })
+      .select('tgId username firstName level cp floor charId data.gold data.pixr')
+      .lean();
+    
+    res.json({
+      ok: true,
+      referrals: referrals.map(r => ({
+        tgId: r.tgId,
+        username: r.username || r.firstName || 'Игрок',
+        level: r.level || 1,
+        cp: r.cp || 0,
+        floor: r.floor || 1,
+        charId: r.charId,
+        gold: r.data?.gold || 0,
+        pixr: r.data?.pixr || 0
+      }))
+    });
+  } catch (e) {
+    console.error('❌ [admin] referrals error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── ВЫДАТЬ ПРЕДМЕТ ──
+app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
+  try {
+    const { tgId } = req.params;
+    const { slot, name, rarity, level, stats, icon, forClass } = req.body;
+    
+    if (!slot || !name || !rarity) {
+      return res.status(400).json({ ok: false, error: 'missing_fields' });
+    }
+    
+    const user = await Save.findOne({ tgId: tgId });
+    if (!user) {
+      return res.status(404).json({ ok: false, error: 'user_not_found' });
+    }
+    
+    if (!user.data) user.data = { tgId: tgId };
+    if (!user.data.inventory) user.data.inventory = [];
+    
+    const item = {
+      id: Date.now() + Math.floor(Math.random() * 10000),
+      slot: slot,
+      name: name,
+      icon: icon || 'images/ac.png',
+      rarity: rarity,
+      level: level || 1,
+      stats: stats || {},
+      _equipped: false
+    };
+    
+    if (forClass) item.forClass = forClass;
+    
+    user.data.inventory.push(item);
+    await user.save();
+    
+    await logAdminAction(req.admin.login, 'give_item', tgId, { item });
+    
+    res.json({ ok: true, item });
+  } catch (e) {
+    console.error('❌ [admin] give-item error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── СПИСОК ПРЕДМЕТОВ ──
+app.get('/admin/api/items/list', requireAdmin, (req, res) => {
+  try {
+    const items = [];
+    
+    const ITEM_TYPES = [
+      { slot: 'body', name: 'Нагрудник', stats: ['def', 'hp'], primary: 'def' },
+      { slot: 'legs', name: 'Штаны', stats: ['def', 'dodge'], primary: 'def' },
+      { slot: 'gloves', name: 'Перчатки', stats: ['atk', 'crit'], primary: 'atk' },
+      { slot: 'boots', name: 'Боты', stats: ['spd', 'dodge'], primary: 'spd' },
+      { slot: 'helmet', name: 'Шлем', stats: ['def', 'hp'], primary: 'def' },
+      { slot: 'ring', name: 'Кольцо', stats: ['crit', 'atk'], primary: 'crit' },
+      { slot: 'belt', name: 'Пояс', stats: ['hp', 'def'], primary: 'hp' }
+    ];
+    
+    const STAFF_TYPES = [
+      { slot: 'weapon', name: 'Посох огня', stats: ['atk', 'crit'], primary: 'atk', forClass: 'fire', classLabel: 'Пирокан' },
+      { slot: 'weapon', name: 'Посох света', stats: ['atk', 'hp'], primary: 'atk', forClass: 'light', classLabel: 'Люмос' },
+      { slot: 'weapon', name: 'Посох воды', stats: ['atk', 'dodge'], primary: 'atk', forClass: 'water', classLabel: 'Аквас' }
+    ];
+    
+    ITEM_TYPES.forEach(type => {
+      items.push({
+        slot: type.slot,
+        name: type.name,
+        stats: type.stats,
+        primary: type.primary
+      });
+    });
+    
+    STAFF_TYPES.forEach(type => {
+      items.push({
+        slot: type.slot,
+        name: type.name,
+        stats: type.stats,
+        primary: type.primary,
+        forClass: type.forClass,
+        classLabel: type.classLabel
+      });
+    });
+    
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error('❌ [admin] items list error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/admin/api/stats', requireAdmin, async (req, res) => {
   try {
     const totalUsers = await Save.countDocuments();
@@ -760,12 +879,6 @@ app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
 // ── Отдача админ-панели ──
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
-});
-app.get('/admin.js', (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.js'));
-});
-app.get('/admin.css', (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.css'));
 });
 
 

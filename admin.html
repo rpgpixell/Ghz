@@ -193,7 +193,7 @@ body {
 }
 .modal.show { display: flex; }
 .modal-content {
-  width: 92%; max-width: 400px; max-height: 80vh;
+  width: 92%; max-width: 400px; max-height: 85vh;
   background: #0e0e22; border: 1px solid #2a2a5a; border-radius: 16px;
   overflow: hidden;
 }
@@ -209,7 +209,7 @@ body {
 }
 .modal-body {
   padding: 16px;
-  overflow-y: auto; max-height: 60vh;
+  overflow-y: auto; max-height: 70vh;
 }
 .modal-body .field {
   display: flex; justify-content: space-between;
@@ -261,7 +261,7 @@ body {
     <input class="login-input" id="loginInput" type="text" placeholder="Логин" autocomplete="username">
     <input class="login-input" id="passwordInput" type="password" placeholder="Пароль" autocomplete="current-password">
     <button class="login-btn" id="loginBtn">Войти</button>
-    <div class="login-version">v1.0</div>
+    <div class="login-version">v2.0</div>
   </div>
 </div>
 
@@ -358,7 +358,9 @@ body {
 
   </div>
 
-  <!-- Модалка пользователя -->
+  <!-- ════════════════════════════════
+       МОДАЛКА ПОЛЬЗОВАТЕЛЯ
+       ════════════════════════════════ -->
   <div class="modal" id="userModal" onclick="closeModal(event)">
     <div class="modal-content" onclick="event.stopPropagation()">
       <div class="modal-header">
@@ -629,7 +631,35 @@ body {
         html += '<div class="field"><span class="field-label">📦 Предметов</span><span class="field-value">' + (data.inventory ? data.inventory.length : 0) + '</span></div>';
         html += '</div>';
         
-        // Редактирование
+        // === РЕФЕРАЛЫ ===
+        html += '<div style="margin-top:14px;border-top:1px solid #1a1a35;padding-top:12px;">';
+        html += '<div style="font-size:11px;color:#778;margin-bottom:8px;">👥 РЕФЕРАЛЫ</div>';
+        html += '<div id="referralsList" style="font-size:11px;color:#556;">';
+        html += '<span style="color:#445;">Загрузка...</span>';
+        html += '</div></div>';
+        
+        // === ВЫДАЧА ПРЕДМЕТОВ ===
+        html += '<div style="margin-top:14px;border-top:1px solid #1a1a35;padding-top:12px;">';
+        html += '<div style="font-size:11px;color:#778;margin-bottom:8px;">📦 ВЫДАТЬ ПРЕДМЕТ</div>';
+        html += '<div style="display:flex;flex-direction:column;gap:6px;">';
+        html += '<select id="itemSelect" style="padding:8px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:12px;font-family:\'Courier New\',monospace;">';
+        html += '<option value="">Загрузка...</option>';
+        html += '</select>';
+        html += '<select id="itemRarity" style="padding:8px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:12px;font-family:\'Courier New\',monospace;">';
+        html += '<option value="common">Обычный</option>';
+        html += '<option value="uncommon">Необычный</option>';
+        html += '<option value="rare">Редкий</option>';
+        html += '<option value="epic">Эпический</option>';
+        html += '<option value="legend">Легендарный</option>';
+        html += '</select>';
+        html += '<input id="itemLevel" type="number" placeholder="Уровень (1-20)" value="1" style="padding:8px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:12px;font-family:\'Courier New\',monospace;">';
+        html += '<button onclick="giveItem()" style="padding:8px;background:linear-gradient(90deg,#2a5a2a,#4a8a4a);border:none;border-radius:6px;color:#fff;font-size:12px;cursor:pointer;font-family:\'Courier New\',monospace;">';
+        html += '📦 Выдать предмет';
+        html += '</button>';
+        html += '<div id="giveResult" style="font-size:11px;color:#445;margin-top:4px;"></div>';
+        html += '</div></div>';
+        
+        // === РЕДАКТИРОВАНИЕ БАЛАНСОВ ===
         html += '<div style="margin-top:14px;border-top:1px solid #1a1a35;padding-top:12px;">';
         html += '<div style="font-size:11px;color:#778;margin-bottom:8px;">Изменить баланс:</div>';
         html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
@@ -645,11 +675,15 @@ body {
         html += '<button class="edit-btn" onclick="updateUser(\'level\')">📈</button>';
         html += '<input class="edit-input" id="editFloor" type="number" placeholder="Этаж" style="width:70px;">';
         html += '<button class="edit-btn" onclick="updateUser(\'floor\')">🏰</button>';
-        html += '</div>';
-        html += '</div>';
+        html += '</div></div>';
         
         document.getElementById('modalBody').innerHTML = html;
         document.getElementById('userModal').classList.add('show');
+        
+        // Загружаем рефералов
+        loadReferrals(tgId);
+        // Загружаем список предметов
+        loadItemsList();
       });
   }
 
@@ -662,176 +696,13 @@ body {
 
   window.closeModal = closeModal;
 
-  // ── Обновление пользователя ──
-  function updateUser(field) {
-    if (!SESSION || !currentUserTgId) return;
-    
-    var inputMap = {
-      gold: 'editGold',
-      pixr: 'editPixr',
-      gram: 'editGram',
-      level: 'editLevel',
-      floor: 'editFloor'
-    };
-    
-    var el = document.getElementById(inputMap[field]);
-    if (!el) return;
-    
-    var value = parseFloat(el.value);
-    if (isNaN(value) || value < 0) return;
-    
-    var updates = {};
-    updates[field] = value;
-    
-    fetch(API + '/admin/api/user/' + currentUserTgId + '/update?session=' + SESSION, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(r) {
-      if (r.ok) {
-        el.value = '';
-        openUser(currentUserTgId);
-        loadUsers(currentPage);
-      }
-    });
-  }
-
-  window.updateUser = updateUser;
-
-  // ═══════════════════════════════
-  //  ЭКОНОМИКА
-  // ═══════════════════════════════
-
-  function loadEconomy() {
+  // ── ЗАГРУЗКА РЕФЕРАЛОВ ──
+  function loadReferrals(tgId) {
     if (!SESSION) return;
     
-    fetch(API + '/admin/api/users?session=' + SESSION + '&limit=50')
+    fetch(API + '/admin/api/user/' + tgId + '/referrals?session=' + SESSION)
       .then(function(r) { return r.json(); })
       .then(function(r) {
-        if (!r.ok) return;
-        
-        var users = r.users || [];
-        
-        // Топ по золоту
-        var goldSorted = users.slice().sort(function(a, b) {
-          return (b.data && b.data.gold || 0) - (a.data && a.data.gold || 0);
-        }).slice(0, 10);
-        
-        var goldHtml = '';
-        goldSorted.forEach(function(u, i) {
-          goldHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #0a0a1a;font-size:12px;">' +
-            '<span>' + (i+1) + '. ' + (u.firstName || u.username || 'Игрок') + '</span>' +
-            '<span style="color:#f5c542;">' + (u.data && u.data.gold || 0) + ' 💰</span>' +
-            '</div>';
-        });
-        document.getElementById('topGold').innerHTML = goldHtml || '<div style="color:#445;padding:10px 0;">Нет данных</div>';
-        
-        // Топ по PIXR
-        var pixrSorted = users.slice().sort(function(a, b) {
-          return (b.data && b.data.pixr || 0) - (a.data && a.data.pixr || 0);
-        }).slice(0, 10);
-        
-        var pixrHtml = '';
-        pixrSorted.forEach(function(u, i) {
-          pixrHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #0a0a1a;font-size:12px;">' +
-            '<span>' + (i+1) + '. ' + (u.firstName || u.username || 'Игрок') + '</span>' +
-            '<span style="color:#ff44cc;">' + (u.data && u.data.pixr || 0) + ' 💎</span>' +
-            '</div>';
-        });
-        document.getElementById('topPixr').innerHTML = pixrHtml || '<div style="color:#445;padding:10px 0;">Нет данных</div>';
-        
-        // Топ по GRAM
-        var gramSorted = users.slice().sort(function(a, b) {
-          return (b.data && b.data.gram || 0) - (a.data && a.data.gram || 0);
-        }).slice(0, 10);
-        
-        var gramHtml = '';
-        gramSorted.forEach(function(u, i) {
-          gramHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #0a0a1a;font-size:12px;">' +
-            '<span>' + (i+1) + '. ' + (u.firstName || u.username || 'Игрок') + '</span>' +
-            '<span style="color:#40d0ff;">' + (u.data && u.data.gram || 0) + ' ⭐</span>' +
-            '</div>';
-        });
-        document.getElementById('topGram').innerHTML = gramHtml || '<div style="color:#445;padding:10px 0;">Нет данных</div>';
-      });
-  }
-
-  // ═══════════════════════════════
-  //  РАССЫЛКА
-  // ═══════════════════════════════
-
-  function sendBroadcast() {
-    if (!SESSION) return;
-    
-    var message = document.getElementById('broadcastMessage').value.trim();
-    var target = document.getElementById('broadcastTarget').value;
-    var result = document.getElementById('broadcastResult');
-    
-    if (!message) {
-      result.innerHTML = '<div style="color:#e74c3c;margin-top:8px;">Введите сообщение</div>';
-      return;
-    }
-    
-    result.innerHTML = '<div style="color:#f5c542;margin-top:8px;">Отправка...</div>';
-    
-    fetch(API + '/admin/api/broadcast?session=' + SESSION, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, target })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(r) {
-      if (r.ok) {
-        result.innerHTML = '<div style="color:#2ecc71;margin-top:8px;">✅ Отправлено ' + (r.sent || 0) + ' пользователям</div>';
-        document.getElementById('broadcastMessage').value = '';
-      } else {
-        result.innerHTML = '<div style="color:#e74c3c;margin-top:8px;">❌ Ошибка: ' + (r.error || '') + '</div>';
-      }
-    })
-    .catch(function() {
-      result.innerHTML = '<div style="color:#e74c3c;margin-top:8px;">❌ Ошибка соединения</div>';
-    });
-  }
-
-  window.sendBroadcast = sendBroadcast;
-
-  // ═══════════════════════════════
-  //  ЛОГИ
-  // ═══════════════════════════════
-
-  function loadLogs() {
-    if (!SESSION) return;
-    
-    fetch(API + '/admin/api/logs?session=' + SESSION)
-      .then(function(r) { return r.json(); })
-      .then(function(r) {
-        if (!r.ok) return;
-        
-        var html = '';
-        (r.logs || []).forEach(function(log) {
-          var time = new Date(log.timestamp).toLocaleString();
-          html += '<div class="log-row">' +
-            '<span class="log-time">' + time + '</span> ' +
-            '<span class="log-admin">' + log.admin + '</span> ' +
-            '<span class="log-action">' + log.action + '</span> ' +
-            (log.target ? '<span class="log-target">→ ' + log.target + '</span>' : '') +
-            '</div>';
-        });
-        
-        document.getElementById('logsList').innerHTML = html || '<div style="color:#445;padding:20px 0;text-align:center;">Логов пока нет</div>';
-      });
-  }
-
-  // ═══════════════════════════════
-  //  ЗАПУСК
-  // ═══════════════════════════════
-
-  checkSession();
-
-})();
-</script>
-
-</body>
-</html>
+        var list = document.getElementById('referralsList');
+        if (!r.ok || !r.referrals || r.referrals.length === 0) {
+          list.innerHTML = '<span
