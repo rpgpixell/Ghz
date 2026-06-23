@@ -219,19 +219,31 @@ greeting + '\n\n' +
 
           console.log('💳 [bot] Обработка транзакции: ' + txId + ' -> ' + action);
 
-          var adminSession = process.env.ADMIN_SESSION || '';
+          // Используем встроенный fetch (Node 18+) или node-fetch
+          var _fetch = typeof fetch !== 'undefined' ? fetch : null;
+          try { if (!_fetch) _fetch = require('node-fetch'); } catch(e) {}
 
-          fetch(API_URL + '/admin/api/transaction/' + txId + '/' + action, {
+          if (!_fetch) {
+            console.error('❌ [bot] fetch недоступен');
+            bot.answerCallbackQuery(query.id, { text: '❌ Ошибка сервера (fetch)' }).catch(function(){});
+            return;
+          }
+
+          _fetch(API_URL + '/bot/transaction/' + txId + '/' + action, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: adminSession })
+            headers: {
+              'Content-Type': 'application/json',
+              'x-bot-secret': BOT_TOKEN
+            },
+            body: JSON.stringify({})
           })
           .then(function(r) { return r.json(); })
           .then(function(result) {
             if (result.ok) {
               var statusText = action === 'approve' ? '✅ Подтверждено' : '❌ Отклонено';
+              // Редактируем сообщение — убираем кнопки, добавляем статус
               bot.editMessageText(
-                query.message.text + '\n\n📌 **Статус:** ' + statusText,
+                query.message.text + '\n\n📌 *Статус:* ' + statusText,
                 {
                   chat_id: query.message.chat.id,
                   message_id: query.message.message_id,
@@ -241,16 +253,17 @@ greeting + '\n\n' +
 
               bot.answerCallbackQuery(query.id, {
                 text: '✅ Транзакция ' + (action === 'approve' ? 'подтверждена' : 'отклонена')
-              });
+              }).catch(function(){});
             } else {
-              bot.answerCallbackQuery(query.id, {
-                text: '❌ Ошибка: ' + (result.error || 'unknown')
-              });
+              var errText = result.error === 'already_processed'
+                ? '⚠️ Уже обработана'
+                : '❌ Ошибка: ' + (result.error || 'unknown');
+              bot.answerCallbackQuery(query.id, { text: errText, show_alert: true }).catch(function(){});
             }
           })
           .catch(function(err) {
             console.error('❌ [bot] Ошибка обработки транзакции:', err.message);
-            bot.answerCallbackQuery(query.id, { text: '❌ Ошибка сервера' });
+            bot.answerCallbackQuery(query.id, { text: '❌ Ошибка сервера' }).catch(function(){});
           });
         }
       } catch (e) {

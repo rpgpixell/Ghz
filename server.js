@@ -888,6 +888,59 @@ app.post('/api/wallet/exchange', async (req, res) => {
 
 
 // ═══════════════════════════════
+//  БОТ: подтверждение/отклонение транзакций
+//  POST /bot/transaction/:txId/:action
+//  Защищён BOT_TOKEN — только бот знает его.
+//  Отдельный роут чтобы не завязываться на сессии (они сбрасываются при рестарте).
+// ═══════════════════════════════
+app.post('/bot/transaction/:txId/:action', async (req, res) => {
+  // Проверяем секрет бота
+  const secret = req.headers['x-bot-secret'] || (req.body && req.body.secret);
+  if (!secret || secret !== process.env.BOT_TOKEN) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
+  const { txId, action } = req.params;
+  if (!['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ ok: false, error: 'invalid_action' });
+  }
+
+  try {
+    const tx = await Transaction.findOne({ id: txId });
+    if (!tx) return res.status(404).json({ ok: false, error: 'not_found' });
+    if (tx.status !== 'pending') return res.status(400).json({ ok: false, error: 'already_processed' });
+
+    if (action === 'approve') {
+      tx.status = 'approved';
+      tx.approvedAt = Date.now();
+      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      await Save.findOneAndUpdate(
+        { tgId: tx.userId },
+        { $inc: { 'data.gram': gramDelta } }
+      );
+    } else {
+      tx.status = 'rejected';
+      tx.rejectedAt = Date.now();
+    }
+
+    await tx.save();
+    await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
+
+    // Уведомляем пользователя
+    if (bot) {
+      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
+      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}`;
+      try { await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' }); } catch (e) {}
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [bot-tx] error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════
 //  АДМИН-ПАНЕЛЬ
 // ═══════════════════════════════
 
