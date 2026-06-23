@@ -83,6 +83,12 @@ const MONSTER_SPRITES = {
     idle: { img: _mimg('images/monster/midle9.png'), frames: 6,  fw: 128, fh: 128 },
     oy: 0, oh: 100,
   },
+  orcdemon:  {
+    run:  { img: spriteMonster,     frames: 6,  fw: 96, fh: 96 },
+    atk:  { img: spriteMonsterAtk,  frames: 4,  fw: 96, fh: 96 },
+    idle: { img: spriteMonsterIdle, frames: 5,  fw: 96, fh: 96 },
+    oy: 0, oh: 90,
+  },
 };
 
 // ── Глобальные переменные рендера ──
