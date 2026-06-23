@@ -395,7 +395,7 @@ app.get('/api/leaderboard', async (req, res) => {
     
     const top = await Save.find({ charId: { $ne: null } })
       .sort({ cp: -1, level: -1 }).limit(50)
-      .select('username firstName level cp floor charId -_id')
+      .select('tgId username firstName level cp floor charId -_id')
       .lean();
     
     setLeaderboardCache(top);
@@ -1226,25 +1226,7 @@ try {
 //  Запуск
 // ═══════════════════════════════
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`🚀 Server on :${PORT}`);
   console.log(`📊 MongoDB: 5GB, Pool: 50`);
-});
-
-// ── Graceful shutdown (Railway посылает SIGTERM перед убийством контейнера) ──
-// Даём время завершить текущие запросы прежде чем выйти
-process.on('SIGTERM', () => {
-  console.log('🛑 [shutdown] SIGTERM получен, завершаем...');
-  server.close(() => {
-    console.log('🛑 [shutdown] HTTP сервер закрыт');
-    mongoose.connection.close(false, () => {
-      console.log('🛑 [shutdown] MongoDB закрыта');
-      process.exit(0);
-    });
-  });
-  // Если за 10 секунд не завершились — принудительно
-  setTimeout(() => {
-    console.error('❌ [shutdown] Принудительное завершение');
-    process.exit(1);
-  }, 10000);
 });

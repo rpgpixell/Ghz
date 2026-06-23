@@ -257,20 +257,82 @@ function goToFloor(n) {
 // ═══════════════════════════════
 //  ВКЛАДКА РЕЙТИНГА
 // ═══════════════════════════════
+var _ratingCache     = null;
+var _ratingCacheTime = 0;
+var _ratingLoading   = false;
+
 function renderRating() {
-  const cp      = calcCP();
-  const myEntry = { name: '👤 Ты', cp, isMe: true };
-  const all     = [...FAKE_PLAYERS, myEntry].sort((a, b) => b.cp - a.cp);
-  const medals  = ['🥇', '🥈', '🥉'];
-  document.getElementById('ratingBody').innerHTML =
-    '<div style="font-size:10px;color:#778;margin-bottom:12px;">Топ игроков по Боевой мощи</div>' +
-    all.map((p, i) =>
-      `<div class="rating-row" style="${p.isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.06)' : ''}">
-        <div class="rating-rank">${medals[i] || (i + 1)}</div>
-        <div class="rating-name">${p.name}</div>
-        <div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ${p.cp}</div>
-      </div>`
-    ).join('');
+  var body = document.getElementById('ratingBody');
+  if (!body) return;
+
+  if (!window.GameSync || !window.GameSync.state.online) {
+    _renderRatingData([_ratingMakeMyEntry()], body);
+    return;
+  }
+
+  if (_ratingCache && (Date.now() - _ratingCacheTime) < 30000) {
+    _renderRatingData(_ratingCache, body);
+    return;
+  }
+
+  if (_ratingLoading) return;
+  _ratingLoading = true;
+
+  var tgId = window.GameSync.getTgId() || '0';
+  body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...</div>';
+
+  fetch(window.GameSync._API + '/api/leaderboard?tgId=' + tgId)
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      _ratingLoading = false;
+      if (!r.ok || !r.top || !r.top.length) {
+        _renderRatingData([_ratingMakeMyEntry()], body);
+        return;
+      }
+      _ratingCache     = r.top;
+      _ratingCacheTime = Date.now();
+      _renderRatingData(r.top, body);
+    })
+    .catch(function() {
+      _ratingLoading = false;
+      _renderRatingData([_ratingMakeMyEntry()], body);
+    });
+}
+
+function _ratingMakeMyEntry() {
+  return {
+    isMe: true, cp: calcCP(), level: G.level || 1, charId: G.charId || null,
+    tgId: (window.GameSync ? window.GameSync.getTgId() : null),
+  };
+}
+
+function _renderRatingData(top, body) {
+  var charColors = { fire: '#ff6030', light: '#ffd040', water: '#40d0ff' };
+  var charNames  = { fire: '\u041f\u0438\u0440\u043e\u043a\u0430\u043d', light: '\u041b\u044e\u043c\u043e\u0441', water: '\u0410\u043a\u0432\u0430\u0441' };
+  var medals     = ['\ud83e\udd47', '\ud83e\udd48', '\ud83e\udd49'];
+  var myTgId     = window.GameSync ? window.GameSync.getTgId() : null;
+  var swordSvg   = '<svg width="11" height="11" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg>';
+  var topLabel   = '\u0422\u041e\u041f \u0418\u0413\u0420\u041e\u041a\u041e\u0412 \u041f\u041e \u0411\u041e\u0415\u0412\u041e\u0419 \u041c\u041e\u0429\u0418';
+
+  var html = '<div style="font-size:10px;color:#778;margin-bottom:12px;letter-spacing:1px;">' + topLabel + '</div>';
+
+  top.forEach(function(p, i) {
+    var isMe = p.isMe || (myTgId && p.tgId && String(p.tgId) === String(myTgId));
+    var name = p.name || p.firstName || p.username || ('\u0418\u0433\u0440\u043e\u043a ' + (i + 1));
+    var col  = charColors[p.charId] || '#778';
+    var cls  = charNames[p.charId]  || '';
+    html +=
+      '<div class="rating-row" style="' + (isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.06);' : '') + '">' +
+        '<div class="rating-rank">' + (medals[i] || (i + 1)) + '</div>' +
+        '<div class="rating-name">' +
+          '<div>' + name + '</div>' +
+          (cls ? '<div style="font-size:9px;color:' + col + ';margin-top:2px;">' + cls + ' \u00b7 Lv.' + (p.level || 1) + '</div>' : '') +
+        '</div>' +
+        '<div class="rating-cp">' + swordSvg + ' ' + (p.cp || 0) + '</div>' +
+      '</div>';
+  });
+
+  body.innerHTML = html;
 }
 
 // ── SVG иконки для кошелька/статистики ──
