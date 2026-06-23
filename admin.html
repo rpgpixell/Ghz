@@ -70,16 +70,20 @@ body {
   display: flex;
   background: rgba(5,5,20,0.95);
   border-bottom: 1px solid #1a1a35;
+  overflow-x: auto;
 }
 .tab-btn {
-  flex: 1; padding: 12px 0;
+  flex: 1; padding: 12px 0; min-width: 44px;
   background: none; border: none;
   color: #556; font-size: 20px;
   cursor: pointer; transition: color .2s;
   border-bottom: 2px solid transparent;
+  white-space: nowrap;
 }
 .tab-btn.active { color: #f5c542; border-bottom-color: #f5c542; }
 .tab-btn:active { transform: scale(0.9); }
+.tab-label { font-size: 9px; display: block; color: #445; margin-top: 2px; }
+.tab-btn.active .tab-label { color: #f5c542; }
 
 /* ── КОНТЕНТ ── */
 .admin-content {
@@ -120,6 +124,7 @@ body {
   background: #2a2a5a; border: none; border-radius: 8px;
   color: #fff; font-size: 16px; cursor: pointer;
 }
+.search-btn:active { opacity: 0.7; }
 
 /* ── ПОЛЬЗОВАТЕЛИ ── */
 .users-list { margin-bottom: 12px; }
@@ -141,7 +146,7 @@ body {
 .user-stats span { color: #f5c542; }
 
 .pagination {
-  display: flex; gap: 6px; justify-content: center;
+  display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
 }
 .pagination button {
   padding: 6px 12px;
@@ -150,6 +155,7 @@ body {
   font-family: 'Courier New', monospace;
 }
 .pagination button.active { background: #3a3a7a; color: #f5c542; }
+.pagination button:active { opacity: 0.7; }
 
 /* ── РАССЫЛКА ── */
 .broadcast-input {
@@ -246,6 +252,10 @@ body {
   .admin-content { padding: 16px 24px 80px; }
   .modal-content { max-width: 500px; }
 }
+@media (max-width: 480px) {
+  .tab-btn { font-size: 16px; padding: 10px 0; min-width: 36px; }
+  .tab-label { font-size: 7px; }
+}
 </style>
 </head>
 <body>
@@ -279,12 +289,24 @@ body {
 
   <!-- Вкладки -->
   <div class="admin-tabs">
-    <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">📊</button>
-    <button class="tab-btn" data-tab="users" onclick="switchTab('users')">👥</button>
-    <button class="tab-btn" data-tab="economy" onclick="switchTab('economy')">💰</button>
-    <button class="tab-btn" data-tab="broadcast" onclick="switchTab('broadcast')">📨</button>
-    <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">📋</button>
-    <button class="tab-btn" data-tab="tasks" onclick="switchTab('tasks')">✅</button>
+    <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">
+      📊<span class="tab-label">Стат</span>
+    </button>
+    <button class="tab-btn" data-tab="users" onclick="switchTab('users')">
+      👥<span class="tab-label">Игроки</span>
+    </button>
+    <button class="tab-btn" data-tab="economy" onclick="switchTab('economy')">
+      💰<span class="tab-label">Эконом</span>
+    </button>
+    <button class="tab-btn" data-tab="broadcast" onclick="switchTab('broadcast')">
+      📨<span class="tab-label">Рассылка</span>
+    </button>
+    <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">
+      📋<span class="tab-label">Логи</span>
+    </button>
+    <button class="tab-btn" data-tab="tasks" onclick="switchTab('tasks')">
+      ✅<span class="tab-label">Задания</span>
+    </button>
   </div>
 
   <!-- Контент -->
@@ -354,6 +376,40 @@ body {
       <div class="stat-card full">
         <div class="stat-label">Последние действия</div>
         <div id="logsList"></div>
+      </div>
+    </div>
+
+    <!-- ✅ ЗАДАНИЯ (управление) -->
+    <div class="tab-content" id="tab-tasks">
+      <div class="stat-card full">
+        <div class="stat-label" style="font-size:14px;color:#f5c542;margin-bottom:12px;">📋 Управление специальными заданиями</div>
+
+        <!-- ФОРМА СОЗДАНИЯ -->
+        <div style="margin-bottom:16px;padding:14px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:10px;">
+          <div style="font-size:11px;color:#778;margin-bottom:8px;">➕ Создать новое задание</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <input id="taskTitle" placeholder="Название" class="search-input" style="grid-column:1/-1;">
+            <input id="taskDesc" placeholder="Описание" class="search-input" style="grid-column:1/-1;">
+            <input id="taskLink" placeholder="Ссылка (https://t.me/...)" class="search-input">
+            <input id="taskLinkText" placeholder="Текст кнопки" class="search-input" value="Перейти">
+            <select id="taskRewardType" class="search-input">
+              <option value="gold">💰 Золото</option>
+              <option value="pixr">💎 PIXR</option>
+              <option value="potions">🧪 Зелья</option>
+              <option value="gram">⭐ GRAM</option>
+            </select>
+            <input id="taskRewardAmount" placeholder="Количество" class="search-input" type="number" min="1">
+          </div>
+          <button class="broadcast-btn" onclick="adminCreateTask()" style="margin-top:8px;background:linear-gradient(90deg,#2a5a2a,#4a8a4a);">
+            ➕ Создать задание
+          </button>
+          <div id="taskCreateResult" style="font-size:11px;min-height:18px;margin-top:6px;color:#445;"></div>
+        </div>
+
+        <!-- СПИСОК ЗАДАНИЙ -->
+        <div id="specialTasksList">
+          <div style="color:#445;padding:10px 0;font-size:12px;">Загрузка...</div>
+        </div>
       </div>
     </div>
 
@@ -488,7 +544,7 @@ body {
     if (tab === 'users') loadUsers(1);
     if (tab === 'economy') loadEconomy();
     if (tab === 'logs') loadLogs();
-    if (tab === 'tasks') loadTasks();
+    if (tab === 'tasks') loadSpecialTasks();
   }
 
   window.switchTab = switchTab;
@@ -640,8 +696,7 @@ body {
         html += '<span style="color:#445;">Загрузка...</span>';
         html += '</div></div>';
         
-        // === ВЫДАЧА ПРЕДМЕТОВ ===
-        html += '<div style="margin-top:14px;border-top:1px solid #1a1a35;padding-top:12px;">';
+        // === ВЫДАЧА ПРЕДМЕТОВ ===        html += '<div style="margin-top:14px;border-top:1px solid #1a1a35;padding-top:12px;">';
         html += '<div style="font-size:11px;color:#778;margin-bottom:8px;">📦 ВЫДАТЬ ПРЕДМЕТ</div>';
         html += '<div style="display:flex;flex-direction:column;gap:6px;">';
         html += '<select id="itemSelect" style="padding:8px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:12px;font-family:\'Courier New\',monospace;">';
@@ -974,40 +1029,56 @@ body {
   }
 
   // ═══════════════════════════════
-  //  ЗАПУСК
+  //  УПРАВЛЕНИЕ ЗАДАНИЯМИ (админка)
   // ═══════════════════════════════
 
-
-  // ═══════════════════════════════
-  //  ЗАДАНИЯ
-  // ═══════════════════════════════
-
-  function loadTasks() {
+  function loadSpecialTasks() {
     if (!SESSION) return;
+    var list = document.getElementById('specialTasksList');
+    if (!list) return;
+    
+    list.innerHTML = '<div style="color:#445;padding:10px 0;font-size:12px;">Загрузка...</div>';
+    
     fetch(API + '/admin/api/tasks?session=' + SESSION)
       .then(function(r) { return r.json(); })
       .then(function(r) {
-        if (!r.ok) return;
-        var list = document.getElementById('tasksList');
-        if (!r.tasks || !r.tasks.length) {
-          list.innerHTML = '<div style="color:#445;padding:10px 0;font-size:12px;">Нет заданий</div>';
+        if (!r.ok) {
+          list.innerHTML = '<div style="color:#e74c3c;padding:10px 0;font-size:12px;">❌ Ошибка загрузки</div>';
           return;
         }
+        
+        if (!r.tasks || !r.tasks.length) {
+          list.innerHTML = '<div style="color:#445;padding:20px 0;text-align:center;font-size:12px;">📭 Нет заданий</div>';
+          return;
+        }
+        
         var icons = { gold: '💰', pixr: '💎', potions: '🧪', gram: '⭐' };
-        list.innerHTML = r.tasks.map(function(t) {
-          return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #0a0a1a;">' +
-            '<div style="flex:1;">' +
-              '<div style="font-size:12px;font-weight:bold;color:#ccc;">' + t.title + '</div>' +
-              (t.description ? '<div style="font-size:10px;color:#667;margin-top:2px;">' + t.description + '</div>' : '') +
-              (t.link ? '<div style="font-size:10px;color:#4a8aff;margin-top:2px;">' + t.link + '</div>' : '') +
-              '<div style="font-size:10px;color:#f5c542;margin-top:3px;">' + (icons[t.rewardType]||'🎁') + ' ' + t.rewardAmount + ' ' + t.rewardType + '</div>' +
-            '</div>' +
-            '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-              '<button onclick="adminToggleTask(this.dataset.id)" data-id=\' + t.taskId + \' style="padding:4px 8px;font-size:10px;background:' + (t.active ? 'rgba(46,204,113,0.15)' : 'rgba(255,255,255,0.05)') + ';border:1px solid ' + (t.active ? '#2ecc71' : '#444') + ';border-radius:5px;color:' + (t.active ? '#2ecc71' : '#666') + ';cursor:pointer;">' + (t.active ? 'ВКЛ' : 'ВЫКЛ') + '</button>' +
-              '<button onclick="adminDeleteTask(this.dataset.id)" data-id=\' + t.taskId + \' style="padding:4px 8px;font-size:10px;background:rgba(231,76,60,0.15);border:1px solid #e74c3c;border-radius:5px;color:#e74c3c;cursor:pointer;">🗑</button>' +
-            '</div>' +
+        var html = '<div style="font-size:10px;color:#556;margin-bottom:8px;">Всего: ' + r.tasks.length + ' заданий</div>';
+        
+        r.tasks.forEach(function(t) {
+          var statusColor = t.active ? '#2ecc71' : '#666';
+          var statusText  = t.active ? 'ВКЛ' : 'ВЫКЛ';
+          var statusBg    = t.active ? 'rgba(46,204,113,0.15)' : 'rgba(255,255,255,0.05)';
+          
+          html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #0a0a1a;background:rgba(255,255,255,0.02);border-radius:6px;margin-bottom:4px;">' +
+              '<div style="flex:1;min-width:0;">' +
+                  '<div style="font-size:13px;font-weight:bold;color:' + (t.active ? '#ddd' : '#556') + ';">' + t.title + '</div>' +
+                  (t.description ? '<div style="font-size:10px;color:#667;margin-top:2px;">' + t.description + '</div>' : '') +
+                  (t.link ? '<div style="font-size:10px;color:#4a8aff;margin-top:2px;word-break:break-all;">🔗 ' + t.link + '</div>' : '') +
+                  '<div style="font-size:11px;color:#f5c542;margin-top:4px;">' + (icons[t.rewardType] || '🎁') + ' ' + t.rewardAmount + ' ' + t.rewardType + '</div>' +
+                  '<div style="font-size:9px;color:#445;margin-top:2px;">ID: ' + t.taskId + '</div>' +
+              '</div>' +
+              '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">' +
+                  '<button onclick="adminToggleTask(\'' + t.taskId + '\')" style="padding:4px 10px;font-size:10px;background:' + statusBg + ';border:1px solid ' + statusColor + ';border-radius:5px;color:' + statusColor + ';cursor:pointer;font-family:\'Courier New\',monospace;">' + statusText + '</button>' +
+                  '<button onclick="adminDeleteTask(\'' + t.taskId + '\')" style="padding:4px 10px;font-size:10px;background:rgba(231,76,60,0.12);border:1px solid #e74c3c;border-radius:5px;color:#e74c3c;cursor:pointer;font-family:\'Courier New\',monospace;">🗑 Удалить</button>' +
+              '</div>' +
           '</div>';
-        }).join('');
+        });
+        
+        list.innerHTML = html;
+      })
+      .catch(function() {
+        list.innerHTML = '<div style="color:#e74c3c;padding:10px 0;font-size:12px;">❌ Ошибка соединения</div>';
       });
   }
 
@@ -1016,64 +1087,89 @@ body {
     var title   = document.getElementById('taskTitle').value.trim();
     var desc    = document.getElementById('taskDesc').value.trim();
     var link    = document.getElementById('taskLink').value.trim();
-    var linkTxt = document.getElementById('taskLinkText').value.trim();
+    var linkTxt = document.getElementById('taskLinkText').value.trim() || 'Перейти';
     var type    = document.getElementById('taskRewardType').value;
     var amount  = parseInt(document.getElementById('taskRewardAmount').value);
     var res     = document.getElementById('taskCreateResult');
+
     if (!title || !amount || amount < 1) {
       res.style.color = '#e74c3c';
-      res.textContent = 'Заполни название и количество';
+      res.textContent = '❌ Заполните название и количество';
       return;
     }
+
     res.style.color = '#f5c542';
-    res.textContent = 'Создание...';
-    fetch(API + '/admin/api/tasks', {
+    res.textContent = '⏳ Создание...';
+
+    fetch(API + '/admin/api/tasks?session=' + SESSION, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-admin-session': SESSION },
-      body: JSON.stringify({ title: title, description: desc, link: link, linkText: linkTxt || 'Перейти', rewardType: type, rewardAmount: amount })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: title,
+        description: desc,
+        link: link,
+        linkText: linkTxt,
+        rewardType: type,
+        rewardAmount: amount
+      })
     })
     .then(function(r) { return r.json(); })
     .then(function(r) {
       if (r.ok) {
         res.style.color = '#2ecc71';
-        res.textContent = 'Задание создано!';
+        res.textContent = '✅ Задание "' + title + '" создано!';
         document.getElementById('taskTitle').value = '';
-        document.getElementById('taskDesc').value  = '';
-        document.getElementById('taskLink').value  = '';
+        document.getElementById('taskDesc').value = '';
+        document.getElementById('taskLink').value = '';
         document.getElementById('taskLinkText').value = '';
         document.getElementById('taskRewardAmount').value = '';
-        loadTasks();
+        loadSpecialTasks();
       } else {
         res.style.color = '#e74c3c';
-        res.textContent = 'Ошибка: ' + (r.error || '?');
+        res.textContent = '❌ Ошибка: ' + (r.error || '?');
       }
     })
-    .catch(function() { res.style.color = '#e74c3c'; res.textContent = 'Нет соединения'; });
+    .catch(function() {
+      res.style.color = '#e74c3c';
+      res.textContent = '❌ Нет соединения с сервером';
+    });
   }
 
   function adminDeleteTask(taskId) {
-    if (!SESSION || !confirm('Удалить задание?')) return;
-    fetch(API + '/admin/api/tasks/' + taskId, {
-      method: 'DELETE',
-      headers: { 'x-admin-session': SESSION }
+    if (!SESSION || !confirm('Удалить задание "' + taskId + '"?')) return;
+    fetch(API + '/admin/api/tasks/' + taskId + '?session=' + SESSION, {
+      method: 'DELETE'
     })
     .then(function(r) { return r.json(); })
-    .then(function(r) { if (r.ok) loadTasks(); });
+    .then(function(r) {
+      if (r.ok) {
+        loadSpecialTasks();
+        var res = document.getElementById('taskCreateResult');
+        res.textContent = '🗑 Задание удалено';
+        res.style.color = '#e74c3c';
+        setTimeout(function() { res.textContent = ''; }, 3000);
+      }
+    });
   }
 
   function adminToggleTask(taskId) {
     if (!SESSION) return;
-    fetch(API + '/admin/api/tasks/' + taskId + '/toggle', {
-      method: 'PATCH',
-      headers: { 'x-admin-session': SESSION }
+    fetch(API + '/admin/api/tasks/' + taskId + '/toggle?session=' + SESSION, {
+      method: 'PATCH'
     })
     .then(function(r) { return r.json(); })
-    .then(function(r) { if (r.ok) loadTasks(); });
+    .then(function(r) {
+      if (r.ok) loadSpecialTasks();
+    });
   }
 
   window.adminCreateTask = adminCreateTask;
   window.adminDeleteTask = adminDeleteTask;
   window.adminToggleTask = adminToggleTask;
+
+  // ═══════════════════════════════
+  //  ЗАПУСК
+  // ═══════════════════════════════
 
   checkSession();
 
