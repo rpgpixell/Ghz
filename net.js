@@ -188,6 +188,7 @@
       hp: G.hp,
       gold: G.gold,
       xp: G.xp,
+      xpNeeded: G.xpNeeded,
       killCount: G.killCount,
       potions: G.potions,
 
@@ -221,6 +222,7 @@
       hp: full.hp,
       gold: full.gold,
       xp: full.xp,
+      xpNeeded: full.xpNeeded,
       killCount: full.killCount,
       potions: full.potions,
       invIdCounter: full.invIdCounter,
@@ -330,7 +332,15 @@
     if (typeof recalcStats === 'function') recalcStats();
     
     G.maxHp = num(s.maxHp, G.maxHp);
-    G.xpNeeded = num(s.xpNeeded, G.xpNeeded);
+    G.xpNeeded = num(s.xpNeeded, 0);
+    // Если xpNeeded не сохранён (старые сейвы) — пересчитываем из уровня
+    if (!G.xpNeeded || G.xpNeeded < 100) {
+      var _xp = 100;
+      for (var _lv = 1; _lv < G.level; _lv++) {
+        _xp = Math.floor(_xp * (_lv < 7 ? 2.5 : 1.1));
+      }
+      G.xpNeeded = _xp;
+    }
     
     var hp = num(s.hp, G.maxHp);
     if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
