@@ -255,22 +255,142 @@ function goToFloor(n) {
 }
 
 // ═══════════════════════════════
-//  ВКЛАДКА РЕЙТИНГА
+//  ВКЛАДКА РЕЙТИНГА (исправленная)
 // ═══════════════════════════════
+
+// Кэш рейтинга
+var _ratingCache = null;
+var _ratingCacheTime = 0;
+var _ratingLoading = false;
+
 function renderRating() {
-  const cp      = calcCP();
-  const myEntry = { name: '👤 Ты', cp, isMe: true };
-  const all     = [...FAKE_PLAYERS, myEntry].sort((a, b) => b.cp - a.cp);
-  const medals  = ['🥇', '🥈', '🥉'];
-  document.getElementById('ratingBody').innerHTML =
-    '<div style="font-size:10px;color:#778;margin-bottom:12px;">Топ игроков по Боевой мощи</div>' +
-    all.map((p, i) =>
-      `<div class="rating-row" style="${p.isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.06)' : ''}">
-        <div class="rating-rank">${medals[i] || (i + 1)}</div>
-        <div class="rating-name">${p.name}</div>
-        <div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ${p.cp}</div>
-      </div>`
-    ).join('');
+  var body = document.getElementById('ratingBody');
+  if (!body) return;
+  
+  // Показываем кэш если есть
+  if (_ratingCache && Date.now() - _ratingCacheTime < 30000) {
+    renderRatingData(_ratingCache, body);
+    return;
+  }
+  
+  // Показываем загрузку
+  body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">⏳ Загрузка рейтинга...</div>';
+  
+  // Если нет GameSync или не онлайн — показываем заглушку
+  if (!window.GameSync || !window.GameSync.state.online) {
+    body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">📱 Рейтинг доступен только в Telegram</div>';
+    return;
+  }
+  
+  if (_ratingLoading) return;
+  _ratingLoading = true;
+  
+  var tgId = window.GameSync.getTgId();
+  var api = window.GameSync._API;
+  
+  fetch(api + '/api/leaderboard?tgId=' + encodeURIComponent(tgId))
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      _ratingLoading = false;
+      if (!r.ok || !r.top) {
+        body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#e74c3c;font-size:12px;">❌ Ошибка загрузки</div>';
+        return;
+      }
+      
+      // Кэшируем
+      _ratingCache = r.top;
+      _ratingCacheTime = Date.now();
+      
+      renderRatingData(r.top, body);
+    })
+    .catch(function() {
+      _ratingLoading = false;
+      body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#e74c3c;font-size:12px;">❌ Нет соединения</div>';
+    });
+}
+
+function renderRatingData(players, body) {
+  var medals = ['🥇', '🥈', '🥉'];
+  var charEmojis = { fire: '🔥', light: '✨', water: '💧' };
+  var charColors = { fire: '#ff7030', light: '#ffd040', water: '#40d0ff' };
+  
+  // Находим текущего игрока
+  var tgId = window.GameSync ? window.GameSync.getTgId() : null;
+  var myIndex = -1;
+  
+  var html = '<div style="font-size:10px;color:#778;margin-bottom:12px;">🏆 Топ ' + Math.min(players.length, 50) + ' игроков по Боевой мощи</div>';
+  
+  if (!players || players.length === 0) {
+    body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">👥 Пока нет игроков</div>';
+    return;
+  }
+  
+  // Используем только топ-50
+  var topPlayers = players.slice(0, 50);
+  
+  topPlayers.forEach(function(p, i) {
+    var isMe = (p.tgId && p.tgId === tgId);
+    if (isMe) myIndex = i;
+    
+    var rank = i + 1;
+    var medal = medals[i] || rank;
+    var name = p.firstName || p.username || ('Игрок ' + (p.tgId || '').slice(-4));
+    var charEmoji = charEmojis[p.charId] || '❓';
+    var charColor = charColors[p.charId] || '#aaa';
+    var level = p.level || 1;
+    var cp = p.cp || 0;
+    
+    // Аватарка из Telegram
+    var avatarUrl = '';
+    if (p.tgId) {
+      avatarUrl = 'https://t.me/i/userpic/320/' + p.tgId + '.jpg';
+    }
+    
+    html += 
+      '<div class="rating-row" style="' + (isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.08);' : '') + '">' +
+        '<div class="rating-rank">' + medal + '</div>' +
+        '<div style="flex:0 0 32px;width:32px;height:32px;border-radius:50%;overflow:hidden;border:1.5px solid ' + (isMe ? '#f5c542' : '#2a2a5a') + ';background:#0d0d22;flex-shrink:0;">' +
+          '<img src="' + avatarUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\';this.parentElement.innerHTML=\'' + (charEmoji || '👤') + '\';this.parentElement.style.display=\'flex\';this.parentElement.style.alignItems=\'center\';this.parentElement.style.justifyContent=\'center\';this.parentElement.style.fontSize=\'16px\';">' +
+        '</div>' +
+        '<div style="flex:1;min-width:0;padding-left:10px;">' +
+          '<div style="font-size:12px;color:' + (isMe ? '#f5c542' : '#ddd') + ';">' +
+            name + 
+            ' <span style="font-size:9px;color:' + charColor + ';">' + charEmoji + '</span>' +
+          '</div>' +
+          '<div style="font-size:9px;color:#556;">Lv.' + level + '</div>' +
+        '</div>' +
+        '<div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ' + cp + '</div>' +
+      '</div>';
+  });
+  
+  // Если текущий игрок не в топ-50, добавляем его внизу
+  if (myIndex === -1 && tgId) {
+    var myCp = typeof calcCP === 'function' ? calcCP() : 0;
+    var myLevel = G.level || 1;
+    var myChar = G_CHAR ? G_CHAR.id : null;
+    var myName = '👤 Ты';
+    var myEmoji = charEmojis[myChar] || '';
+    var myColor = charColors[myChar] || '#aaa';
+    
+    // Аватарка текущего игрока
+    var myAvatarUrl = 'https://t.me/i/userpic/320/' + tgId + '.jpg';
+    
+    html += 
+      '<div style="margin-top:10px;border-top:1px solid #2a2a5a;padding-top:8px;font-size:9px;color:#556;text-align:center;">— Ты не в топе —</div>' +
+      '<div class="rating-row" style="border-color:#fa0;background:rgba(245,197,66,0.08);">' +
+        '<div class="rating-rank">' + (topPlayers.length + 1) + '</div>' +
+        '<div style="flex:0 0 32px;width:32px;height:32px;border-radius:50%;overflow:hidden;border:1.5px solid #f5c542;background:#0d0d22;flex-shrink:0;">' +
+          '<img src="' + myAvatarUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\';this.parentElement.innerHTML=\'' + (myEmoji || '👤') + '\';this.parentElement.style.display=\'flex\';this.parentElement.style.alignItems=\'center\';this.parentElement.style.justifyContent=\'center\';this.parentElement.style.fontSize=\'16px\';">' +
+        '</div>' +
+        '<div style="flex:1;min-width:0;padding-left:10px;">' +
+          '<div style="font-size:12px;color:#f5c542;">' + myName + ' <span style="font-size:9px;color:' + myColor + ';">' + myEmoji + '</span></div>' +
+          '<div style="font-size:9px;color:#556;">Lv.' + myLevel + '</div>' +
+        '</div>' +
+        '<div class="rating-cp"><svg width="12" height="12" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="2" height="7" fill="#ffaa00"/><rect x="2" y="3" width="6" height="2" fill="#ffaa00"/><rect x="4" y="7" width="2" height="1" fill="#c8850a"/><rect x="3" y="8" width="4" height="1" fill="#c8850a"/><rect x="4" y="9" width="2" height="1" fill="#c8850a"/></svg> ' + myCp + '</div>' +
+      '</div>';
+  }
+  
+  body.innerHTML = html;
 }
 
 // ── SVG иконки для кошелька/статистики ──
@@ -1017,6 +1137,7 @@ function confirmChar() {
   applyCharacter(G_CHAR);
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
+  updateHudAvatar();
 }
 
 function applyCharacterSprites(ch) {
@@ -1040,10 +1161,61 @@ function applyCharacter(ch) {
 }
 
 function startGame() {
-  resize(); updateHUD(); initSkillsHud(); updatePotionHud();
+  resize(); 
+  updateHUD(); 
+  initSkillsHud(); 
+  updatePotionHud();
+  updateAvatarOnStart();
   switchTab('game');
   spawnMonster(player.worldX + W * 0.65);
   requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
+}
+
+// ═══════════════════════════════
+//  ОБНОВЛЕНИЕ АВАТАРКИ В HUD
+// ═══════════════════════════════
+
+function updateHudAvatar() {
+  var avatarEl = document.getElementById('hudAvatar');
+  var imgEl = document.getElementById('hudAvatarImg');
+  if (!avatarEl || !imgEl) return;
+  
+  // Получаем tgId
+  var tgId = window.GameSync ? window.GameSync.getTgId() : null;
+  
+  if (tgId) {
+    // Устанавливаем аватарку из Telegram
+    var avatarUrl = 'https://t.me/i/userpic/320/' + tgId + '.jpg';
+    imgEl.src = avatarUrl;
+    imgEl.style.display = 'block';
+    // Убираем fallback
+    var fallback = avatarEl.querySelector('.avatar-fallback');
+    if (fallback) fallback.remove();
+  } else {
+    // Если нет tgId — показываем эмодзи персонажа
+    imgEl.style.display = 'none';
+    var charEmoji = G_CHAR ? G_CHAR.avatar : '👤';
+    var fallback = avatarEl.querySelector('.avatar-fallback');
+    if (!fallback) {
+      fallback = document.createElement('div');
+      fallback.className = 'avatar-fallback';
+      avatarEl.appendChild(fallback);
+    }
+    fallback.textContent = charEmoji;
+  }
+}
+
+// Вызываем при старте игры и при смене персонажа
+function updateAvatarOnStart() {
+  // Ждём пока загрузится GameSync
+  if (window.GameSync && window.GameSync.getTgId()) {
+    updateHudAvatar();
+  } else {
+    // Проверяем через 500мс
+    setTimeout(function() {
+      updateHudAvatar();
+    }, 500);
+  }
 }
 
 function initCharSelectSprites() {

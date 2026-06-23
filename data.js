@@ -407,19 +407,3 @@ function goldCoinSvg(size) {
   size = size || 14;
   return `<svg width="${size}" height="${size}" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;flex-shrink:0"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>`;
 }
-
-// ═══════════════════════════════
-//  РЕЙТИНГ — фиктивные игроки
-// ═══════════════════════════════
-const FAKE_PLAYERS = [
-  { name: 'DragonSlayer', cp: 8420 },
-  { name: 'ShadowBlade',  cp: 6110 },
-  { name: 'IceQueen',     cp: 4850 },
-  { name: 'BlazeKnight',  cp: 3670 },
-  { name: 'VoidWalker',   cp: 2940 },
-  { name: 'StormRider',   cp: 2010 },
-  { name: 'GhostFang',    cp: 1580 },
-  { name: 'IronFist',     cp: 1120 },
-  { name: 'CrimsonArrow', cp: 780  },
-  { name: 'NightHunter',  cp: 430  },
-];
