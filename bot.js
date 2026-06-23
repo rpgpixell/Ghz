@@ -1,16 +1,17 @@
 /*
   ══════════════════════════════════════════════════════
   bot.js — Telegram бот для PIXEL RPG
+  Режим: Webhook (не polling — нет конфликтов 409 при деплое)
   ══════════════════════════════════════════════════════
 */
 
 const TelegramBot = require('node-telegram-bot-api');
 
 let bot = null;
-const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_TOKEN   = process.env.BOT_TOKEN;
 const BOT_USERNAME = process.env.BOT_USERNAME || 'PixelRPG_Bot';
-const WEBAPP_URL = process.env.WEBAPP_URL || 'https://your-domain.railway.app';
-const API_URL = process.env.API_URL || 'https://ghz-production.up.railway.app';
+const WEBAPP_URL  = process.env.WEBAPP_URL  || 'https://your-domain.railway.app';
+const API_URL     = process.env.API_URL     || 'https://ghz-production.up.railway.app';
 
 console.log('🤖 [bot] Инициализация...');
 console.log('🤖 [bot] BOT_TOKEN: ' + (BOT_TOKEN ? '✅ Установлен' : '❌ НЕ УСТАНОВЛЕН'));
@@ -24,40 +25,51 @@ function initBot(app) {
   }
 
   try {
-    bot = new TelegramBot(BOT_TOKEN, { 
-      polling: {
-        interval: 300,
-        autoStart: true,
-        params: {
-          timeout: 10
-        }
-      }
-    });
-    
-    console.log('✅ [bot] Telegram бот создан');
+    // Webhook режим: Express принимает апдейты сам.
+    // polling: false → нет конфликтов 409 при деплое Railway.
+    bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-    bot.on('polling_error', function(error) {
-      console.error('❌ [bot] Polling error:', error.message);
-    });
+    // Регистрируем webhook в Telegram
+    var webhookUrl = (process.env.WEBHOOK_URL || API_URL) + '/webhook/' + BOT_TOKEN;
+    bot.setWebHook(webhookUrl)
+      .then(function() {
+        console.log('✅ [bot] Webhook установлен: ' + webhookUrl.replace(BOT_TOKEN, '<TOKEN>'));
+      })
+      .catch(function(err) {
+        console.error('❌ [bot] Ошибка установки webhook:', err.message);
+      });
 
-    // ── /start ──
-    bot.onText(/\/start/, function(msg, match) {
+    // ── Маршрут для приёма апдейтов от Telegram ──
+    // Регистрируем в Express до return, чтобы app был точно доступен
+    app.post('/webhook/' + BOT_TOKEN, function(req, res) {
       try {
-        var chatId = msg.chat.id;
-        var userId = msg.from.id;
-        var username = msg.from.username || msg.from.first_name || 'Игрок';
-        var startParam = match && match[1] ? match[1] : null;
-        
+        bot.processUpdate(req.body);
+      } catch (e) {
+        console.error('❌ [bot] processUpdate error:', e.message);
+      }
+      res.sendStatus(200);
+    });
+
+    console.log('✅ [bot] Telegram бот создан (webhook mode)');
+
+    // ── /start — исправлен regex: теперь захватывает реферальный параметр ──
+    bot.onText(/\/start(?:\s+(.+))?/, function(msg, match) {
+      try {
+        var chatId     = msg.chat.id;
+        var userId     = msg.from.id;
+        var username   = msg.from.username || msg.from.first_name || 'Игрок';
+        var startParam = (match && match[1]) ? match[1].trim() : null;
+
         console.log('📨 [bot] /start от ' + username + ' (' + userId + '), param: ' + (startParam || 'none'));
-        
+
         var webappUrl = WEBAPP_URL;
         if (startParam) {
           webappUrl = webappUrl + '?startapp=' + startParam;
         }
-        
+
         var greeting = getGreeting(username);
-        
-        var message = 
+
+        var message =
 greeting + '\n\n' +
 '🔥 **PIXEL RPG** — эпическая RPG!\n\n' +
 '━━━━━━━━━━━━━━━━━━━\n' +
@@ -104,7 +116,7 @@ greeting + '\n\n' +
           .catch(function(err) {
             console.error('❌ [bot] Ошибка отправки /start:', err.message);
           });
-          
+
       } catch (e) {
         console.error('❌ [bot] Ошибка в /start:', e.message);
       }
@@ -113,7 +125,7 @@ greeting + '\n\n' +
     // ── /help ──
     bot.onText(/\/help/, function(msg) {
       var chatId = msg.chat.id;
-      bot.sendMessage(chatId, 
+      bot.sendMessage(chatId,
         '📖 **Команды:**\n\n' +
         '/start — Начать игру\n' +
         '/help — Справка\n' +
@@ -128,8 +140,8 @@ greeting + '\n\n' +
       var chatId = msg.chat.id;
       var userId = msg.from.id;
       var refLink = 'https://t.me/' + BOT_USERNAME + '?startapp=' + userId;
-      
-      bot.sendMessage(chatId, 
+
+      bot.sendMessage(chatId,
         '👥 **Твоя реферальная ссылка:**\n\n' +
         '`' + refLink + '`',
         { parse_mode: 'Markdown' }
@@ -140,9 +152,9 @@ greeting + '\n\n' +
     bot.onText(/\/profile/, function(msg) {
       var chatId = msg.chat.id;
       var userId = msg.from.id;
-      
+
       getPlayerProfile(userId).then(function(profile) {
-        bot.sendMessage(chatId, 
+        bot.sendMessage(chatId,
           '📊 **Твой профиль:**\n\n' +
           '👤 Имя: ' + profile.username + '\n' +
           '🎯 Уровень: ' + profile.level + '\n' +
@@ -164,27 +176,27 @@ greeting + '\n\n' +
       try {
         var chatId = query.message.chat.id;
         var userId = query.from.id;
-        var data = query.data;
-        
+        var data   = query.data;
+
         console.log('📨 [bot] Callback: ' + data + ' от ' + userId);
-        
+
         bot.answerCallbackQuery(query.id).catch(function() {});
-        
+
         // ── Рефералка ──
         if (data === 'ref') {
           var refLink = 'https://t.me/' + BOT_USERNAME + '?startapp=' + userId;
-          bot.sendMessage(chatId, 
+          bot.sendMessage(chatId,
             '👥 **Твоя реферальная ссылка:**\n\n' +
             '`' + refLink + '`',
             { parse_mode: 'Markdown' }
           );
           return;
         }
-        
+
         // ── Профиль ──
         if (data === 'profile') {
           getPlayerProfile(userId).then(function(profile) {
-            bot.sendMessage(chatId, 
+            bot.sendMessage(chatId,
               '📊 **Твой профиль:**\n\n' +
               '👤 Имя: ' + profile.username + '\n' +
               '🎯 Уровень: ' + profile.level + '\n' +
@@ -199,17 +211,16 @@ greeting + '\n\n' +
           });
           return;
         }
-        
-        // ── Транзакции ──
+
+        // ── Транзакции (approve / reject) ──
         if (data.startsWith('approve_') || data.startsWith('reject_')) {
           var action = data.startsWith('approve_') ? 'approve' : 'reject';
-          var txId = data.replace(/^(approve|reject)_/, '');
-          
+          var txId   = data.replace(/^(approve|reject)_/, '');
+
           console.log('💳 [bot] Обработка транзакции: ' + txId + ' -> ' + action);
-          
-          // Отправляем запрос на сервер
+
           var adminSession = process.env.ADMIN_SESSION || '';
-          
+
           fetch(API_URL + '/admin/api/transaction/' + txId + '/' + action, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -221,19 +232,19 @@ greeting + '\n\n' +
               var statusText = action === 'approve' ? '✅ Подтверждено' : '❌ Отклонено';
               bot.editMessageText(
                 query.message.text + '\n\n📌 **Статус:** ' + statusText,
-                { 
-                  chat_id: query.message.chat.id, 
+                {
+                  chat_id: query.message.chat.id,
                   message_id: query.message.message_id,
                   parse_mode: 'Markdown'
                 }
               ).catch(function() {});
-              
-              bot.answerCallbackQuery(query.id, { 
-                text: '✅ Транзакция ' + (action === 'approve' ? 'подтверждена' : 'отклонена') 
+
+              bot.answerCallbackQuery(query.id, {
+                text: '✅ Транзакция ' + (action === 'approve' ? 'подтверждена' : 'отклонена')
               });
             } else {
-              bot.answerCallbackQuery(query.id, { 
-                text: '❌ Ошибка: ' + (result.error || 'unknown') 
+              bot.answerCallbackQuery(query.id, {
+                text: '❌ Ошибка: ' + (result.error || 'unknown')
               });
             }
           })
@@ -263,11 +274,11 @@ greeting + '\n\n' +
 function getGreeting(username) {
   var hour = new Date().getHours();
   var time = 'Добрый день';
-  if (hour < 12) time = '🌅 Доброе утро';
+  if (hour < 12)      time = '🌅 Доброе утро';
   else if (hour < 18) time = '☀️ Добрый день';
   else if (hour < 22) time = '🌇 Добрый вечер';
-  else time = '🌙 Доброй ночи';
-  
+  else                time = '🌙 Доброй ночи';
+
   return time + ', *' + username + '*! 👋';
 }
 
@@ -276,68 +287,44 @@ function getPlayerProfile(userId) {
   try {
     var mongoose = require('mongoose');
     var Save = mongoose.model('Save');
-    
+
     return Save.findOne({ tgId: String(userId) }).lean()
       .then(function(doc) {
         if (!doc) {
-          return {
-            username: 'Новичок',
-            level: 1,
-            cp: 0,
-            floor: 1,
-            killCount: 0,
-            gold: 0,
-            pixr: 0,
-            gram: 0
-          };
+          return { username: 'Новичок', level: 1, cp: 0, floor: 1, killCount: 0, gold: 0, pixr: 0, gram: 0 };
         }
-        
         var data = doc.data || {};
         return {
-          username: doc.firstName || doc.username || 'Игрок',
-          level: doc.level || 1,
-          cp: doc.cp || 0,
-          floor: doc.floor || 1,
+          username:  doc.firstName || doc.username || 'Игрок',
+          level:     doc.level     || 1,
+          cp:        doc.cp        || 0,
+          floor:     doc.floor     || 1,
           killCount: data.killCount || 0,
-          gold: data.gold || 0,
-          pixr: data.pixr || 0,
-          gram: data.gram || 0
+          gold:      data.gold     || 0,
+          pixr:      data.pixr     || 0,
+          gram:      data.gram     || 0
         };
       })
       .catch(function(e) {
         console.error('❌ [bot] getPlayerProfile error:', e.message);
-        return {
-          username: 'Ошибка',
-          level: 0,
-          cp: 0,
-          floor: 0,
-          killCount: 0,
-          gold: 0,
-          pixr: 0,
-          gram: 0
-        };
+        return { username: 'Ошибка', level: 0, cp: 0, floor: 0, killCount: 0, gold: 0, pixr: 0, gram: 0 };
       });
   } catch (e) {
     console.error('❌ [bot] getPlayerProfile error:', e.message);
-    return Promise.resolve({
-      username: 'Ошибка',
-      level: 0,
-      cp: 0,
-      floor: 0,
-      killCount: 0,
-      gold: 0,
-      pixr: 0,
-      gram: 0
-    });
+    return Promise.resolve({ username: 'Ошибка', level: 0, cp: 0, floor: 0, killCount: 0, gold: 0, pixr: 0, gram: 0 });
   }
 }
 
+// ── Удаление webhook и остановка ──
 function stopBot() {
   if (bot) {
     try {
-      bot.stopPolling();
-      bot = null;
-      console.log('🛑 [bot] Остановлен');
+      bot.deleteWebHook()
+        .catch(function() {})
+        .then(function() {
+          bot = null;
+          console.log('🛑 [bot] Webhook удалён, бот остановлен');
+        });
     } catch (e) {
       console.error('❌ [bot] Ошибка остановки:', e.message);
     }
@@ -345,7 +332,7 @@ function stopBot() {
 }
 
 module.exports = {
-  initBot: initBot,
-  stopBot: stopBot,
+  initBot:  initBot,
+  stopBot:  stopBot,
   get bot() { return bot; }
 };

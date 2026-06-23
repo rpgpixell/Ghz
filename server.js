@@ -1226,7 +1226,25 @@ try {
 //  Запуск
 // ═══════════════════════════════
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server on :${PORT}`);
   console.log(`📊 MongoDB: 5GB, Pool: 50`);
+});
+
+// ── Graceful shutdown (Railway посылает SIGTERM перед убийством контейнера) ──
+// Даём время завершить текущие запросы прежде чем выйти
+process.on('SIGTERM', () => {
+  console.log('🛑 [shutdown] SIGTERM получен, завершаем...');
+  server.close(() => {
+    console.log('🛑 [shutdown] HTTP сервер закрыт');
+    mongoose.connection.close(false, () => {
+      console.log('🛑 [shutdown] MongoDB закрыта');
+      process.exit(0);
+    });
+  });
+  // Если за 10 секунд не завершились — принудительно
+  setTimeout(() => {
+    console.error('❌ [shutdown] Принудительное завершение');
+    process.exit(1);
+  }, 10000);
 });
