@@ -961,3 +961,253 @@ html, body {
   .nav-icon { width: 19px; height: 19px; }
   .nav-icon svg { width: 19px; height: 19px; }
 }
+/* ══════════════════════════════════════════════════════
+   МОДАЛКИ КОШЕЛЬКА (пополнение/вывод)
+   ══════════════════════════════════════════════════════ */
+.wallet-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+  animation: walletFadeIn 0.25s ease-out;
+}
+
+.wallet-modal.hidden {
+  display: none !important;
+}
+
+@keyframes walletFadeIn {
+  0% { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.wallet-modal-content {
+  width: 92%;
+  max-width: 380px;
+  max-height: 85vh;
+  background: #0e0e22;
+  border: 1px solid #2a4a6a;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(64, 208, 255, 0.15);
+}
+
+.wallet-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #1a1a35;
+  background: rgba(64, 208, 255, 0.05);
+}
+
+.wallet-modal-title {
+  font-size: 15px;
+  font-weight: bold;
+  color: #40d0ff;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+
+.wallet-modal-close {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.2s;
+}
+
+.wallet-modal-close:hover {
+  color: #e74c3c;
+}
+
+.wallet-modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+
+.wallet-modal-body::-webkit-scrollbar {
+  width: 3px;
+}
+
+.wallet-modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wallet-modal-body::-webkit-scrollbar-thumb {
+  background: #2a2a5a;
+  border-radius: 2px;
+}
+
+.wallet-info {
+  font-size: 12px;
+  color: #778;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid #1a1a35;
+}
+
+.wallet-info b {
+  color: #40d0ff;
+}
+
+.wallet-modal-body label {
+  display: block;
+  font-size: 11px;
+  color: #778;
+  margin-bottom: 4px;
+  letter-spacing: 0.5px;
+}
+
+.wallet-modal-body input,
+.wallet-modal-body select {
+  width: 100%;
+  padding: 10px 12px;
+  background: #0d0d22;
+  border: 1px solid #2a2a5a;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 15px;
+  font-family: 'Courier New', monospace;
+  transition: border-color 0.2s;
+  outline: none;
+}
+
+.wallet-modal-body input:focus,
+.wallet-modal-body select:focus {
+  border-color: #40d0ff;
+}
+
+.wallet-modal-body input::placeholder {
+  color: #445;
+}
+
+/* Реквизиты */
+.wallet-address-box {
+  background: rgba(64, 208, 255, 0.06);
+  border: 1px solid #2a4a6a;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.wallet-address-label {
+  font-size: 10px;
+  color: #556;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.wallet-address {
+  font-size: 11px;
+  color: #ddd;
+  word-break: break-all;
+  background: #0a0a1a;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: monospace;
+  border: 1px solid #1a1a35;
+  user-select: all;
+}
+
+.wallet-memo {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #556;
+}
+
+.wallet-memo span {
+  color: #40d0ff;
+  font-weight: bold;
+}
+
+/* Кнопки */
+.wallet-submit-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+  transition: opacity 0.2s, transform 0.15s;
+}
+
+.wallet-submit-btn:active {
+  transform: scale(0.97);
+}
+
+.wallet-submit-btn.deposit {
+  background: linear-gradient(90deg, #1a5a3a, #2a8a4a);
+  color: #fff;
+}
+
+.wallet-submit-btn.withdraw {
+  background: linear-gradient(90deg, #5a2a2a, #8a3a3a);
+  color: #fff;
+}
+
+.wallet-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wallet-result {
+  margin-top: 8px;
+  font-size: 12px;
+  text-align: center;
+  min-height: 18px;
+}
+
+.wallet-result.success {
+  color: #2ecc71;
+}
+
+.wallet-result.error {
+  color: #e74c3c;
+}
+
+.wallet-result.loading {
+  color: #f5c542;
+}
+
+/* ── АДАПТИВ ── */
+@media (max-width: 420px) {
+  .wallet-modal-content {
+    width: 96%;
+    max-width: 100%;
+    margin: 0 8px;
+  }
+
+  .wallet-modal-title {
+    font-size: 13px;
+  }
+
+  .wallet-modal-body {
+    padding: 12px;
+  }
+
+  .wallet-modal-body input {
+    font-size: 14px;
+    padding: 8px 10px;
+  }
+}
+
+@media (min-width: 600px) {
+  .wallet-modal-content {
+    max-width: 420px;
+  }
+}

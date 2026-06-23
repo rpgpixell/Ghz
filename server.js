@@ -2,7 +2,7 @@
   ══════════════════════════════════════════════════════
   server.js — Backend для PIXEL RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
-  + Админ-панель (рефералы + выдача предметов)
+  + Админ-панель + Транзакции (пополнение/вывод)
   ══════════════════════════════════════════════════════
 */
 
@@ -57,8 +57,10 @@ mongoose.connect(MONGODB_URI, {
 });
 
 // ═══════════════════════════════
-//  СХЕМА
+//  СХЕМЫ
 // ═══════════════════════════════
+
+// ── Пользователи ──
 const SaveSchema = new mongoose.Schema({
   tgId:      { type: String, required: true },
   username:  { type: String, default: '' },
@@ -74,13 +76,48 @@ const SaveSchema = new mongoose.Schema({
   refMilestones: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { minimize: false });
 
-// Индексы
 SaveSchema.index({ tgId: 1 }, { unique: true });
 SaveSchema.index({ cp: -1, level: -1 });
 SaveSchema.index({ refBy: 1 });
 SaveSchema.index({ updatedAt: -1 });
 
 const Save = mongoose.model('Save', SaveSchema);
+
+// ── Транзакции ──
+const TransactionSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  userId: { type: String, required: true, index: true },
+  username: { type: String, default: '' },
+  type: { type: String, enum: ['deposit', 'withdraw'], required: true },
+  amount: { type: Number, required: true, min: 1 },
+  status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  wallet: { type: String, default: '' },
+  memo: { type: String, default: '' },
+  createdAt: { type: Number, default: Date.now },
+  approvedAt: { type: Number, default: null },
+  rejectedAt: { type: Number, default: null },
+  adminNote: { type: String, default: '' }
+});
+const Transaction = mongoose.model('Transaction', TransactionSchema);
+
+// ── Логи админа ──
+const AdminLogSchema = new mongoose.Schema({
+  admin: String,
+  action: String,
+  target: String,
+  details: mongoose.Schema.Types.Mixed,
+  timestamp: { type: Number, default: Date.now }
+});
+const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
+
+// ═══════════════════════════════
+//  КОНФИГ КОШЕЛЬКА
+// ═══════════════════════════════
+const WALLET_CONFIG = {
+  address: 'UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb',
+  minAmount: 1,
+  maxAmount: 100
+};
 
 // ═══════════════════════════════
 //  Rate limiter
@@ -452,6 +489,194 @@ app.post('/api/ref/claim', async (req, res) => {
 
 
 // ═══════════════════════════════
+//  ТРАНЗАКЦИИ (Пополнение/Вывод)
+// ═══════════════════════════════
+
+// ── Создание пополнения ──
+app.post('/api/wallet/deposit', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  
+  const { amount } = req.body;
+  
+  if (!amount || amount < WALLET_CONFIG.minAmount || amount > WALLET_CONFIG.maxAmount) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: `Сумма должна быть от ${WALLET_CONFIG.minAmount} до ${WALLET_CONFIG.maxAmount} GRAM` 
+    });
+  }
+  
+  try {
+    const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const memo = tg.id + '_' + Date.now().toString(36);
+    
+    const tx = await Transaction.create({
+      id: txId,
+      userId: tg.id,
+      username: tg.username || tg.firstName || 'Игрок',
+      type: 'deposit',
+      amount: amount,
+      status: 'pending',
+      wallet: WALLET_CONFIG.address,
+      memo: memo,
+      createdAt: Date.now()
+    });
+    
+    // Уведомляем админа в боте
+    if (bot) {
+      const adminMsg = `
+💰 **НОВАЯ ТРАНЗАКЦИЯ**
+
+**Тип:** Пополнение
+**Пользователь:** @${tg.username || 'нет'} (${tg.id})
+**Сумма:** ${amount} GRAM
+**Кошелек:** \`${WALLET_CONFIG.address}\`
+**Мемо:** \`${memo}\`
+
+Статус: ⏳ Ожидание подтверждения
+      `;
+      
+      if (process.env.ADMIN_TG_ID) {
+        try {
+          await bot.sendMessage(process.env.ADMIN_TG_ID, adminMsg, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '✅ Подтвердить', callback_data: `approve_${tx.id}` },
+                  { text: '❌ Отклонить', callback_data: `reject_${tx.id}` }
+                ]
+              ]
+            }
+          });
+        } catch (e) {
+          console.error('❌ [wallet] Ошибка уведомления админа:', e.message);
+        }
+      }
+    }
+    
+    res.json({
+      ok: true,
+      tx: {
+        id: tx.id,
+        amount: tx.amount,
+        wallet: tx.wallet,
+        memo: tx.memo,
+        status: tx.status,
+        createdAt: tx.createdAt
+      }
+    });
+  } catch (e) {
+    console.error('❌ [wallet] deposit error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Запрос на вывод ──
+app.post('/api/wallet/withdraw', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  
+  const { amount, wallet } = req.body;
+  
+  if (!amount || amount < WALLET_CONFIG.minAmount || amount > WALLET_CONFIG.maxAmount) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: `Сумма должна быть от ${WALLET_CONFIG.minAmount} до ${WALLET_CONFIG.maxAmount} GRAM` 
+    });
+  }
+  
+  if (!wallet || wallet.length < 10) {
+    return res.status(400).json({ ok: false, error: 'Укажите корректный адрес кошелька' });
+  }
+  
+  try {
+    const user = await Save.findOne({ tgId: tg.id });
+    const balance = user?.data?.gram || 0;
+    
+    if (balance < amount) {
+      return res.status(400).json({ ok: false, error: 'Недостаточно GRAM на балансе' });
+    }
+    
+    const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    
+    const tx = await Transaction.create({
+      id: txId,
+      userId: tg.id,
+      username: tg.username || tg.firstName || 'Игрок',
+      type: 'withdraw',
+      amount: amount,
+      status: 'pending',
+      wallet: wallet,
+      memo: tg.id + '_' + Date.now().toString(36),
+      createdAt: Date.now()
+    });
+    
+    if (bot && process.env.ADMIN_TG_ID) {
+      const adminMsg = `
+💰 **НОВАЯ ТРАНЗАКЦИЯ**
+
+**Тип:** Вывод
+**Пользователь:** @${tg.username || 'нет'} (${tg.id})
+**Сумма:** ${amount} GRAM
+**Кошелек:** \`${wallet}\`
+
+Статус: ⏳ Ожидание подтверждения
+      `;
+      
+      try {
+        await bot.sendMessage(process.env.ADMIN_TG_ID, adminMsg, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Подтвердить', callback_data: `approve_${tx.id}` },
+                { text: '❌ Отклонить', callback_data: `reject_${tx.id}` }
+              ]
+            ]
+          }
+        });
+      } catch (e) {
+        console.error('❌ [wallet] Ошибка уведомления админа:', e.message);
+      }
+    }
+    
+    res.json({
+      ok: true,
+      tx: {
+        id: tx.id,
+        amount: tx.amount,
+        wallet: tx.wallet,
+        status: tx.status,
+        createdAt: tx.createdAt
+      }
+    });
+  } catch (e) {
+    console.error('❌ [wallet] withdraw error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Получение транзакций пользователя ──
+app.get('/api/wallet/transactions', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  
+  try {
+    const txs = await Transaction.find({ userId: tg.id })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+    
+    res.json({ ok: true, transactions: txs });
+  } catch (e) {
+    console.error('❌ [wallet] transactions error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+
+// ═══════════════════════════════
 //  АДМИН-ПАНЕЛЬ
 // ═══════════════════════════════
 
@@ -502,16 +727,6 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ── Модель для логов ──
-const AdminLogSchema = new mongoose.Schema({
-  admin: String,
-  action: String,
-  target: String,
-  details: mongoose.Schema.Types.Mixed,
-  timestamp: { type: Number, default: Date.now }
-});
-const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
-
 async function logAdminAction(admin, action, target, details) {
   try {
     await AdminLog.create({ admin, action, target, details });
@@ -520,49 +735,86 @@ async function logAdminAction(admin, action, target, details) {
   }
 }
 
-// ── Роуты админки ──
-app.post('/admin/login', express.json(), (req, res) => {
-  const { login, password } = req.body;
-  
-  if (!login || !password) {
-    return res.status(400).json({ ok: false, error: 'missing_credentials' });
+// ── Админ: подтвердить/отклонить транзакцию ──
+app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
+  try {
+    const { txId, action } = req.params;
+    
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ ok: false, error: 'invalid_action' });
+    }
+    
+    const tx = await Transaction.findOne({ id: txId });
+    if (!tx) {
+      return res.status(404).json({ ok: false, error: 'transaction_not_found' });
+    }
+    
+    if (tx.status !== 'pending') {
+      return res.status(400).json({ ok: false, error: 'transaction_already_processed' });
+    }
+    
+    if (action === 'approve') {
+      tx.status = 'approved';
+      tx.approvedAt = Date.now();
+      
+      const user = await Save.findOne({ tgId: tx.userId });
+      if (user) {
+        if (!user.data) user.data = { tgId: tx.userId };
+        user.data.gram = (user.data.gram || 0) + (tx.type === 'deposit' ? tx.amount : -tx.amount);
+        await user.save();
+      }
+    } else {
+      tx.status = 'rejected';
+      tx.rejectedAt = Date.now();
+    }
+    
+    await tx.save();
+    await logAdminAction(req.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
+    
+    if (bot) {
+      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
+      const msg = `
+💰 **Транзакция ${statusText}**
+
+**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
+**Сумма:** ${tx.amount} GRAM
+**Статус:** ${statusText}
+${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
+      `;
+      try {
+        await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
+      } catch (e) {}
+    }
+    
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [admin] transaction error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
   }
-  
-  const admin = ADMIN_CREDENTIALS[login];
-  if (!admin || admin.password !== password) {
-    return res.status(401).json({ ok: false, error: 'invalid_credentials' });
-  }
-  
-  const sessionId = createSession(login, admin.role);
-  
-  res.json({
-    ok: true,
-    session: sessionId,
-    role: admin.role,
-    login: login
-  });
 });
 
-app.get('/admin/check', (req, res) => {
-  const sessionId = req.headers['x-admin-session'] || req.query.session;
-  const session = getSession(sessionId);
-  
-  if (!session) {
-    return res.json({ ok: false, error: 'unauthorized' });
+// ── Админ: список транзакций ──
+app.get('/admin/api/transactions', requireAdmin, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const status = req.query.status || 'all';
+    
+    const filter = {};
+    if (status !== 'all') filter.status = status;
+    
+    const txs = await Transaction.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+    
+    res.json({ ok: true, transactions: txs });
+  } catch (e) {
+    console.error('❌ [admin] transactions error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
   }
-  
-  res.json({ ok: true, role: session.role, login: session.login });
 });
 
-app.post('/admin/logout', (req, res) => {
-  const sessionId = req.headers['x-admin-session'] || req.body.session;
-  if (sessionId) {
-    adminSessions.delete(sessionId);
-  }
-  res.json({ ok: true });
-});
-
-// ── API админки ──
+// ── Админ: роуты пользователей ──
 app.get('/admin/api/users', requireAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -672,7 +924,6 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
   }
 });
 
-// ── ПОЛУЧИТЬ РЕФЕРАЛОВ ПОЛЬЗОВАТЕЛЯ ──
 app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
@@ -700,7 +951,6 @@ app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
   }
 });
 
-// ── ВЫДАТЬ ПРЕДМЕТ ──
 app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
@@ -743,7 +993,6 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   }
 });
 
-// ── СПИСОК ПРЕДМЕТОВ ──
 app.get('/admin/api/items/list', requireAdmin, (req, res) => {
   try {
     const items = [];
@@ -764,25 +1013,21 @@ app.get('/admin/api/items/list', requireAdmin, (req, res) => {
       { slot: 'weapon', name: 'Посох воды', stats: ['atk', 'dodge'], primary: 'atk', forClass: 'water', classLabel: 'Аквас' }
     ];
     
-    ITEM_TYPES.forEach(type => {
-      items.push({
-        slot: type.slot,
-        name: type.name,
-        stats: type.stats,
-        primary: type.primary
-      });
-    });
+    ITEM_TYPES.forEach(type => items.push({
+      slot: type.slot,
+      name: type.name,
+      stats: type.stats,
+      primary: type.primary
+    }));
     
-    STAFF_TYPES.forEach(type => {
-      items.push({
-        slot: type.slot,
-        name: type.name,
-        stats: type.stats,
-        primary: type.primary,
-        forClass: type.forClass,
-        classLabel: type.classLabel
-      });
-    });
+    STAFF_TYPES.forEach(type => items.push({
+      slot: type.slot,
+      name: type.name,
+      stats: type.stats,
+      primary: type.primary,
+      forClass: type.forClass,
+      classLabel: type.classLabel
+    }));
     
     res.json({ ok: true, items });
   } catch (e) {
@@ -863,9 +1108,7 @@ app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
         try {
           await bot.sendMessage(user.tgId, message);
           sent++;
-        } catch (e) {
-          // Игнорируем
-        }
+        } catch (e) {}
       }
     }
     
@@ -876,7 +1119,47 @@ app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
   }
 });
 
-// ── Отдача админ-панели ──
+app.post('/admin/login', express.json(), (req, res) => {
+  const { login, password } = req.body;
+  
+  if (!login || !password) {
+    return res.status(400).json({ ok: false, error: 'missing_credentials' });
+  }
+  
+  const admin = ADMIN_CREDENTIALS[login];
+  if (!admin || admin.password !== password) {
+    return res.status(401).json({ ok: false, error: 'invalid_credentials' });
+  }
+  
+  const sessionId = createSession(login, admin.role);
+  
+  res.json({
+    ok: true,
+    session: sessionId,
+    role: admin.role,
+    login: login
+  });
+});
+
+app.get('/admin/check', (req, res) => {
+  const sessionId = req.headers['x-admin-session'] || req.query.session;
+  const session = getSession(sessionId);
+  
+  if (!session) {
+    return res.json({ ok: false, error: 'unauthorized' });
+  }
+  
+  res.json({ ok: true, role: session.role, login: session.login });
+});
+
+app.post('/admin/logout', (req, res) => {
+  const sessionId = req.headers['x-admin-session'] || req.body.session;
+  if (sessionId) {
+    adminSessions.delete(sessionId);
+  }
+  res.json({ ok: true });
+});
+
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });

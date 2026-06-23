@@ -286,63 +286,347 @@ function towerSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10"
 function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="#ffaa00"/><rect x="3" y="3" width="2" height="2" fill="#ffaa00"/><rect x="5" y="1" width="2" height="2" fill="#ffaa00"/><rect x="7" y="3" width="2" height="2" fill="#ffaa00"/><rect x="3" y="5" width="4" height="2" fill="#ffcc44"/><rect x="2" y="7" width="6" height="2" fill="#ff8800"/></svg>`; }
 
 // ═══════════════════════════════
-//  ВКЛАДКА КОШЕЛЬКА
+//  ВКЛАДКА КОШЕЛЕК (новая версия)
 // ═══════════════════════════════
+
+var _walletTab = 'wallet'; // 'wallet' | 'stats'
+
 function renderWallet() {
   const cp = calcCP();
   const pixr = G.pixr || 0;
   const gram = (G.gram || 0).toFixed(3);
-  const canExchange = pixr >= 1000;
-  const coinSvg = `<svg width="16" height="16" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>`;
-  document.getElementById('walletBody').innerHTML = `
-    <div class="wallet-card">
-      <div class="wallet-label">PIXR</div>
-      <div class="wallet-val" style="display:flex;align-items:center;gap:6px;">
-        <img src="images/pixr.png" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;">
-        <span style="color:#ff44cc;font-size:22px;font-weight:bold;">${pixr}</span>
-      </div>
-      <div class="wallet-sub">Падает с монстров. Шанс ×1.5 каждый этаж</div>
+  
+  const tabsHtml = `
+    <div style="display:flex;gap:4px;margin-bottom:12px;">
+      <button onclick="switchWalletTab('wallet')" style="flex:1;padding:8px;font-size:12px;font-family:Courier New,monospace;
+        border-radius:8px;border:1.5px solid ${_walletTab === 'wallet' ? '#40d0ff' : '#2a2a5a'};
+        background:${_walletTab === 'wallet' ? 'rgba(64,208,255,0.1)' : 'rgba(255,255,255,0.03)'};
+        color:${_walletTab === 'wallet' ? '#40d0ff' : '#556'};cursor:pointer;">
+        👛 Кошелек
+      </button>
+      <button onclick="switchWalletTab('stats')" style="flex:1;padding:8px;font-size:12px;font-family:Courier New,monospace;
+        border-radius:8px;border:1.5px solid ${_walletTab === 'stats' ? '#f5c542' : '#2a2a5a'};
+        background:${_walletTab === 'stats' ? 'rgba(245,197,66,0.1)' : 'rgba(255,255,255,0.03)'};
+        color:${_walletTab === 'stats' ? '#f5c542' : '#556'};cursor:pointer;">
+        📊 Статистика
+      </button>
     </div>
-    <div class="wallet-card">
-      <div class="wallet-label">GRAM</div>
-      <div class="wallet-val" style="display:flex;align-items:center;gap:6px;">
-        <img src="images/gram.png" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;">
-        <span style="color:#40d0ff;font-size:22px;font-weight:bold;">${gram}</span>
-      </div>
-      <div class="wallet-sub">Получается обменом PIXR → GRAM (1000:1)</div>
-      <div class="wallet-actions" style="margin-top:10px;">
-        <div class="wallet-btn dep" style="opacity:${canExchange?1:0.4};pointer-events:${canExchange?'auto':'none'};display:flex;align-items:center;justify-content:center;gap:6px;"
-          onclick="exchangePixr()">
-          <svg width="14" height="14" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="0" y="3" width="6" height="2" fill="currentColor"/><rect x="4" y="1" width="2" height="2" fill="currentColor"/><rect x="4" y="5" width="2" height="2" fill="currentColor"/><rect x="4" y="5" width="6" height="2" fill="currentColor"/><rect x="4" y="3" width="2" height="2" fill="currentColor"/><rect x="4" y="7" width="2" height="2" fill="currentColor"/></svg>
-          Обменять 1000 PIXR → 1 GRAM
-        </div>
-      </div>
-      ${!canExchange ? `<div style="font-size:10px;color:#556;margin-top:6px;text-align:center;">Нужно минимум 1000 PIXR (у тебя ${pixr})</div>` : ''}
+  `;
+  
+  if (_walletTab === 'stats') {
+    document.getElementById('walletBody').innerHTML = tabsHtml + renderStats();
+    return;
+  }
+  
+  // ── КОШЕЛЕК ──
+  const html = `
+    ${tabsHtml}
+    
+    <!-- Баланс -->
+    <div style="padding:16px;background:rgba(64,208,255,0.06);border:1.5px solid #2a4a6a;border-radius:12px;margin-bottom:14px;text-align:center;">
+      <div style="font-size:10px;color:#778;letter-spacing:1px;">БАЛАНС</div>
+      <div style="font-size:32px;font-weight:bold;color:#40d0ff;margin:4px 0;">${gram} GRAM</div>
+      <div style="font-size:12px;color:#556;">≈ ${(parseFloat(gram) * 0.1).toFixed(2)} $</div>
     </div>
-    <div class="wallet-card">
-      <div class="wallet-label">Статистика</div>
-      <div class="stats-grid">
-        <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ffaa00')}</div><div class="stat-label">Боевая мощь</div><div class="stat-val">${cp}</div></div>
-        <div class="stat-cell"><div class="stat-icon">${skullSvg()}</div><div class="stat-label">Убийств</div><div class="stat-val">${G.killCount}</div></div>
-        <div class="stat-cell"><div class="stat-icon">${cupSvg()}</div><div class="stat-label">Уровень</div><div class="stat-val">${G.level}</div></div>
-        <div class="stat-cell"><div class="stat-icon">${towerSvg()}</div><div class="stat-label">Этаж</div><div class="stat-val">${G.floor} / ${FLOORS.length}</div></div>
-        <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ff6060')}</div><div class="stat-label">Атака</div><div class="stat-val">${G.stats.atk}</div></div>
-        <div class="stat-cell"><div class="stat-icon">${shieldSvg()}</div><div class="stat-label">Защита</div><div class="stat-val">${G.stats.def}</div></div>
-        <div class="stat-cell"><div class="stat-icon">${windSvg()}</div><div class="stat-label">Скорость</div><div class="stat-val">${G.stats.spd}</div></div>
-        <div class="stat-cell"><div class="stat-icon">${critSvg()}</div><div class="stat-label">Крит %</div><div class="stat-val">${G.stats.crit}%</div></div>
-        <div class="stat-cell"><div class="stat-icon">${dodgeSvg()}</div><div class="stat-label">Уклон %</div><div class="stat-val">${G.stats.dodge}%</div></div>
-        <div class="stat-cell"><div class="stat-icon">${heartSvg()}</div><div class="stat-label">Макс. HP</div><div class="stat-val">${G.maxHp}</div></div>
-        <div class="stat-cell"><div class="stat-icon">${atkSpdSvg()}</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
-      </div>
-    </div>`;
+    
+    <!-- Кнопки -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+      <button onclick="openDepositModal()" style="padding:14px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+        📥 Пополнить
+      </button>
+      <button onclick="openWithdrawModal()" style="padding:14px;background:linear-gradient(90deg,#5a2a2a,#8a3a3a);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+        📤 Вывести
+      </button>
+    </div>
+    
+    <!-- Последние транзакции -->
+    <div id="txList" style="margin-top:10px;">
+      <div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:6px;">ИСТОРИЯ ТРАНЗАКЦИЙ</div>
+      <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>
+    </div>
+  `;
+  
+  document.getElementById('walletBody').innerHTML = html;
+  loadTransactions();
 }
 
-function exchangePixr() {
-  if ((G.pixr || 0) < 1000) return;
-  G.pixr -= 1000;
-  G.gram = parseFloat(((G.gram || 0) + 1).toFixed(3));
-  updateHUD();
+function switchWalletTab(tab) {
+  _walletTab = tab;
   renderWallet();
+}
+
+function renderStats() {
+  const cp = calcCP();
+  return `
+    <div class="stats-grid">
+      <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ffaa00')}</div><div class="stat-label">Боевая мощь</div><div class="stat-val">${cp}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${skullSvg()}</div><div class="stat-label">Убийств</div><div class="stat-val">${G.killCount}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${cupSvg()}</div><div class="stat-label">Уровень</div><div class="stat-val">${G.level}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${towerSvg()}</div><div class="stat-label">Этаж</div><div class="stat-val">${G.floor} / ${FLOORS.length}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${swordStatSvg('#ff6060')}</div><div class="stat-label">Атака</div><div class="stat-val">${G.stats.atk}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${shieldSvg()}</div><div class="stat-label">Защита</div><div class="stat-val">${G.stats.def}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${windSvg()}</div><div class="stat-label">Скорость</div><div class="stat-val">${G.stats.spd}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${critSvg()}</div><div class="stat-label">Крит %</div><div class="stat-val">${G.stats.crit}%</div></div>
+      <div class="stat-cell"><div class="stat-icon">${dodgeSvg()}</div><div class="stat-label">Уклон %</div><div class="stat-val">${G.stats.dodge}%</div></div>
+      <div class="stat-cell"><div class="stat-icon">${heartSvg()}</div><div class="stat-label">Макс. HP</div><div class="stat-val">${G.maxHp}</div></div>
+      <div class="stat-cell"><div class="stat-icon">${atkSpdSvg()}</div><div class="stat-label">Ск. атаки</div><div class="stat-val">${(G.stats.atkSpd||1).toFixed(2)}x</div></div>
+    </div>
+  `;
+}
+
+function loadTransactions() {
+  if (!window.GameSync || !window.GameSync._INIT) return;
+  
+  fetch(window.GameSync._API + '/api/wallet/transactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: window.GameSync._INIT })
+  })
+  .then(r => r.json())
+  .then(r => {
+    const list = document.getElementById('txList');
+    if (!r.ok || !r.transactions || r.transactions.length === 0) {
+      list.innerHTML = `
+        <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">
+          <div style="font-size:24px;margin-bottom:8px;">📭</div>
+          Нет транзакций
+        </div>
+      `;
+      return;
+    }
+    
+    let html = '';
+    r.transactions.slice(0, 10).forEach(tx => {
+      const statusColors = {
+        pending: '#f5c542',
+        approved: '#2ecc71',
+        rejected: '#e74c3c'
+      };
+      const statusLabels = {
+        pending: '⏳ Ожидание',
+        approved: '✅ Подтверждено',
+        rejected: '❌ Отклонено'
+      };
+      const typeLabels = {
+        deposit: '📥 Пополнение',
+        withdraw: '📤 Вывод'
+      };
+      const date = new Date(tx.createdAt).toLocaleDateString('ru-RU');
+      
+      html += `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #0a0a1a;font-size:11px;">
+          <div>
+            <div style="color:#ddd;">${typeLabels[tx.type] || tx.type}</div>
+            <div style="color:#556;font-size:9px;">${date}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;">
+              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} GRAM
+            </div>
+            <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
+              ${statusLabels[tx.status] || tx.status}
+            </div>
+          </div>
+        </div>
+      `;
+    });
+    list.innerHTML = html;
+  })
+  .catch(() => {
+    const list = document.getElementById('txList');
+    list.innerHTML = '<div style="color:#e74c3c;text-align:center;padding:20px 0;font-size:12px;">Ошибка загрузки</div>';
+  });
+}
+
+// ═══════════════════════════════
+//  МОДАЛКИ ПОПОЛНЕНИЯ/ВЫВОДА
+// ═══════════════════════════════
+
+function openDepositModal() {
+  const modal = document.getElementById('depositModal');
+  if (!modal) createDepositModal();
+  document.getElementById('depositModal').classList.remove('hidden');
+}
+
+function createDepositModal() {
+  const html = `
+    <div id="depositModal" class="wallet-modal hidden" onclick="closeWalletModal(event)">
+      <div class="wallet-modal-content" onclick="event.stopPropagation()">
+        <div class="wallet-modal-header">
+          <span class="wallet-modal-title">📥 Пополнение GRAM</span>
+          <button class="wallet-modal-close" onclick="closeWalletModal()">✕</button>
+        </div>
+        <div class="wallet-modal-body">
+          <div class="wallet-info">
+            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 GRAM</b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:12px;">Максимальная сумма: <b style="color:#40d0ff;">100 GRAM</b></div>
+          </div>
+          
+          <div style="margin-bottom:12px;">
+            <label style="font-size:11px;color:#778;">Сумма (GRAM)</label>
+            <input id="depositAmount" type="number" min="1" max="100" value="1" 
+              style="width:100%;padding:10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:8px;color:#fff;font-size:16px;font-family:'Courier New',monospace;margin-top:4px;">
+          </div>
+          
+          <div style="background:rgba(64,208,255,0.06);border:1px solid #2a4a6a;border-radius:8px;padding:12px;margin-bottom:12px;">
+            <div style="font-size:10px;color:#556;margin-bottom:4px;">РЕКВИЗИТЫ ДЛЯ ПЕРЕВОДА</div>
+            <div style="font-size:11px;color:#ddd;word-break:break-all;background:#0a0a1a;padding:8px;border-radius:4px;font-family:monospace;">
+              UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb
+            </div>
+            <div style="margin-top:6px;font-size:10px;color:#556;">
+              📌 <b>Мемо:</b> <span id="depositMemo" style="color:#40d0ff;">загружается...</span>
+            </div>
+          </div>
+          
+          <button onclick="submitDeposit()" style="width:100%;padding:12px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+            ✅ Я оплатил
+          </button>
+          <div id="depositResult" style="margin-top:8px;font-size:12px;text-align:center;"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  document.getElementById('app').appendChild(div.firstElementChild);
+  
+  // Генерируем мемо
+  var tgId = window.GameSync ? window.GameSync.getTgId() : 'user';
+  document.getElementById('depositMemo').textContent = tgId + '_' + Date.now().toString(36);
+}
+
+function openWithdrawModal() {
+  const modal = document.getElementById('withdrawModal');
+  if (!modal) createWithdrawModal();
+  document.getElementById('withdrawModal').classList.remove('hidden');
+}
+
+function createWithdrawModal() {
+  const gram = (G.gram || 0).toFixed(3);
+  const maxWithdraw = Math.floor(G.gram || 0);
+  
+  const html = `
+    <div id="withdrawModal" class="wallet-modal hidden" onclick="closeWalletModal(event)">
+      <div class="wallet-modal-content" onclick="event.stopPropagation()">
+        <div class="wallet-modal-header">
+          <span class="wallet-modal-title">📤 Вывод GRAM</span>
+          <button class="wallet-modal-close" onclick="closeWalletModal()">✕</button>
+        </div>
+        <div class="wallet-modal-body">
+          <div class="wallet-info">
+            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 GRAM</b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:12px;">Доступно: <b style="color:#40d0ff;">${gram} GRAM</b></div>
+          </div>
+          
+          <div style="margin-bottom:12px;">
+            <label style="font-size:11px;color:#778;">Сумма (GRAM)</label>
+            <input id="withdrawAmount" type="number" min="1" max="${maxWithdraw}" value="1" 
+              style="width:100%;padding:10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:8px;color:#fff;font-size:16px;font-family:'Courier New',monospace;margin-top:4px;">
+          </div>
+          
+          <div style="margin-bottom:12px;">
+            <label style="font-size:11px;color:#778;">Адрес кошелька</label>
+            <input id="withdrawWallet" type="text" placeholder="Введите адрес..." 
+              style="width:100%;padding:10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:8px;color:#fff;font-size:13px;font-family:'Courier New',monospace;margin-top:4px;">
+          </div>
+          
+          <button onclick="submitWithdraw()" style="width:100%;padding:12px;background:linear-gradient(90deg,#5a2a2a,#8a3a3a);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+            📤 Запросить вывод
+          </button>
+          <div id="withdrawResult" style="margin-top:8px;font-size:12px;text-align:center;"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  document.getElementById('app').appendChild(div.firstElementChild);
+}
+
+function closeWalletModal(e) {
+  if (e && e.target && !e.target.closest('.wallet-modal-content')) return;
+  document.querySelectorAll('.wallet-modal').forEach(m => m.classList.add('hidden'));
+}
+
+// ── ОТПРАВКА ЗАПРОСА ──
+function submitDeposit() {
+  const amount = parseInt(document.getElementById('depositAmount').value);
+  const result = document.getElementById('depositResult');
+  
+  if (!amount || amount < 1 || amount > 100) {
+    result.innerHTML = '<span style="color:#e74c3c;">Сумма от 1 до 100 GRAM</span>';
+    return;
+  }
+  
+  result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
+  
+  fetch(window.GameSync._API + '/api/wallet/deposit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      initData: window.GameSync._INIT,
+      amount: amount
+    })
+  })
+  .then(r => r.json())
+  .then(r => {
+    if (r.ok) {
+      result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
+      document.getElementById('depositAmount').value = '1';
+      loadTransactions();
+      setTimeout(closeWalletModal, 3000);
+    } else {
+      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+    }
+  })
+  .catch(() => {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
+  });
+}
+
+function submitWithdraw() {
+  const amount = parseInt(document.getElementById('withdrawAmount').value);
+  const wallet = document.getElementById('withdrawWallet').value.trim();
+  const result = document.getElementById('withdrawResult');
+  
+  if (!amount || amount < 1 || amount > Math.floor(G.gram || 0)) {
+    result.innerHTML = '<span style="color:#e74c3c;">Недостаточно средств или неверная сумма</span>';
+    return;
+  }
+  
+  if (!wallet || wallet.length < 10) {
+    result.innerHTML = '<span style="color:#e74c3c;">Введите корректный адрес кошелька</span>';
+    return;
+  }
+  
+  result.innerHTML = '<span style="color:#f5c542;">Отправка...</span>';
+  
+  fetch(window.GameSync._API + '/api/wallet/withdraw', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      initData: window.GameSync._INIT,
+      amount: amount,
+      wallet: wallet
+    })
+  })
+  .then(r => r.json())
+  .then(r => {
+    if (r.ok) {
+      result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
+      document.getElementById('withdrawAmount').value = '1';
+      document.getElementById('withdrawWallet').value = '';
+      loadTransactions();
+      setTimeout(closeWalletModal, 3000);
+    } else {
+      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+    }
+  })
+  .catch(() => {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
+  });
 }
 
 // ═══════════════════════════════
@@ -376,7 +660,6 @@ function switchTab(tab) {
   if (tab === 'friends')  renderFriends();
 }
 
-
 // ═══════════════════════════════
 //  ВКЛАДКА ДРУЗЕЙ
 // ═══════════════════════════════
@@ -386,7 +669,6 @@ function renderFriends() {
   var body = document.getElementById('friendsBody');
   if (!body) return;
 
-  // Если нет initData (не в Telegram) — показываем заглушку
   if (!window.GameSync || !window.GameSync.state.online) {
     body.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#556;font-size:12px;">' +
       '<div style="font-size:32px;margin-bottom:12px;">📱</div>' +
@@ -398,7 +680,6 @@ function renderFriends() {
   _friendsLoading = true;
   body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">Загрузка...</div>';
 
-  // Страховочный timeout: сбрасываем флаг если ответа нет 10 сек
   var _flTimeout = setTimeout(function () {
     if (_friendsLoading) {
       _friendsLoading = false;
@@ -430,7 +711,6 @@ function renderFriendsData(r, body) {
   var charColors = { fire: '#ff6030', light: '#ffd040', water: '#40d0ff' };
   var charNames  = { fire: 'Пирокан', light: 'Люмос', water: 'Аквас' };
 
-  // ── Реферальная ссылка ──
   var linkHtml =
     '<div style="margin-bottom:14px;padding:12px;background:rgba(245,197,66,0.06);border:1.5px solid #3a3a1a;border-radius:10px;">' +
     '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:8px;">ТВОЯ РЕФЕРАЛЬНАЯ ССЫЛКА</div>' +
@@ -442,13 +722,11 @@ function renderFriendsData(r, body) {
     '<button onclick="friendsShare(\'' + r.refLink + '\')" style="flex:1;padding:9px;font-size:11px;font-family:Courier New,monospace;border-radius:7px;border:1.5px solid #2ecc71;background:rgba(46,204,113,0.1);color:#2ecc71;cursor:pointer;">✈️ Поделиться</button>' +
     '</div></div>';
 
-  // ── Награда ──
   var rewardHtml =
     '<div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:8px;font-size:10px;color:#667;">' +
     coinSvg + ' <span style="color:#f5c542;font-weight:bold">500 золота</span> за каждые 5 уровней друга · ' +
     '<span style="color:#aaa">Уровни 5, 10, 15, 20...</span></div>';
 
-  // ── Кнопка забрать ──
   var claimHtml = '';
   if (r.pendingGold > 0) {
     claimHtml =
@@ -459,7 +737,6 @@ function renderFriendsData(r, body) {
       coinSvg + ' Забрать ' + r.pendingGold + ' золота</button>';
   }
 
-  // ── Список друзей ──
   var friendsHtml = '';
   if (!r.friends || r.friends.length === 0) {
     friendsHtml =
@@ -576,7 +853,7 @@ let _csSelected      = null;
 let _csParticleTimer = null;
 let _csSpriteTimers  = {};
 let _csIdleImgs      = {};
-let G_CHAR           = null;  // задаётся после выбора
+let G_CHAR           = null;
 
 function selectChar(id) {
   _csSelected = id;
@@ -598,8 +875,6 @@ function confirmChar() {
   startGame();
 }
 
-// Установка спрайтов/анимаций персонажа (без сброса статов).
-// Вынесено отдельно, чтобы загрузка с сервера не затирала прокачку.
 function applyCharacterSprites(ch) {
   spriteRun.src  = ch.runSrc;
   spriteAtk.src  = ch.atkSrc;
@@ -618,7 +893,6 @@ function applyCharacter(ch) {
   Object.assign(G.stats, ch.baseStats);
   G.hp = G.stats.hp; G.maxHp = G.stats.hp;
   G.charId = ch.id;
-  // аватар теперь SVG, не трогаем
 }
 
 function startGame() {
@@ -627,7 +901,6 @@ function startGame() {
   requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
 }
 
-// ── Анимация спрайтов на экране выбора персонажа ──
 function initCharSelectSprites() {
   ['fire','light','water'].forEach(function(id) {
     var ch  = CHARS[id];
@@ -651,7 +924,6 @@ function initCharSelectSprites() {
   });
 }
 
-// ── Фоновые частицы на экране выбора ──
 function initCsParticles() {
   var cv = document.getElementById('csParticles');
   cv.width  = window.innerWidth;
@@ -680,12 +952,9 @@ function initCsParticles() {
   tick();
 }
 
-// ── Инициализация экрана выбора при загрузке страницы ──
 window.addEventListener('load', function() {
   initCharSelectSprites();
   initCsParticles();
 });
 
-// ── resize ──
-// Telegram.WebApp.ready() и expand() вызываются в net.js → initTelegram(), не дублируем
 window.addEventListener('resize', resize);

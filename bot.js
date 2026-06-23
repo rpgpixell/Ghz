@@ -10,6 +10,7 @@ let bot = null;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_USERNAME = process.env.BOT_USERNAME || 'PixelRPG_Bot';
 const WEBAPP_URL = process.env.WEBAPP_URL || 'https://your-domain.railway.app';
+const API_URL = process.env.API_URL || 'https://ghz-production.up.railway.app';
 
 console.log('🤖 [bot] Инициализация...');
 console.log('🤖 [bot] BOT_TOKEN: ' + (BOT_TOKEN ? '✅ Установлен' : '❌ НЕ УСТАНОВЛЕН'));
@@ -156,7 +157,9 @@ greeting + '\n\n' +
       });
     });
 
-    // ── Callback кнопки ──
+    // ═══════════════════════════════
+    //  ОБРАБОТКА ТРАНЗАКЦИЙ
+    // ═══════════════════════════════
     bot.on('callback_query', function(query) {
       try {
         var chatId = query.message.chat.id;
@@ -167,6 +170,7 @@ greeting + '\n\n' +
         
         bot.answerCallbackQuery(query.id).catch(function() {});
         
+        // ── Рефералка ──
         if (data === 'ref') {
           var refLink = 'https://t.me/' + BOT_USERNAME + '?startapp=' + userId;
           bot.sendMessage(chatId, 
@@ -174,7 +178,11 @@ greeting + '\n\n' +
             '`' + refLink + '`',
             { parse_mode: 'Markdown' }
           );
-        } else if (data === 'profile') {
+          return;
+        }
+        
+        // ── Профиль ──
+        if (data === 'profile') {
           getPlayerProfile(userId).then(function(profile) {
             bot.sendMessage(chatId, 
               '📊 **Твой профиль:**\n\n' +
@@ -188,6 +196,50 @@ greeting + '\n\n' +
               '⭐ GRAM: ' + profile.gram,
               { parse_mode: 'Markdown' }
             );
+          });
+          return;
+        }
+        
+        // ── Транзакции ──
+        if (data.startsWith('approve_') || data.startsWith('reject_')) {
+          var action = data.startsWith('approve_') ? 'approve' : 'reject';
+          var txId = data.replace(/^(approve|reject)_/, '');
+          
+          console.log('💳 [bot] Обработка транзакции: ' + txId + ' -> ' + action);
+          
+          // Отправляем запрос на сервер
+          var adminSession = process.env.ADMIN_SESSION || '';
+          
+          fetch(API_URL + '/admin/api/transaction/' + txId + '/' + action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session: adminSession })
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(result) {
+            if (result.ok) {
+              var statusText = action === 'approve' ? '✅ Подтверждено' : '❌ Отклонено';
+              bot.editMessageText(
+                query.message.text + '\n\n📌 **Статус:** ' + statusText,
+                { 
+                  chat_id: query.message.chat.id, 
+                  message_id: query.message.message_id,
+                  parse_mode: 'Markdown'
+                }
+              ).catch(function() {});
+              
+              bot.answerCallbackQuery(query.id, { 
+                text: '✅ Транзакция ' + (action === 'approve' ? 'подтверждена' : 'отклонена') 
+              });
+            } else {
+              bot.answerCallbackQuery(query.id, { 
+                text: '❌ Ошибка: ' + (result.error || 'unknown') 
+              });
+            }
+          })
+          .catch(function(err) {
+            console.error('❌ [bot] Ошибка обработки транзакции:', err.message);
+            bot.answerCallbackQuery(query.id, { text: '❌ Ошибка сервера' });
           });
         }
       } catch (e) {
