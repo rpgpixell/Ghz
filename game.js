@@ -357,7 +357,7 @@ function gainXP(amount) {
   while (G.xp >= G.xpNeeded) {
     G.xp -= G.xpNeeded;
     G.level++;
-    G.xpNeeded = Math.floor(G.xpNeeded * 2.5);
+    G.xpNeeded = Math.floor(G.xpNeeded * (G.level <= 7 ? 2.5 : 1.1));
     G.baseStats.atk += 2;
     G.baseStats.def += 1;
     G.baseStats.hp  += 10;
