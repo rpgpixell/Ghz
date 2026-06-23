@@ -1041,6 +1041,7 @@ function applyCharacter(ch) {
 
 function startGame() {
   resize(); updateHUD(); initSkillsHud(); updatePotionHud();
+  switchTab('game');
   spawnMonster(player.worldX + W * 0.65);
   requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
 }
