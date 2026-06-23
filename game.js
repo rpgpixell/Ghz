@@ -53,34 +53,31 @@ function getAtkCooldown()      { return Math.max(0.5, BASE_ATK_COOLDOWN / effect
 // ═══════════════════════════════
 function monsterTemplate() {
   const f = G.floor;
-  const floor1 = [
-    { name: 'Гоблин',       emoji: '👺', hp: 30  + f*15, atk: 5  + f*2, xp: 15,  gold: 8,   color: '#3a3', sk: 'goblin'    },
-    { name: 'Гриб',         emoji: '🍄', hp: 25  + f*10, atk: 3  + f*1, xp: 10,  gold: 5,   color: '#a63', sk: 'mushroom'  },
-    { name: 'Скелет',       emoji: '💀', hp: 45  + f*20, atk: 8  + f*3, xp: 25,  gold: 12,  color: '#aab', sk: 'skeleton'  },
+
+  // Каждый этаж в 3 раза сильнее предыдущего
+  const scale = Math.pow(3, f - 1);
+
+  const templates = [
+    { name: 'Гоблин',        emoji: '👺', hp: 30,  atk: 5,  xp: 15,  gold: 8,   color: '#3a3', sk: 'goblin'    },
+    { name: 'Гриб',          emoji: '🍄', hp: 25,  atk: 3,  xp: 10,  gold: 5,   color: '#a63', sk: 'mushroom'  },
+    { name: 'Скелет',        emoji: '💀', hp: 45,  atk: 8,  xp: 25,  gold: 12,  color: '#aab', sk: 'skeleton'  },
+    { name: 'Ледяной голем', emoji: '🧊', hp: 55,  atk: 10, xp: 40,  gold: 20,  color: '#4af', sk: 'icegolem'  },
+    { name: 'Голем земли',   emoji: '🪨', hp: 60,  atk: 11, xp: 45,  gold: 22,  color: '#963', sk: 'earthgolem'},
+    { name: 'Демон',         emoji: '😈', hp: 70,  atk: 14, xp: 70,  gold: 40,  color: '#f44', sk: null        },
+    { name: 'Феникс',        emoji: '🦅', hp: 65,  atk: 12, xp: 60,  gold: 35,  color: '#fa4', sk: null        },
+    { name: 'Зомби воин',    emoji: '🧟', hp: 80,  atk: 16, xp: 110, gold: 60,  color: '#5a3', sk: 'zwarrior'  },
+    { name: 'Зомби палач',   emoji: '🧟', hp: 85,  atk: 17, xp: 120, gold: 65,  color: '#383', sk: 'zexec'     },
+    { name: 'Тень',          emoji: '👻', hp: 95,  atk: 20, xp: 180, gold: 100, color: '#a4f', sk: null        },
   ];
-  const floor2 = [
-    { name: 'Ледяной голем', emoji: '🧊', hp: 130 + f*30, atk: 20 + f*5, xp: 40,  gold: 20,  color: '#4af', sk: 'icegolem'   },
-    { name: 'Голем земли',   emoji: '🪨', hp: 150 + f*35, atk: 22 + f*5, xp: 45,  gold: 22,  color: '#963', sk: 'earthgolem' },
-  ];
-  const floor3 = [
-    { name: 'Демон',   emoji: '😈', hp: 220 + f*40, atk: 36 + f*8, xp: 70,  gold: 40,  color: '#f44', sk: null },
-    { name: 'Феникс',  emoji: '🦅', hp: 180 + f*35, atk: 30 + f*7, xp: 60,  gold: 35,  color: '#fa4', sk: null },
-  ];
-  const floor4 = [
-    { name: 'Зомби воин',  emoji: '🧟', hp: 380 + f*55, atk: 50 + f*11, xp: 110, gold: 60,  color: '#5a3', sk: 'zwarrior' },
-    { name: 'Зомби палач', emoji: '🧟', hp: 420 + f*60, atk: 55 + f*12, xp: 120, gold: 65,  color: '#383', sk: 'zexec'    },
-    { name: 'Зомби',       emoji: '🧟', hp: 350 + f*50, atk: 45 + f*10, xp: 100, gold: 55,  color: '#4a2', sk: 'zombie'   },
-  ];
-  const floor5 = [
-    { name: 'Тень', emoji: '👻', hp: 600 + f*70, atk: 72 + f*14, xp: 180, gold: 100, color: '#a4f', sk: null },
-  ];
-  if (f >= 5) {
-    const all = [floor1, floor2, floor3, floor4].flat().concat(floor5);
-    return { ...all[Math.floor(Math.random() * all.length)] };
-  }
-  const pools = [floor1, floor2, floor3, floor4, floor5];
-  const pool = pools[f - 1];
-  return { ...pool[Math.floor(Math.random() * pool.length)] };
+
+  const t = templates[Math.floor(Math.random() * templates.length)];
+  return {
+    ...t,
+    hp:   Math.floor(t.hp   * scale),
+    atk:  Math.floor(t.atk  * scale),
+    xp:   Math.floor(t.xp   * scale),
+    gold: Math.floor(t.gold * scale),
+  };
 }
 
 // ── Спавн монстра ──
@@ -357,7 +354,7 @@ function gainXP(amount) {
   while (G.xp >= G.xpNeeded) {
     G.xp -= G.xpNeeded;
     G.level++;
-    G.xpNeeded = Math.floor(G.xpNeeded * 1.4);
+    G.xpNeeded = Math.floor(G.xpNeeded * 2.5);
     G.baseStats.atk += 2;
     G.baseStats.def += 1;
     G.baseStats.hp  += 10;
