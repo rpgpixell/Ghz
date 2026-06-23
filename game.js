@@ -522,7 +522,7 @@ function savePotionThreshold(val) {
 //  BATTLE PASS
 // ═══════════════════════════════
 const BP_REWARDS = [
-  { lv: 5,  icon: '💰', desc: '5 000 золота',
+  { lv: 5,  iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '5 000 золота',
     apply: function() { G.gold += 5000; updateHUD(); } },
   { lv: 10, iconFn: function() { var cls = G_CHAR ? G_CHAR.id : 'fire'; var p={fire:'wf',light:'wl',water:'ww'}[cls]||'wf'; return '<img src="images/'+p+'e.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Оружие Lv.10 Epic (свой класс)',
     apply: function() {
@@ -550,7 +550,7 @@ const BP_REWARDS = [
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
     }},
-  { lv: 20, icon: '💰', desc: '20 000 золота',
+  { lv: 20, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '20 000 золота',
     apply: function() { G.gold += 20000; updateHUD(); } },
   { lv: 25, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '100 PIXR',
     apply: function() { G.pixr = (G.pixr||0) + 100; updateHUD(); } },
@@ -573,11 +573,11 @@ const BP_REWARDS = [
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
     }},
-  { lv: 35, icon: '💰', desc: '100 000 золота',
+  { lv: 35, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '100 000 золота',
     apply: function() { G.gold += 100000; updateHUD(); } },
   { lv: 40, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '200 PIXR',
     apply: function() { G.pixr = (G.pixr||0) + 200; updateHUD(); } },
-  { lv: 50, icon: '💰', desc: '500 000 золота',
+  { lv: 50, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '500 000 золота',
     apply: function() { G.gold += 500000; updateHUD(); } },
   { lv: 60, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '1000 PIXR',
     apply: function() { G.pixr = (G.pixr||0) + 1000; updateHUD(); } },

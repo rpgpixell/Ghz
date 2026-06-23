@@ -447,10 +447,12 @@ function renderWallet() {
     <!-- Балансы -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
       <div style="padding:14px;background:rgba(255,68,204,0.06);border:1.5px solid #4a2a5a;border-radius:12px;text-align:center;">
+        <img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;display:block;margin:0 auto 4px;">
         <div style="font-size:9px;color:#778;letter-spacing:1px;">PIXR</div>
         <div style="font-size:20px;font-weight:bold;color:#ff44cc;">${pixr}</div>
       </div>
       <div style="padding:14px;background:rgba(64,208,255,0.06);border:1.5px solid #2a4a6a;border-radius:12px;text-align:center;">
+        <img src="images/gram.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;display:block;margin:0 auto 4px;">
         <div style="font-size:9px;color:#778;letter-spacing:1px;">GRAM</div>
         <div style="font-size:20px;font-weight:bold;color:#40d0ff;">${gram}</div>
       </div>
@@ -458,7 +460,7 @@ function renderWallet() {
     
     <!-- Обмен PIXR → GRAM -->
     <div style="padding:12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:10px;margin-bottom:12px;">
-      <div style="font-size:10px;color:#778;margin-bottom:6px;">💱 ОБМЕН PIXR → GRAM (1000:1)</div>
+      <div style="font-size:10px;color:#778;margin-bottom:6px;display:flex;align-items:center;gap:4px;"><img src="images/pixr.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"> ОБМЕН PIXR → <img src="images/gram.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"> GRAM (1000:1)</div>
       <div style="display:flex;gap:8px;">
         <input id="exchangeAmount" type="number" min="1000" step="1000" value="1000" 
           style="flex:1;padding:8px 10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:14px;font-family:'Courier New',monospace;">
@@ -471,11 +473,11 @@ function renderWallet() {
     
     <!-- Кнопки Пополнить/Вывести -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
-      <button onclick="openDepositModal()" style="padding:14px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
-        📥 Пополнить
+      <button onclick="openDepositModal()" style="padding:14px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;gap:6px;">
+        <img src="images/gram.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated"> Пополнить
       </button>
-      <button onclick="openWithdrawModal()" style="padding:14px;background:linear-gradient(90deg,#5a2a2a,#8a3a3a);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
-        📤 Вывести
+      <button onclick="openWithdrawModal()" style="padding:14px;background:linear-gradient(90deg,#5a2a2a,#8a3a3a);border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;gap:6px;">
+        <img src="images/gram.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated"> Вывести
       </button>
     </div>
     
@@ -594,8 +596,8 @@ function loadTransactions() {
             <div style="color:#556;font-size:9px;">${date}</div>
           </div>
           <div style="text-align:right;">
-            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;">
-              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} GRAM
+            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;display:flex;align-items:center;gap:3px;justify-content:flex-end;">
+              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">
             </div>
             <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
               ${statusLabels[tx.status] || tx.status}
@@ -682,8 +684,8 @@ function loadTransactions() {
             <div style="color:#556;font-size:9px;">${date}</div>
           </div>
           <div style="text-align:right;">
-            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;">
-              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} GRAM
+            <div style="color:${tx.type === 'deposit' ? '#2ecc71' : '#e74c3c'};font-weight:bold;display:flex;align-items:center;gap:3px;justify-content:flex-end;">
+              ${tx.type === 'deposit' ? '+' : '-'} ${tx.amount} <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">
             </div>
             <div style="color:${statusColors[tx.status] || '#556'};font-size:9px;">
               ${statusLabels[tx.status] || tx.status}
@@ -715,17 +717,17 @@ function createDepositModal() {
     <div id="depositModal" class="wallet-modal hidden" onclick="closeWalletModal(event)">
       <div class="wallet-modal-content" onclick="event.stopPropagation()">
         <div class="wallet-modal-header">
-          <span class="wallet-modal-title">📥 Пополнение GRAM</span>
+          <span class="wallet-modal-title"><svg width="14" height="14" viewBox="0 0 12 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;margin-right:4px"><rect x="1" y="3" width="10" height="6" fill="#2a8a4a"/><rect x="2" y="4" width="8" height="4" fill="#3aaa5a"/><rect x="0" y="5" width="2" height="2" fill="#2a8a4a"/><rect x="10" y="5" width="2" height="2" fill="#2a8a4a"/><rect x="4" y="0" width="4" height="3" fill="#f5c542"/><rect x="3" y="1" width="6" height="2" fill="#ffd700"/></svg>Пополнение <img src="images/gram.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></span>
           <button class="wallet-modal-close" onclick="closeWalletModal()">✕</button>
         </div>
         <div class="wallet-modal-body">
           <div class="wallet-info">
-            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 GRAM</b></div>
-            <div style="font-size:12px;color:#778;margin-bottom:12px;">Максимальная сумма: <b style="color:#40d0ff;">100 GRAM</b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:12px;">Максимальная сумма: <b style="color:#40d0ff;">100 <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
           </div>
           
           <div style="margin-bottom:12px;">
-            <label style="font-size:11px;color:#778;">Сумма (GRAM)</label>
+            <label style="font-size:11px;color:#778;">Сумма (<img src="images/gram.png" style="width:11px;height:11px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">)</label>
             <input id="depositAmount" type="number" min="1" max="100" value="1" 
               style="width:100%;padding:10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:8px;color:#fff;font-size:16px;font-family:'Courier New',monospace;margin-top:4px;">
           </div>
@@ -772,17 +774,17 @@ function createWithdrawModal() {
     <div id="withdrawModal" class="wallet-modal hidden" onclick="closeWalletModal(event)">
       <div class="wallet-modal-content" onclick="event.stopPropagation()">
         <div class="wallet-modal-header">
-          <span class="wallet-modal-title">📤 Вывод GRAM</span>
+          <span class="wallet-modal-title"><svg width="14" height="14" viewBox="0 0 12 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;margin-right:4px"><rect x="1" y="1" width="10" height="6" fill="#8a3a3a"/><rect x="2" y="2" width="8" height="4" fill="#aa4a4a"/><rect x="0" y="3" width="2" height="2" fill="#8a3a3a"/><rect x="10" y="3" width="2" height="2" fill="#8a3a3a"/><rect x="4" y="7" width="4" height="3" fill="#f5c542"/><rect x="3" y="7" width="6" height="2" fill="#ffd700"/></svg>Вывод <img src="images/gram.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></span>
           <button class="wallet-modal-close" onclick="closeWalletModal()">✕</button>
         </div>
         <div class="wallet-modal-body">
           <div class="wallet-info">
-            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 GRAM</b></div>
-            <div style="font-size:12px;color:#778;margin-bottom:12px;">Доступно: <b style="color:#40d0ff;">${gram} GRAM</b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:12px;">Доступно: <b style="color:#40d0ff;">${gram} <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
           </div>
           
           <div style="margin-bottom:12px;">
-            <label style="font-size:11px;color:#778;">Сумма (GRAM)</label>
+            <label style="font-size:11px;color:#778;">Сумма (<img src="images/gram.png" style="width:11px;height:11px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">)</label>
             <input id="withdrawAmount" type="number" min="1" max="${maxWithdraw}" value="1" 
               style="width:100%;padding:10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:8px;color:#fff;font-size:16px;font-family:'Courier New',monospace;margin-top:4px;">
           </div>
@@ -1280,10 +1282,10 @@ window.addEventListener('resize', resize);
 // ═══════════════════════════════
 
 var DAILY_MILESTONES = [
-  { id: 0, minutes: 10, rewardType: 'potions', amount: 50,   icon: '🧪', label: '50 зелий' },
-  { id: 1, minutes: 20, rewardType: 'gold',    amount: 1000, icon: '💰', label: '1000 золота' },
-  { id: 2, minutes: 30, rewardType: 'pixr',    amount: 5,    icon: '💎', label: '5 PIXR' },
-  { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000, icon: '💰', label: '2000 золота' },
+  { id: 0, minutes: 10, rewardType: 'potions', amount: 50,   icon: '<svg width="18" height="18" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>', label: '50 зелий' },
+  { id: 1, minutes: 20, rewardType: 'gold',    amount: 1000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '1000 золота' },
+  { id: 2, minutes: 30, rewardType: 'pixr',    amount: 5,    icon: '<img src="images/pixr.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">', label: '5 PIXR' },
+  { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '2000 золота' },
 ];
 
 var _specialTaskTimers = {};
@@ -1368,12 +1370,17 @@ function _buildSpecialHtml(tasks, claimed) {
   if (!tasks || !tasks.length) {
     return head + '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Нет активных заданий</div>';
   }
-  var icons = { gold: '💰', pixr: '💎', potions: '🧪', gram: '⭐' };
+  var _svgCoin  = '<svg width="16" height="16" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
+  var _imgPixr  = '<img src="images/pixr.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
+  var _imgGram  = '<img src="images/gram.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
+  var _svgPotion= '<svg width="16" height="16" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>';
+  var _svgGift  = '<svg width="16" height="16" viewBox="0 0 12 12" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="1" y="4" width="10" height="7" fill="#9b59b6"/><rect x="2" y="5" width="8" height="5" fill="#c080ff"/><rect x="0" y="3" width="12" height="3" fill="#7d3c98"/><rect x="5" y="0" width="2" height="4" fill="#f5c542"/><rect x="3" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="5" y="3" width="2" height="8" fill="#f5c542"/></svg>';
+  var icons = { gold: _svgCoin, pixr: _imgPixr, potions: _svgPotion, gram: _imgGram };
   var html  = head;
   tasks.forEach(function(task) {
     var done  = !!(claimed[task.taskId]);
     var timer = _specialTaskTimers[task.taskId];
-    var ic    = icons[task.rewardType] || '🎁';
+    var ic    = icons[task.rewardType] || _svgGift;
     var action;
     if (done) {
       action = '<span class="task-done-lbl">✓</span>';

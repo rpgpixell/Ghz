@@ -597,6 +597,63 @@ app.post('/api/tasks/special/claim', async (req, res) => {
 });
 
 // ═══════════════════════════════
+//  АВАТАРКА ПОЛЬЗОВАТЕЛЯ
+//  GET /api/avatar/:tgId
+//  Проксирует фото профиля через Bot API.
+//  Кешируется в памяти на 1 час (URL не меняется часто).
+// ═══════════════════════════════
+const _avatarCache = new Map(); // tgId -> { url, ts }
+const AVATAR_CACHE_TTL = 3600 * 1000; // 1 час
+
+app.get('/api/avatar/:tgId', async (req, res) => {
+  const tgId = req.params.tgId;
+  if (!tgId || !/^\d+$/.test(tgId)) return res.status(400).json({ ok: false });
+
+  // Кеш
+  const cached = _avatarCache.get(tgId);
+  if (cached && Date.now() - cached.ts < AVATAR_CACHE_TTL) {
+    return res.redirect(302, cached.url);
+  }
+
+  const token = process.env.BOT_TOKEN;
+  if (!token) return res.status(503).json({ ok: false, error: 'no_token' });
+
+  try {
+    // 1. Получаем список фото профиля
+    const photosRes = await fetch(
+      `https://api.telegram.org/bot${token}/getUserProfilePhotos?user_id=${tgId}&limit=1`
+    );
+    const photosData = await photosRes.json();
+
+    if (!photosData.ok || !photosData.result.total_count) {
+      return res.status(404).json({ ok: false, error: 'no_photo' });
+    }
+
+    // Берём самый большой размер первой фотографии
+    const sizes = photosData.result.photos[0];
+    const fileId = sizes[sizes.length - 1].file_id;
+
+    // 2. Получаем file_path
+    const fileRes = await fetch(
+      `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`
+    );
+    const fileData = await fileRes.json();
+
+    if (!fileData.ok || !fileData.result.file_path) {
+      return res.status(502).json({ ok: false, error: 'no_file_path' });
+    }
+
+    const photoUrl = `https://api.telegram.org/file/bot${token}/${fileData.result.file_path}`;
+    _avatarCache.set(tgId, { url: photoUrl, ts: Date.now() });
+
+    res.redirect(302, photoUrl);
+  } catch (e) {
+    console.error('❌ [avatar] Ошибка:', e.message);
+    res.status(502).json({ ok: false, error: 'fetch_error' });
+  }
+});
+
+// ═══════════════════════════════
 //  ТРАНЗАКЦИИ (Пополнение/Вывод)
 // ═══════════════════════════════
 
