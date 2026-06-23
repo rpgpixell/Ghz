@@ -340,10 +340,10 @@ function renderRatingData(players, body) {
     var level = p.level || 1;
     var cp = p.cp || 0;
     
-    // Аватарка из Telegram
+    // Аватарка через серверный прокси
     var avatarUrl = '';
-    if (p.tgId) {
-      avatarUrl = 'https://t.me/i/userpic/320/' + p.tgId + '.jpg';
+    if (p.tgId && window.GameSync && window.GameSync._API) {
+      avatarUrl = window.GameSync._API + '/api/avatar/' + p.tgId;
     }
     
     html += 
@@ -372,8 +372,10 @@ function renderRatingData(players, body) {
     var myEmoji = charEmojis[myChar] || '';
     var myColor = charColors[myChar] || '#aaa';
     
-    // Аватарка текущего игрока
-    var myAvatarUrl = 'https://t.me/i/userpic/320/' + tgId + '.jpg';
+    // Аватарка текущего игрока через серверный прокси
+    var myAvatarUrl = (window.GameSync && window.GameSync._API)
+      ? window.GameSync._API + '/api/avatar/' + tgId
+      : '';
     
     html += 
       '<div style="margin-top:10px;border-top:1px solid #2a2a5a;padding-top:8px;font-size:9px;color:#556;text-align:center;">— Ты не в топе —</div>' +
@@ -1181,30 +1183,62 @@ function updateHudAvatar() {
   var avatarEl = document.getElementById('hudAvatar');
   var imgEl = document.getElementById('hudAvatarImg');
   if (!avatarEl || !imgEl) return;
-  
-  // Получаем tgId
+
   var tgId = window.GameSync ? window.GameSync.getTgId() : null;
-  
-  if (tgId) {
-    // Устанавливаем аватарку из Telegram
-    var avatarUrl = 'https://t.me/i/userpic/320/' + tgId + '.jpg';
-    imgEl.src = avatarUrl;
-    imgEl.style.display = 'block';
-    // Убираем fallback
-    var fallback = avatarEl.querySelector('.avatar-fallback');
-    if (fallback) fallback.remove();
-  } else {
-    // Если нет tgId — показываем эмодзи персонажа
+
+  if (!tgId) {
     imgEl.style.display = 'none';
     var charEmoji = G_CHAR ? G_CHAR.avatar : '👤';
-    var fallback = avatarEl.querySelector('.avatar-fallback');
-    if (!fallback) {
-      fallback = document.createElement('div');
-      fallback.className = 'avatar-fallback';
-      avatarEl.appendChild(fallback);
+    var fb = avatarEl.querySelector('.avatar-fallback');
+    if (!fb) {
+      fb = document.createElement('div');
+      fb.className = 'avatar-fallback';
+      fb.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:20px;';
+      avatarEl.appendChild(fb);
     }
-    fallback.textContent = charEmoji;
+    fb.textContent = charEmoji;
+    return;
   }
+
+  // 1. Попробуем photo_url из initDataUnsafe (Telegram иногда передаёт напрямую)
+  var photoUrl = null;
+  try {
+    var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+    if (unsafe && unsafe.user && unsafe.user.photo_url) {
+      photoUrl = unsafe.user.photo_url;
+    }
+  } catch (e) {}
+
+  // 2. Если нет — берём через наш серверный прокси (Bot API)
+  if (!photoUrl && window.GameSync && window.GameSync._API) {
+    photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
+  }
+
+  if (!photoUrl) return;
+
+  // Убираем старый fallback
+  var fb = avatarEl.querySelector('.avatar-fallback');
+  if (fb) fb.remove();
+
+  imgEl.style.display = 'block';
+  imgEl.src = photoUrl;
+
+  imgEl.onerror = function() {
+    this.style.display = 'none';
+    var name = '';
+    try {
+      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+      if (unsafe && unsafe.user) name = unsafe.user.first_name || '';
+    } catch(e) {}
+    var fb2 = avatarEl.querySelector('.avatar-fallback');
+    if (!fb2) {
+      fb2 = document.createElement('div');
+      fb2.className = 'avatar-fallback';
+      fb2.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:' + (name ? '16px' : '20px') + ';font-weight:bold;color:#f5c542;border-radius:50%;background:rgba(245,197,66,0.15);';
+      avatarEl.appendChild(fb2);
+    }
+    fb2.textContent = name ? name.charAt(0).toUpperCase() : (G_CHAR ? G_CHAR.avatar : '👤');
+  };
 }
 
 // Вызываем при старте игры и при смене персонажа
