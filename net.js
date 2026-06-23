@@ -117,13 +117,18 @@
   function lsHide() {
     var el = document.getElementById('loadingScreen');
     if (!el || el.classList.contains('fade-out')) return;
+    // Немедленно отключаем перехват тапов — пользователь может тапать на charSelect
+    el.style.pointerEvents = 'none';
     var elapsed = Date.now() - _lsShownAt;
     var delay = Math.max(0, LS_MIN_MS - elapsed);
     setTimeout(function () {
       lsSetStatus('Готово', 100);
       setTimeout(function () {
         el.classList.add('fade-out');
-        setTimeout(function () { el.style.display = 'none'; }, 520);
+        setTimeout(function () {
+          el.style.display = 'none';
+          el.classList.add('hidden-done');
+        }, 520);
       }, 300);
     }, delay);
   }
