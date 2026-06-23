@@ -253,12 +253,42 @@
       if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
     }
 
-    if (s.baseStats) G.baseStats = Object.assign({}, s.baseStats);
-    
     G.upg = Object.assign(
       { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
       s.upg || {}
     );
+
+    // Восстанавливаем baseStats из трёх источников:
+    //   1) базовые статы персонажа
+    //   2) бонусы от апгрейдов (G.upg * bonus за уровень)
+    //   3) бонусы от уровней (levelUp: +2 atk, +1 def, +10 hp, +0.02 atkSpd за каждый уровень выше 1)
+    // Если снапшот содержит baseStats — используем его как fallback (старые сейвы).
+    if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
+      G.baseStats = Object.assign({}, G_CHAR.baseStats);
+      // Бонусы от апгрейдов
+      UPG_DEFS.forEach(function(u) {
+        var lv = G.upg[u.id] || 0;
+        if (lv > 0) {
+          G.baseStats[u.stat] = parseFloat(
+            ((G.baseStats[u.stat] || 0) + u.bonus * lv).toFixed(4)
+          );
+        }
+      });
+      // Бонусы от уровней (каждый уровень выше 1 даёт +2 atk, +1 def, +10 hp, +0.02 atkSpd)
+      var lvBonuses = num(s.level, 1) - 1;
+      if (lvBonuses > 0) {
+        G.baseStats.atk    = (G.baseStats.atk    || 0) + lvBonuses * 2;
+        G.baseStats.def    = (G.baseStats.def    || 0) + lvBonuses * 1;
+        G.baseStats.hp     = (G.baseStats.hp     || 0) + lvBonuses * 10;
+        G.baseStats.atkSpd = parseFloat(
+          ((G.baseStats.atkSpd || 1.0) + lvBonuses * 0.02).toFixed(4)
+        );
+      }
+    } else if (s.baseStats) {
+      // Fallback для старых сейвов или если CHARS/UPG_DEFS ещё не загружены
+      G.baseStats = Object.assign({}, s.baseStats);
+    }
+
     G.skills = s.skills || {};
     G.potionLv = num(s.potionLv, 0);
     G.potionThreshold = num(s.potionThreshold, 30);
