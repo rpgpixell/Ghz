@@ -565,15 +565,32 @@
     lsSetStatus('Подключение', 10);
     initTelegram();
 
-    var lsTimeout = setTimeout(function () { lsHide(); }, 6000);
+    // Аварийный таймер: экран загрузки ВСЕГДА скроется через 8 секунд,
+    // даже если в промис-цепочке произошла ошибка.
+    var _emergencyTimer = setTimeout(function () {
+      console.warn('⚠️ [boot] emergency hide');
+      lsHide();
+    }, 8000);
+
+    function _bootFinalize() {
+      clearTimeout(_emergencyTimer);
+      try {
+        SYNC.booted = true;
+        startSyncLoops();
+        if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
+          serverSaveBatch();
+        }
+      } catch (e) {
+        console.error('❌ [boot] finalize error:', e.message);
+      }
+      lsHide();
+    }
+
     lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
 
     serverLoad().then(function (r) {
-      clearTimeout(lsTimeout);
-
       if (!r || !r.ok) {
         console.warn('⚠️ [serverLoad] ответ не ok:', r);
-        // Пробуем localStorage как запасной вариант
         _tryBootFromLocal();
         return;
       }
@@ -591,7 +608,6 @@
           typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
         SYNC.serverConfirmed = true;
         lsSetStatus('Применение данных', 85);
-
         if (!SYNC.started) {
           bootFromSnapshot(server.data);
         } else {
@@ -603,22 +619,13 @@
           SYNC.serverConfirmed = false;
           resetToCharSelect();
         }
-        // Нет данных на сервере — localStorage тоже не используем,
-        // пользователь новый, показываем выбор персонажа
         clearLocal();
       }
     }).catch(function (err) {
-      clearTimeout(lsTimeout);
       console.error('❌ [boot] serverLoad ошибка:', err.message);
-      // Сервер недоступен — грузим из localStorage если есть
       _tryBootFromLocal();
     }).then(function () {
-      SYNC.booted = true;
-      startSyncLoops();
-      if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
-        serverSaveBatch();
-      }
-      lsHide();
+      _bootFinalize();
     });
   }
 
