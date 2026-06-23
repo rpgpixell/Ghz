@@ -263,12 +263,12 @@ app.post('/api/load', async (req, res) => {
       });
       console.log(`🆕 [load] Новый пользователь: ${tg.id}`);
 
-      // Уведомляем админа о новом пользователе
+      // Уведомляем админа
       if (bot && process.env.ADMIN_TG_ID) {
         try {
-          var inviterName = '—';
+          let inviterName = '— (органика)';
           if (refBy) {
-            var inviter = await Save.findOne({ tgId: refBy }, 'firstName username').lean();
+            const inviter = await Save.findOne({ tgId: refBy }, 'firstName username').lean();
             if (inviter) {
               inviterName = (inviter.firstName || inviter.username || refBy) +
                 (inviter.username ? ' (@' + inviter.username + ')' : '') +
@@ -277,12 +277,12 @@ app.post('/api/load', async (req, res) => {
               inviterName = refBy;
             }
           }
-          var newUserMsg =
+          const newUserMsg =
             '🆕 *Новый игрок!*\n\n' +
             '*Имя:* ' + (tg.firstName || '—') + '\n' +
             '*Username:* ' + (tg.username ? '@' + tg.username : '—') + '\n' +
             '*ID:* `' + tg.id + '`\n' +
-            '*Пригласил:* ' + (refBy ? inviterName : '— (органика)');
+            '*Пригласил:* ' + inviterName;
           await bot.sendMessage(process.env.ADMIN_TG_ID, newUserMsg, { parse_mode: 'Markdown' });
         } catch (e) {
           console.error('❌ [load] Ошибка уведомления о новом пользователе:', e.message);
@@ -912,6 +912,57 @@ app.post('/api/wallet/exchange', async (req, res) => {
   }
 });
 
+
+// ═══════════════════════════════
+//  БОТ: подтверждение/отклонение транзакций
+//  POST /bot/transaction/:txId/:action
+//  Защищён BOT_TOKEN в заголовке x-bot-secret
+// ═══════════════════════════════
+app.post('/bot/transaction/:txId/:action', async (req, res) => {
+  const secret = req.headers['x-bot-secret'];
+  if (!secret || secret !== process.env.BOT_TOKEN) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
+  const { txId, action } = req.params;
+  if (!['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ ok: false, error: 'invalid_action' });
+  }
+
+  try {
+    const tx = await Transaction.findOne({ id: txId });
+    if (!tx) return res.status(404).json({ ok: false, error: 'not_found' });
+    if (tx.status !== 'pending') return res.status(400).json({ ok: false, error: 'already_processed' });
+
+    if (action === 'approve') {
+      tx.status = 'approved';
+      tx.approvedAt = Date.now();
+      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      await Save.findOneAndUpdate(
+        { tgId: tx.userId },
+        { $inc: { 'data.gram': gramDelta } }
+      );
+    } else {
+      tx.status = 'rejected';
+      tx.rejectedAt = Date.now();
+    }
+
+    await tx.save();
+    await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
+
+    // Уведомляем пользователя
+    if (bot) {
+      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
+      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}`;
+      try { await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' }); } catch (e) {}
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [bot-tx] error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // ═══════════════════════════════
 //  АДМИН-ПАНЕЛЬ

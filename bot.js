@@ -221,8 +221,7 @@ greeting + '\n\n' +
 
           console.log('💳 [bot] Обработка транзакции: ' + txId + ' -> ' + action);
 
-          // Сразу убираем кнопки — показываем "обработка..."
-          // Это гарантирует что кнопки исчезнут даже если дальнейший запрос упадёт
+          // Сразу меняем кнопки на "обработка" — мгновенная реакция
           bot.editMessageReplyMarkup(
             { inline_keyboard: [[{ text: '⏳ Обработка...', callback_data: 'noop' }]] },
             { chat_id: chatId, message_id: msgId }
@@ -233,10 +232,10 @@ greeting + '\n\n' +
 
           if (!_fetch) {
             bot.editMessageReplyMarkup(
-              { inline_keyboard: [[{ text: '❌ Ошибка сервера', callback_data: 'noop' }]] },
+              { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: 'approve_' + txId }, { text: '❌ Отклонить', callback_data: 'reject_' + txId }]] },
               { chat_id: chatId, message_id: msgId }
             ).catch(function() {});
-            bot.answerCallbackQuery(query.id, { text: '❌ fetch недоступен' }).catch(function(){});
+            bot.answerCallbackQuery(query.id, { text: '❌ Ошибка: fetch недоступен' }).catch(function(){});
             return;
           }
 
@@ -251,28 +250,21 @@ greeting + '\n\n' +
           .then(function(r) { return r.json(); })
           .then(function(result) {
             if (result.ok) {
-              var isApprove = action === 'approve';
-              var doneText  = isApprove ? '✅ Подтверждено' : '❌ Отклонено';
-
-              // Заменяем кнопки на одну неактивную с итоговым статусом
+              var doneText = action === 'approve' ? '✅ Подтверждено' : '❌ Отклонено';
               bot.editMessageReplyMarkup(
                 { inline_keyboard: [[{ text: doneText, callback_data: 'done_' + txId }]] },
                 { chat_id: chatId, message_id: msgId }
               ).catch(function() {});
-
-              bot.answerCallbackQuery(query.id, {
-                text: doneText
-              }).catch(function(){});
-
+              bot.answerCallbackQuery(query.id, { text: doneText }).catch(function(){});
             } else {
+              // Ошибка — возвращаем кнопки обратно
               var already = result.error === 'already_processed';
-              var errLabel = already ? '⚠️ Уже обработана' : '❌ Ошибка';
-
               bot.editMessageReplyMarkup(
-                { inline_keyboard: [[{ text: errLabel, callback_data: 'done_' + txId }]] },
+                already
+                  ? { inline_keyboard: [[{ text: '⚠️ Уже обработана', callback_data: 'done_' + txId }]] }
+                  : { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: 'approve_' + txId }, { text: '❌ Отклонить', callback_data: 'reject_' + txId }]] },
                 { chat_id: chatId, message_id: msgId }
               ).catch(function() {});
-
               bot.answerCallbackQuery(query.id, {
                 text: already ? '⚠️ Транзакция уже обработана' : '❌ Ошибка: ' + (result.error || 'unknown'),
                 show_alert: true
@@ -281,10 +273,11 @@ greeting + '\n\n' +
           })
           .catch(function(err) {
             console.error('❌ [bot] Ошибка обработки транзакции:', err.message);
+            // Возвращаем кнопки если запрос упал
             bot.editMessageReplyMarkup(
               { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: 'approve_' + txId }, { text: '❌ Отклонить', callback_data: 'reject_' + txId }]] },
               { chat_id: chatId, message_id: msgId }
-            ).catch(function() {}); // возвращаем кнопки если запрос упал
+            ).catch(function() {});
             bot.answerCallbackQuery(query.id, { text: '❌ Ошибка сервера' }).catch(function(){});
           });
           return;
