@@ -1,7 +1,7 @@
 {
   "name": "pixel-runner-rpg-backend",
-  "version": "3.0.0",
-  "description": "Backend with WebSocket for Pixel Runner RPG",
+  "version": "2.0.0",
+  "description": "Backend for Pixel Runner RPG",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -14,6 +14,7 @@
     "express": "^4.19.2",
     "mongoose": "^8.5.1",
     "node-telegram-bot-api": "^0.66.0",
-    "ws": "^8.18.0"
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5"
   }
 }
