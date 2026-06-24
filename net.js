@@ -551,33 +551,39 @@
   //  ИНИЦИАЛИЗАЦИЯ TELEGRAM
   // ═══════════════════════════════
 
-  function initTelegram() {
-    if (window.Telegram && window.Telegram.WebApp) {
-      try {
-        window.Telegram.WebApp.ready();
-        window.Telegram.WebApp.expand();
-        if (window.Telegram.WebApp.disableVerticalSwipes) {
-          window.Telegram.WebApp.disableVerticalSwipes();
-        }
-        TG_INIT = window.Telegram.WebApp.initData || '';
-        var unsafe = window.Telegram.WebApp.initDataUnsafe;
-        if (unsafe && unsafe.user && unsafe.user.id) {
-          TG_ID = String(unsafe.user.id);
-        }
-      } catch (e) {
-        console.error('❌ Ошибка инициализации Telegram:', e.message);
+  // net.js — найти функцию initTelegram и исправить:
+
+function initTelegram() {
+  if (window.Telegram && window.Telegram.WebApp) {
+    try {
+      window.Telegram.WebApp.ready();
+      window.Telegram.WebApp.expand();
+      if (window.Telegram.WebApp.disableVerticalSwipes) {
+        window.Telegram.WebApp.disableVerticalSwipes();
       }
+      
+      // ⭐ ГЛАВНОЕ: сохраняем initData
+      TG_INIT = window.Telegram.WebApp.initData || '';
+      
+      var unsafe = window.Telegram.WebApp.initDataUnsafe;
+      if (unsafe && unsafe.user && unsafe.user.id) {
+        TG_ID = String(unsafe.user.id);
+      }
+    } catch (e) {
+      console.error('❌ Ошибка инициализации Telegram:', e.message);
     }
-
-    if (!TG_ID) {
-      try {
-        TG_ID = localStorage.getItem('tgId');
-      } catch (e) {}
-    }
-
-    console.log('🟢 [initTelegram] Пользователь:', TG_ID);
-    SYNC.online = !!TG_ID;
   }
+
+  if (!TG_ID) {
+    try {
+      TG_ID = localStorage.getItem('tgId');
+    } catch (e) {}
+  }
+
+  console.log('🟢 [initTelegram] Пользователь:', TG_ID);
+  console.log('🟢 [initTelegram] INIT DATA:', TG_INIT ? '✅ есть' : '❌ нет');
+  SYNC.online = !!TG_ID;
+}
 
   // ═══════════════════════════════
   //  ЗАПУСК
