@@ -338,6 +338,39 @@ app.post('/api/save', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'user_mismatch' });
     }
 
+    // 🔥 ЗАГРУЖАЕМ ТЕКУЩИЕ ДАННЫЕ ИЗ БД
+    const existing = await Save.findOne({ tgId: tg.id }).lean();
+    const existingData = existing?.data || {};
+    
+    // 🔥 ЗАЩИЩЁННЫЕ ПОЛЯ — НЕ ПЕРЕЗАПИСЫВАЕМ
+    // Сервер хранит ИСТИННЫЙ баланс, клиент НЕ МОЖЕТ его уменьшить через save
+    const protectedFields = ['gold', 'gram', 'pixr'];
+    protectedFields.forEach(field => {
+      if (existingData[field] !== undefined) {
+        // Если клиентское значение МЕНЬШЕ серверного — оставляем серверное
+        // (админ мог выдать, или транзакция прошла)
+        if ((data[field] || 0) < existingData[field]) {
+          data[field] = existingData[field];
+          console.log(`🛡️ [save] Защищено ${field}: ${existingData[field]} (клиент пытался ${data[field]})`);
+        }
+      }
+    });
+    
+    // 🔥 ЗАЩИТА ИНВЕНТАРЯ — НЕ УДАЛЯЕМ ПРЕДМЕТЫ ВЫДАННЫЕ АДМИНОМ
+    if (existingData.inventory && data.inventory) {
+      // Превращаем ID в строки для безопасного сравнения
+      const adminItemIds = new Set(existingData.inventory.map(i => String(i.id)));
+      const clientItemIds = new Set(data.inventory.map(i => String(i.id)));
+      
+      // Находим предметы, которые есть у админа, но нет у клиента
+      const missingItems = existingData.inventory.filter(i => !clientItemIds.has(String(i.id)));
+      
+      if (missingItems.length > 0) {
+        data.inventory = [...data.inventory, ...missingItems];
+        console.log(`🛡️ [save] Восстановлено ${missingItems.length} предметов, выданных админом`);
+      }
+    }
+
     data.tgId = tg.id;
     data.updatedAt = Date.now();
 
