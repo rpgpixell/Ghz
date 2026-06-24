@@ -410,7 +410,6 @@ function serverSaveBatch() {
     return;
   }
 
-  // Пауза при rate limit (429)
   if (SYNC.rlBackoffUntil && Date.now() < SYNC.rlBackoffUntil) {
     return;
   }
@@ -440,11 +439,6 @@ function serverSaveBatch() {
   snap.potions = currentPotions;
   snap.updatedAt = Date.now();
   
-  // 🔥 Добавляем версию (если есть)
-  if (SYNC.version !== undefined) {
-    snap.version = SYNC.version;
-  }
-  
   fetch(API + '/api/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -459,39 +453,14 @@ function serverSaveBatch() {
       SYNC.lastKillCount = currentKillCount;
       SYNC.lastPotions = currentPotions;
       SYNC.lastServerTs = r.updatedAt || snap.updatedAt;
-      
-      // 🔥 Обновляем версию
-      if (r.version !== undefined) {
-        SYNC.version = r.version;
-      }
-      
       SYNC.rlBackoffUntil = 0;
       saveLocal();
-    } else if (r && r.error === 'conflict') {
-      // 🔥 КОНФЛИКТ! Загружаем свежие данные
-      console.warn('⚠️ [save] Конфликт версий, загружаем свежие данные...');
-      serverLoad()
-        .then(function(r2) {
-          if (r2.ok && r2.save && r2.save.data) {
-            applySnapshot(r2.save.data);
-            if (r2.save.version !== undefined) {
-              SYNC.version = r2.save.version;
-            }
-            updateHUD();
-            console.log('✅ [save] Данные обновлены после конфликта');
-          }
-        })
-        .catch(function() {
-          console.warn('⚠️ [save] Не удалось разрешить конфликт');
-        });
     } else if (r && r.error === 'rate_limit') {
       SYNC.rlBackoffUntil = Date.now() + 6000;
       console.warn('⚠️ [save] rate limit, пауза 6s');
     }
   })
-  .catch(function() {
-    // Ошибка сети — ничего не делаем, попробуем в следующий раз
-  })
+  .catch(function() {})
   .then(function() { SYNC.pushing = false; });
 }
 
