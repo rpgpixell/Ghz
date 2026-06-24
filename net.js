@@ -4,13 +4,10 @@
   сохранение прогресса на сервер (MongoDB)
 
   СТРАТЕГИЯ СОХРАНЕНИЯ:
-  ✅ МГНОВЕННО: inventory, equipped, upg, skills, potionLv,
-     potionThreshold, floor, level, pixr, gram, bp, prem
-  ⏱️ 3 СЕКУНДЫ: hp, gold, xp, killCount, potions
-
-  ⚡ ОПТИМИЗАЦИИ:
-  - Сжатие данных перед отправкой
-  - Интервал 3 секунды (вместо 5)
+  ✅ МГНОВЕННО: inventory, equipped, upg, skills, 
+     potionLv, potionThreshold, floor, level, 
+     pixr, gram, bp, prem, charId
+  ⏱️ 5 СЕКУНД: hp, gold, xp, killCount, potions
   ══════════════════════════════════════════════════════
 */
 (function () {
@@ -28,7 +25,7 @@
   var INSTANT_FIELDS = [
     'inventory', 'equipped', 'upg', 'skills', 
     'potionLv', 'potionThreshold', 'floor', 'level',
-    'pixr', 'gram', 'bp', 'prem'
+    'pixr', 'gram', 'bp', 'prem', 'charId'
   ];
 
   var TG_INIT = '';
@@ -37,12 +34,9 @@
     started: false,
     online: false,
     pushing: false,
-    dirtyTimer: null,
     batchTimer: null,
-    lastServerTs: 0,
     serverConfirmed: false,
     currentTgId: null,
-    rlBackoffUntil: 0,
 
     lastHp: 0,
     lastGold: 0,
@@ -53,40 +47,6 @@
 
   function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
   function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
-
-  // ═══════════════════════════════
-  //  LOCALSTORAGE — резервная копия
-  //  Используется ТОЛЬКО если сервер недоступен при загрузке.
-  //  Сервер всегда имеет приоритет над localStorage.
-  // ═══════════════════════════════
-  var LS_KEY = 'pixrpg_save_v2';
-
-  function saveLocal() {
-    // Сохраняем при любом активном сеансе — и онлайн, и офлайн.
-    // saveLocal никогда не отправляет данные на сервер — только localStorage.
-    if (!SYNC.started) return;
-    try {
-      var snap = serializeState();
-      snap._savedAt = Date.now();
-      snap._offlineOnly = !SYNC.serverConfirmed; // маркер: данные не подтверждены сервером
-      localStorage.setItem(LS_KEY, JSON.stringify(snap));
-    } catch (e) {}
-  }
-
-  function loadLocal() {
-    try {
-      var raw = localStorage.getItem(LS_KEY);
-      if (!raw) return null;
-      var parsed = JSON.parse(raw);
-      // Игнорируем снапшоты старше 30 дней
-      if (parsed && parsed._savedAt && (Date.now() - parsed._savedAt) > 30 * 24 * 3600 * 1000) return null;
-      return parsed;
-    } catch (e) { return null; }
-  }
-
-  function clearLocal() {
-    try { localStorage.removeItem(LS_KEY); } catch (e) {}
-  }
 
   function getTgId() {
     try {
@@ -117,7 +77,6 @@
   function lsHide() {
     var el = document.getElementById('loadingScreen');
     if (!el || el.classList.contains('fade-out')) return;
-    // Немедленно отключаем перехват тапов — пользователь может тапать на charSelect
     el.style.pointerEvents = 'none';
     var elapsed = Date.now() - _lsShownAt;
     var delay = Math.max(0, LS_MIN_MS - elapsed);
@@ -149,7 +108,7 @@
   }
 
   // ═══════════════════════════════
-  //  СЕРИАЛИЗАЦИЯ И СЖАТИЕ
+  //  СЕРИАЛИЗАЦИЯ
   // ═══════════════════════════════
 
   function serializeState() {
@@ -165,12 +124,12 @@
       return c;
     });
 
-    var full = {
+    return {
       v: 1,
       tgId: getTgId(),
       charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
 
-      // === МГНОВЕННЫЕ ПОЛЯ ===
+      // Мгновенные поля
       inventory: inv,
       equipped: eq,
       upg: clone(G.upg),
@@ -185,7 +144,7 @@
       prem: clone(G.prem || { tier: null, expiresAt: 0 }),
       boss: clone(G.boss || { floor: 1, lastFightTime: 0 }),
 
-      // === ОТЛОЖЕННЫЕ ПОЛЯ (3 сек) ===
+      // Отложенные поля (5 сек)
       hp: G.hp,
       gold: G.gold,
       xp: G.xp,
@@ -193,7 +152,7 @@
       killCount: G.killCount,
       potions: G.potions,
 
-      // === ПРОЧИЕ (не отправляем тяжелые) ===
+      // Прочие
       invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
       dailyTasks:          clone(G.dailyTasks          || { date: '', seconds: 0, claimed: [] }),
       specialTasksClaimed: clone(G.specialTasksClaimed || {}),
@@ -201,45 +160,10 @@
       cp: (typeof calcCP === 'function') ? calcCP() : 0,
       updatedAt: Date.now(),
     };
-
-    // ⚡ СЖАТИЕ: удаляем тяжелые поля, которые не нужны на сервере
-    // (stats, baseStats, maxHp, xpNeeded, maxFloor — вычисляются на клиенте)
-    var compressed = {
-      v: full.v,
-      tgId: full.tgId,
-      charId: full.charId,
-      inventory: full.inventory,
-      equipped: full.equipped,
-      upg: full.upg,
-      skills: full.skills,
-      potionLv: full.potionLv,
-      potionThreshold: full.potionThreshold,
-      floor: full.floor,
-      level: full.level,
-      pixr: full.pixr,
-      gram: full.gram,
-      bp: full.bp,
-      prem: full.prem,
-      boss: full.boss,
-      hp: full.hp,
-      gold: full.gold,
-      xp: full.xp,
-      xpNeeded: full.xpNeeded,
-      killCount: full.killCount,
-      potions: full.potions,
-      invIdCounter: full.invIdCounter,
-      invFilter: full.invFilter,
-      dailyTasks:          full.dailyTasks,
-      specialTasksClaimed: full.specialTasksClaimed,
-      cp: full.cp,
-      updatedAt: full.updatedAt,
-    };
-
-    return compressed;
   }
 
   // ═══════════════════════════════
-  //  ПРИМЕНЕНИЕ СНАПШОТА
+  //  ПРИМЕНЕНИЕ СНАПШОТА (с сервера)
   // ═══════════════════════════════
 
   function applySnapshot(s) {
@@ -262,14 +186,9 @@
       s.upg || {}
     );
 
-    // Восстанавливаем baseStats из трёх источников:
-    //   1) базовые статы персонажа
-    //   2) бонусы от апгрейдов (G.upg * bonus за уровень)
-    //   3) бонусы от уровней (levelUp: +2 atk, +1 def, +10 hp, +0.02 atkSpd за каждый уровень выше 1)
-    // Если снапшот содержит baseStats — используем его как fallback (старые сейвы).
+    // Восстанавливаем baseStats
     if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
       G.baseStats = Object.assign({}, G_CHAR.baseStats);
-      // Бонусы от апгрейдов
       UPG_DEFS.forEach(function(u) {
         var lv = G.upg[u.id] || 0;
         if (lv > 0) {
@@ -278,7 +197,6 @@
           );
         }
       });
-      // Бонусы от уровней (каждый уровень выше 1 даёт +2 atk, +1 def, +10 hp, +0.02 atkSpd)
       var lvBonuses = num(s.level, 1) - 1;
       if (lvBonuses > 0) {
         G.baseStats.atk    = (G.baseStats.atk    || 0) + lvBonuses * 2;
@@ -289,7 +207,6 @@
         );
       }
     } else if (s.baseStats) {
-      // Fallback для старых сейвов или если CHARS/UPG_DEFS ещё не загружены
       G.baseStats = Object.assign({}, s.baseStats);
     }
 
@@ -337,7 +254,6 @@
     
     G.maxHp = num(s.maxHp, G.maxHp);
     G.xpNeeded = num(s.xpNeeded, 0);
-    // Если xpNeeded не сохранён (старые сейвы) — пересчитываем из уровня
     if (!G.xpNeeded || G.xpNeeded < 100) {
       var _xp = 100;
       for (var _lv = 1; _lv < G.level; _lv++) {
@@ -402,14 +318,9 @@
     }).then(function (r) { return r.json(); });
   }
 
-  // ⚡ ОТЛОЖЕННОЕ СОХРАНЕНИЕ — КАЖДЫЕ 3 СЕКУНДЫ
+  // ⚡ ОТЛОЖЕННОЕ СОХРАНЕНИЕ — КАЖДЫЕ 5 СЕКУНД
   function serverSaveBatch() {
     if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
-      return;
-    }
-
-    // Пауза при rate limit (429)
-    if (SYNC.rlBackoffUntil && Date.now() < SYNC.rlBackoffUntil) {
       return;
     }
     
@@ -451,12 +362,6 @@
           SYNC.lastKillCount = currentKillCount;
           SYNC.lastPotions = currentPotions;
           SYNC.lastServerTs = r.updatedAt || snap.updatedAt;
-          SYNC.rlBackoffUntil = 0;
-          saveLocal();
-        } else if (r && r.error === 'rate_limit') {
-          // Пауза 6 секунд при rate limit
-          SYNC.rlBackoffUntil = Date.now() + 6000;
-          console.warn('⚠️ [save] rate limit, пауза 6s');
         }
       })
       .catch(function () {})
@@ -465,32 +370,7 @@
 
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
-    saveLocal();
     serverSaveInstant(data).catch(function() {});
-  }
-
-  function touch() {
-    if (!SYNC.started || !SYNC.online) return;
-    clearTimeout(SYNC.dirtyTimer);
-    SYNC.dirtyTimer = setTimeout(serverSaveBatch, 500);
-  }
-
-  function flush() {
-    if (!SYNC.started) return;
-    // Сначала сохраняем в localStorage (синхронно, всегда успевает)
-    saveLocal();
-    // Затем пробуем отправить на сервер с keepalive
-    if (!SYNC.online || !SYNC.serverConfirmed) return;
-    var snap = serializeState();
-    snap.updatedAt = Date.now();
-    try {
-      fetch(API + '/api/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT, data: snap }),
-        keepalive: true,
-      });
-    } catch (e) {}
   }
 
   // ═══════════════════════════════
@@ -529,26 +409,24 @@
   }
 
   // ═══════════════════════════════
-  //  ЦИКЛЫ СИНХРОНИЗАЦИИ — 3 СЕКУНДЫ
+  //  ЦИКЛЫ СИНХРОНИЗАЦИИ — 5 СЕКУНД
   // ═══════════════════════════════
 
   function startSyncLoops() {
-    // ⚡ КАЖДЫЕ 3 СЕКУНДЫ — серверный батч-сейв
-    SYNC.batchTimer = setInterval(serverSaveBatch, 3000);
+    // ⚡ КАЖДЫЕ 5 СЕКУНД — серверный батч-сейв
+    SYNC.batchTimer = setInterval(serverSaveBatch, 5000);
 
-    // ⚡ КАЖДЫЕ 10 СЕКУНД — локальный бекап (работает и в офлайн-режиме)
-    setInterval(saveLocal, 10000);
-
+    // Финальное сохранение при закрытии
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) flush();
+      if (document.hidden) serverSaveBatch();
     });
 
     if (window.Telegram && window.Telegram.WebApp) {
-      try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
+      try { window.Telegram.WebApp.onEvent('close', serverSaveBatch); } catch (e) {}
     }
 
-    window.addEventListener('pagehide', flush);
-    window.addEventListener('beforeunload', flush);
+    window.addEventListener('pagehide', serverSaveBatch);
+    window.addEventListener('beforeunload', serverSaveBatch);
   }
 
   // ═══════════════════════════════
@@ -614,8 +492,6 @@
     lsSetStatus('Подключение', 10);
     initTelegram();
 
-    // Аварийный таймер: экран загрузки ВСЕГДА скроется через 8 секунд,
-    // даже если в промис-цепочке произошла ошибка.
     var _emergencyTimer = setTimeout(function () {
       console.warn('⚠️ [boot] emergency hide');
       lsHide();
@@ -640,7 +516,6 @@
     serverLoad().then(function (r) {
       if (!r || !r.ok) {
         console.warn('⚠️ [serverLoad] ответ не ok:', r);
-        _tryBootFromLocal();
         return;
       }
 
@@ -649,7 +524,6 @@
 
       if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
         console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
-        _tryBootFromLocal();
         return;
       }
 
@@ -668,33 +542,12 @@
           SYNC.serverConfirmed = false;
           resetToCharSelect();
         }
-        clearLocal();
       }
     }).catch(function (err) {
       console.error('❌ [boot] serverLoad ошибка:', err.message);
-      _tryBootFromLocal();
     }).then(function () {
       _bootFinalize();
     });
-  }
-
-  // Загрузка из localStorage когда сервер недоступен.
-  // НЕ устанавливает serverConfirmed — сохранение на сервер заблокировано.
-  function _tryBootFromLocal() {
-    if (SYNC.started) return; // уже загружено
-    var local = loadLocal();
-    if (!local || !local.charId) return;
-    // Проверяем что локальные данные принадлежат текущему пользователю
-    var currentTgId = getTgId();
-    if (local.tgId && currentTgId && local.tgId !== currentTgId) return;
-    console.warn('⚠️ [boot] Сервер недоступен, загружаем из localStorage');
-    lsSetStatus('Офлайн режим', 85);
-    if (applySnapshot(local)) {
-      hideCharSelect();
-      SYNC.started = true;
-      // serverConfirmed остаётся false — сейвы на сервер не пойдут
-      if (typeof startGame === 'function') startGame();
-    }
   }
 
   // ═══════════════════════════════
@@ -837,15 +690,11 @@
 
   window.GameSync = {
     save:        serverSaveBatch,
-    flush:       flush,
-    touch:       touch,
+    saveInstant: saveInstant,
     serialize:   serializeState,
     apply:       applySnapshot,
     state:       SYNC,
     getTgId:     getTgId,
-    saveInstant: saveInstant,
-    saveLocal:   saveLocal,
-    clearLocal:  clearLocal,
     _API:        API,
     get _INIT() { return TG_INIT; },
   };
