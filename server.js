@@ -342,13 +342,10 @@ app.post('/api/save', async (req, res) => {
     const existing = await Save.findOne({ tgId: tg.id }).lean();
     const existingData = existing?.data || {};
     
-    // 🔥 ЗАЩИЩЁННЫЕ ПОЛЯ — НЕ ПЕРЕЗАПИСЫВАЕМ
-    // Сервер хранит ИСТИННЫЙ баланс, клиент НЕ МОЖЕТ его уменьшить через save
+    // 🔥 ЗАЩИТА БАЛАНСА
     const protectedFields = ['gold', 'gram', 'pixr'];
     protectedFields.forEach(field => {
       if (existingData[field] !== undefined) {
-        // Если клиентское значение МЕНЬШЕ серверного — оставляем серверное
-        // (админ мог выдать, или транзакция прошла)
         if ((data[field] || 0) < existingData[field]) {
           data[field] = existingData[field];
           console.log(`🛡️ [save] Защищено ${field}: ${existingData[field]} (клиент пытался ${data[field]})`);
@@ -356,18 +353,31 @@ app.post('/api/save', async (req, res) => {
       }
     });
     
-    // 🔥 ЗАЩИТА ИНВЕНТАРЯ — НЕ УДАЛЯЕМ ПРЕДМЕТЫ ВЫДАННЫЕ АДМИНОМ
-    if (existingData.inventory && data.inventory) {
-      // Превращаем ID в строки для безопасного сравнения
-      const adminItemIds = new Set(existingData.inventory.map(i => String(i.id)));
-      const clientItemIds = new Set(data.inventory.map(i => String(i.id)));
+    // 🔥 ЗАЩИТА ИНВЕНТАРЯ — ОБЪЕДИНЕНИЕ
+    if (existingData.inventory && existingData.inventory.length > 0) {
+      const serverItems = existingData.inventory || [];
+      const clientItems = data.inventory || [];
       
-      // Находим предметы, которые есть у админа, но нет у клиента
-      const missingItems = existingData.inventory.filter(i => !clientItemIds.has(String(i.id)));
+      // Создаём карту по ID
+      const itemMap = new Map();
       
-      if (missingItems.length > 0) {
-        data.inventory = [...data.inventory, ...missingItems];
-        console.log(`🛡️ [save] Восстановлено ${missingItems.length} предметов, выданных админом`);
+      // Сначала все серверные предметы
+      serverItems.forEach(item => {
+        itemMap.set(String(item.id), item);
+      });
+      
+      // Потом клиентские (если их нет)
+      clientItems.forEach(item => {
+        if (!itemMap.has(String(item.id))) {
+          itemMap.set(String(item.id), item);
+        }
+      });
+      
+      // Превращаем обратно в массив
+      data.inventory = Array.from(itemMap.values());
+      
+      if (data.inventory.length !== clientItems.length) {
+        console.log(`🛡️ [save] Инвентарь: было ${clientItems.length}, стало ${data.inventory.length} (+${data.inventory.length - clientItems.length})`);
       }
     }
 
