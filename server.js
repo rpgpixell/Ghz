@@ -54,6 +54,11 @@ mongoose.connect(MONGODB_URI, {
 // ═══════════════════════════════
 
 // ── Пользователи ──
+// ═══════════════════════════════
+//  СХЕМЫ — БЕЗ ДУБЛИРУЮЩИХСЯ ИНДЕКСОВ
+// ═══════════════════════════════
+
+// ── Пользователи ──
 const SaveSchema = new mongoose.Schema({
   tgId: { type: String, required: true, unique: true },
   username: { type: String, default: '' },
@@ -69,7 +74,7 @@ const SaveSchema = new mongoose.Schema({
   refMilestones: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { minimize: false });
 
-SaveSchema.index({ tgId: 1 }, { unique: true });
+// ✅ Индексы (БЕЗ дублирования tgId)
 SaveSchema.index({ cp: -1, level: -1 });
 SaveSchema.index({ refBy: 1 });
 SaveSchema.index({ updatedAt: -1 });
