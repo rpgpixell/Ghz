@@ -1,6 +1,6 @@
 /*
   ══════════════════════════════════════════════════════
-  net.js — Сетевой слой с ОЧЕРЕДЬЮ сохранений
+  net.js — Сетевой слой с ГАРАНТИРОВАННОЙ загрузкой
   ══════════════════════════════════════════════════════
 */
 
@@ -130,6 +130,7 @@
   // ═══════════════════════════════
   var LS_MIN_MS = 800;
   var _lsShownAt = Date.now();
+  var _isLoadingComplete = false;
 
   function lsSetStatus(text, pct) {
     var el = document.getElementById('lsStatus');
@@ -141,6 +142,13 @@
   function lsHide() {
     var el = document.getElementById('loadingScreen');
     if (!el || el.classList.contains('fade-out')) return;
+    
+    // 🔥 Скрываем ТОЛЬКО если загрузка завершена
+    if (!_isLoadingComplete) {
+      console.log('⏳ [lsHide] Ожидание завершения загрузки...');
+      return;
+    }
+    
     el.style.pointerEvents = 'none';
     var elapsed = Date.now() - _lsShownAt;
     var delay = Math.max(0, LS_MIN_MS - elapsed);
@@ -348,23 +356,16 @@
 
   function serverLoad() {
     if (!SYNC.online) return Promise.resolve(null);
-    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function() { ctrl.abort(); }, 5000) : null;
-
+    
     return fetch(API + '/api/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ initData: TG_INIT, startParam: START_PARAM }),
-      signal: ctrl ? ctrl.signal : undefined,
     })
-    .then(function(r) {
-      clearTimeout(timer);
-      return r.json();
-    })
+    .then(function(r) { return r.json(); })
     .catch(function(e) {
-      clearTimeout(timer);
       console.error('❌ [serverLoad] ошибка:', e.message);
-      throw e;
+      return null;
     });
   }
 
@@ -547,7 +548,7 @@
   }
 
   // ═══════════════════════════════
-  //  BOOT
+  //  BOOT — С ГАРАНТИРОВАННОЙ ЗАГРУЗКОЙ
   // ═══════════════════════════════
   function initTelegram() {
     if (window.Telegram && window.Telegram.WebApp) {
@@ -596,68 +597,70 @@
     lsSetStatus('Подключение', 10);
     initTelegram();
 
-    var _emergencyTimer = setTimeout(function() {
-      console.warn('⚠️ [boot] emergency hide');
-      lsHide();
-    }, 8000);
+    console.log('🔄 [boot] Начинаем загрузку...');
 
-    function _bootFinalize() {
-      clearTimeout(_emergencyTimer);
-      try {
-        SYNC.booted = true;
-        startSyncLoops();
-        if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
-          savePeriodic();
-        }
-      } catch (e) {
-        console.error('❌ [boot] finalize error:', e.message);
-      }
-      lsHide();
-    }
+    // 🔥 НЕ СКРЫВАЕМ ЭКРАН, ПОКА НЕ ЗАГРУЗЯТСЯ ДАННЫЕ
+    lsSetStatus('Загрузка данных...', 40);
 
-    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
-
+    // Пробуем загрузить с сервера
     serverLoad()
       .then(function(r) {
-        if (!r || !r.ok) {
-          console.warn('⚠️ [serverLoad] ответ не ok:', r);
-          _tryBootFromLocal();
-          return;
-        }
-
-        var server = r;
-        var currentTgId = getTgId();
-
-        if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
-          console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
-          _tryBootFromLocal();
-          return;
-        }
-
-        if (server && server.data && server.data.charId &&
-            typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
-          SYNC.serverConfirmed = true;
-          lsSetStatus('Применение данных', 85);
-          if (!SYNC.started) {
-            bootFromSnapshot(server.data);
+        if (r && r.ok && r.data) {
+          console.log('✅ [boot] Данные с сервера получены');
+          lsSetStatus('Данные загружены', 80);
+          
+          // Применяем данные
+          applySnapshot(r.data);
+          
+          if (r.data.charId) {
+            // Уже есть персонаж → сразу в игру
+            SYNC.serverConfirmed = true;
+            SYNC.started = true;
+            
+            if (typeof G_CHAR !== 'undefined' && G_CHAR) {
+              hideCharSelect();
+              if (typeof startGame === 'function') startGame();
+            }
           } else {
-            hotApply(server.data);
+            // Нет персонажа → показываем выбор
+            SYNC.serverConfirmed = true;
           }
-        } else if (!server || !server.data) {
-          if (SYNC.started) {
-            SYNC.started = false;
-            SYNC.serverConfirmed = false;
-            resetToCharSelect();
-          }
-          clearLocal();
+          
+          // 🔥 ПОМЕЧАЕМ ЗАГРУЗКУ ЗАВЕРШЕННОЙ
+          _isLoadingComplete = true;
+          lsSetStatus('Готово', 100);
+          
+        } else {
+          console.warn('⚠️ [boot] Сервер не вернул данные, пробуем localStorage');
+          _tryBootFromLocal();
+          
+          // 🔥 ПОМЕЧАЕМ ЗАГРУЗКУ ЗАВЕРШЕННОЙ (даже если из localStorage)
+          _isLoadingComplete = true;
         }
       })
       .catch(function(err) {
-        console.error('❌ [boot] serverLoad ошибка:', err.message);
+        console.error('❌ [boot] Ошибка загрузки:', err.message);
         _tryBootFromLocal();
+        
+        // 🔥 ПОМЕЧАЕМ ЗАГРУЗКУ ЗАВЕРШЕННОЙ
+        _isLoadingComplete = true;
       })
-      .then(function() {
-        _bootFinalize();
+      .finally(function() {
+        console.log('✅ [boot] Загрузка завершена, скрываем экран');
+        
+        // 🔥 ВСЕГДА СКРЫВАЕМ ЭКРАН, НО ПОСЛЕ ЗАГРУЗКИ
+        setTimeout(function() {
+          lsHide();
+        }, 500);
+        
+        // Запускаем периодические сохранения
+        startSyncLoops();
+        
+        // Если данные не загрузились, но есть локальный бекап — он уже применился
+        if (!SYNC.started) {
+          // Если нет данных и нет персонажа — оставляем экран выбора
+          console.log('ℹ️ [boot] Нет сохранений, показываем выбор персонажа');
+        }
       });
   }
 
