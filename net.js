@@ -1,8 +1,9 @@
 /*
   ══════════════════════════════════════════════════════
-  net.js — Сетевой слой (исправленная версия)
-  Исправления: дельта-обновления, приоритет сервера,
-  валидация, отказ от localStorage как источника истины
+  net.js — Сетевой слой (МАКСИМАЛЬНО УПРОЩЁННЫЙ)
+  - Нет localStorage
+  - Мгновенное сохранение для важных действий
+  - Полное сохранение каждые 5 секунд
   ══════════════════════════════════════════════════════
 */
 (function () {
@@ -15,61 +16,16 @@
     return url.replace(/\/$/, '');
   })();
 
-  var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
-  
   var TG_INIT = '';
   var SYNC = {
-    booted: false,
     started: false,
     online: false,
     pushing: false,
-    dirtyTimer: null,
-    batchTimer: null,
-    lastServerTs: 0,
     serverConfirmed: false,
     currentTgId: null,
-    rlBackoffUntil: 0,
-
-    // Последние сохранённые значения для вычисления дельт
-    lastHp: 0,
-    lastGold: 0,
-    lastXp: 0,
-    lastKillCount: 0,
-    lastPotions: 0,
-    lastPixr: 0,
-    lastGram: 0,
+    saveTimer: null,
+    lastFullSave: 0,
   };
-
-  function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
-  function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
-
-  // ═══════════════════════════════
-  //  LOCALSTORAGE — ТОЛЬКО КЭШ для офлайн-режима
-  // ═══════════════════════════════
-  var LS_KEY = 'pixrpg_save_v2';
-
-  function saveLocal() {
-    if (!SYNC.started) return;
-    try {
-      var snap = serializeState();
-      snap._savedAt = Date.now();
-      localStorage.setItem(LS_KEY, JSON.stringify(snap));
-    } catch (e) {}
-  }
-
-  function loadLocal() {
-    try {
-      var raw = localStorage.getItem(LS_KEY);
-      if (!raw) return null;
-      var parsed = JSON.parse(raw);
-      if (parsed && parsed._savedAt && (Date.now() - parsed._savedAt) > 30 * 24 * 3600 * 1000) return null;
-      return parsed;
-    } catch (e) { return null; }
-  }
-
-  function clearLocal() {
-    try { localStorage.removeItem(LS_KEY); } catch (e) {}
-  }
 
   function getTgId() {
     try {
@@ -83,13 +39,222 @@
     return null;
   }
 
-  // ═══════════════════════════════
-  //  ЭКРАН ЗАГРУЗКИ
-  // ═══════════════════════════════
+  // ── Полный слепок состояния ──
+  function getFullSnapshot() {
+    var eq = {};
+    var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
+    EQUIP_SLOTS.forEach(function (slot) {
+      var it = G.equipped && G.equipped[slot];
+      eq[slot] = it ? it.id : null;
+    });
 
-  var LS_MIN_MS = 800;
-  var _lsShownAt = Date.now();
+    var inv = (G.inventory || []).map(function (it) {
+      var c = JSON.parse(JSON.stringify(it));
+      delete c._equipped;
+      return c;
+    });
 
+    return {
+      tgId: getTgId(),
+      charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
+      inventory: inv,
+      equipped: eq,
+      upg: JSON.parse(JSON.stringify(G.upg || {})),
+      skills: JSON.parse(JSON.stringify(G.skills || {})),
+      potionLv: G.potionLv || 0,
+      potionThreshold: G.potionThreshold || 30,
+      floor: G.floor || 1,
+      level: G.level || 1,
+      pixr: G.pixr || 0,
+      gram: G.gram || 0,
+      bp: JSON.parse(JSON.stringify(G.bp || { active: false, claimed: [] })),
+      prem: JSON.parse(JSON.stringify(G.prem || { tier: null, expiresAt: 0 })),
+      boss: JSON.parse(JSON.stringify(G.boss || { floor: 1, lastFightTime: 0 })),
+      hp: G.hp || 0,
+      gold: G.gold || 0,
+      xp: G.xp || 0,
+      xpNeeded: G.xpNeeded || 100,
+      killCount: G.killCount || 0,
+      potions: G.potions || 0,
+      invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
+      dailyTasks: JSON.parse(JSON.stringify(G.dailyTasks || { date: '', seconds: 0, claimed: [] })),
+      specialTasksClaimed: JSON.parse(JSON.stringify(G.specialTasksClaimed || {})),
+      invFilter: G.invFilter || 'all',
+      maxFloor: G.maxFloor || 1,
+      cp: (typeof calcCP === 'function') ? calcCP() : 0,
+      updatedAt: Date.now(),
+    };
+  }
+
+  // ── СОХРАНЕНИЕ НА СЕРВЕР ──
+  function saveToServer(instant) {
+    if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
+      return;
+    }
+
+    // Если это не мгновенное сохранение — проверяем интервал 5 секунд
+    if (!instant) {
+      var now = Date.now();
+      if (now - SYNC.lastFullSave < 5000) return;
+      SYNC.lastFullSave = now;
+    }
+
+    SYNC.pushing = true;
+    var snapshot = getFullSnapshot();
+    snapshot.updatedAt = Date.now();
+
+    fetch(API + '/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: TG_INIT, data: snapshot }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      if (r && r.ok) {
+        SYNC.lastFullSave = Date.now();
+      }
+    })
+    .catch(function () {})
+    .then(function () {
+      SYNC.pushing = false;
+    });
+  }
+
+  // ── МГНОВЕННОЕ СОХРАНЕНИЕ ──
+  function saveInstant() {
+    if (!SYNC.started || !SYNC.online || !SYNC.serverConfirmed) return;
+    saveToServer(true);
+  }
+
+  // ── ПЕРИОДИЧЕСКОЕ СОХРАНЕНИЕ (каждые 5 секунд) ──
+  function startPeriodicSave() {
+    if (SYNC.saveTimer) return;
+    SYNC.saveTimer = setInterval(function() {
+      if (SYNC.started && SYNC.online && SYNC.serverConfirmed) {
+        saveToServer(false);
+      }
+    }, 5000);
+  }
+
+  // ── ПРИМЕНЕНИЕ СНАПШОТА ──
+  function applySnapshot(s) {
+    if (!s || typeof s !== 'object') return false;
+
+    var currentTgId = getTgId();
+    if (s.tgId && currentTgId && s.tgId !== currentTgId) {
+      console.warn('⚠️ Игнорируем данные другого пользователя');
+      return false;
+    }
+
+    // Персонаж
+    if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
+      G_CHAR = CHARS[s.charId];
+      G.charId = s.charId;
+      if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
+    }
+
+    // Базовые статы
+    G.upg = Object.assign(
+      { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
+      s.upg || {}
+    );
+
+    if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
+      G.baseStats = Object.assign({}, G_CHAR.baseStats);
+      UPG_DEFS.forEach(function(u) {
+        var lv = G.upg[u.id] || 0;
+        if (lv > 0) {
+          G.baseStats[u.stat] = parseFloat(
+            ((G.baseStats[u.stat] || 0) + u.bonus * lv).toFixed(4)
+          );
+        }
+      });
+      var lvBonuses = (s.level || 1) - 1;
+      if (lvBonuses > 0) {
+        G.baseStats.atk    = (G.baseStats.atk || 0) + lvBonuses * 2;
+        G.baseStats.def    = (G.baseStats.def || 0) + lvBonuses * 1;
+        G.baseStats.hp     = (G.baseStats.hp || 0) + lvBonuses * 10;
+        G.baseStats.atkSpd = parseFloat(((G.baseStats.atkSpd || 1.0) + lvBonuses * 0.02).toFixed(4));
+      }
+    }
+
+    // Простые поля
+    G.skills = s.skills || {};
+    G.potionLv = s.potionLv || 0;
+    G.potionThreshold = s.potionThreshold || 30;
+    G.floor = s.floor || 1;
+    G.level = s.level || 1;
+    G.maxFloor = s.maxFloor || 1;
+    G.pixr = s.pixr || 0;
+    G.gram = s.gram || 0;
+    G.gold = s.gold || 0;
+    G.xp = s.xp || 0;
+    G.killCount = s.killCount || 0;
+    G.potions = s.potions || 0;
+    G.invFilter = s.invFilter || 'all';
+    G.bp = s.bp || { active: false, claimed: [] };
+    if (!G.bp.claimed) G.bp.claimed = [];
+    G.prem = s.prem || { tier: null, expiresAt: 0 };
+    G.boss = s.boss || { floor: 1, lastFightTime: 0 };
+    if (!G.boss.floor) G.boss.floor = 1;
+    G.dailyTasks = s.dailyTasks || { date: '', seconds: 0, claimed: [] };
+    G.specialTasksClaimed = s.specialTasksClaimed || {};
+    G.xpNeeded = s.xpNeeded || 100;
+    if (typeof s.invIdCounter === 'number') _invIdCounter = s.invIdCounter;
+
+    // Инвентарь
+    G.inventory = (s.inventory || []).map(function (it) {
+      var c = JSON.parse(JSON.stringify(it));
+      c._equipped = false;
+      return c;
+    });
+
+    G.inventory.forEach(function (i) {
+      if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
+    });
+
+    // Экипировка
+    G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
+    var eq = s.equipped || {};
+    var EQUIP_SLOTS = ['weapon', 'armor', 'ring', 'boots', 'helmet'];
+    EQUIP_SLOTS.forEach(function (slot) {
+      var id = eq[slot];
+      if (id == null) return;
+      var it = G.inventory.find(function (i) { return i.id === id; });
+      if (it) {
+        it._equipped = true;
+        G.equipped[slot] = it;
+      }
+    });
+
+    // Пересчёт статов
+    if (typeof recalcStats === 'function') recalcStats();
+    
+    G.maxHp = s.maxHp || G.baseStats.hp || 100;
+    G.hp = s.hp || G.maxHp;
+    if (G.hp <= 0) G.hp = Math.floor(G.maxHp * 0.3);
+    if (G.hp > G.maxHp) G.hp = G.maxHp;
+
+    return true;
+  }
+
+  // ── ЗАГРУЗКА С СЕРВЕРА ──
+  function serverLoad() {
+    if (!SYNC.online) return Promise.resolve(null);
+    
+    return fetch(API + '/api/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: TG_INIT }),
+    })
+    .then(function (r) { return r.json(); })
+    .catch(function (e) {
+      console.error('❌ [serverLoad] ошибка:', e.message);
+      throw e;
+    });
+  }
+
+  // ── ЭКРАН ЗАГРУЗКИ ──
   function lsSetStatus(text, pct) {
     var el = document.getElementById('lsStatus');
     if (el) el.innerHTML = '<span class="ls-dots">' + text + '</span>';
@@ -101,18 +266,13 @@
     var el = document.getElementById('loadingScreen');
     if (!el || el.classList.contains('fade-out')) return;
     el.style.pointerEvents = 'none';
-    var elapsed = Date.now() - _lsShownAt;
-    var delay = Math.max(0, LS_MIN_MS - elapsed);
     setTimeout(function () {
-      lsSetStatus('Готово', 100);
+      el.classList.add('fade-out');
       setTimeout(function () {
-        el.classList.add('fade-out');
-        setTimeout(function () {
-          el.style.display = 'none';
-          el.classList.add('hidden-done');
-        }, 520);
-      }, 300);
-    }, delay);
+        el.style.display = 'none';
+        el.classList.add('hidden-done');
+      }, 520);
+    }, 300);
   }
 
   function lsInitStars() {
@@ -130,391 +290,16 @@
     wrap.innerHTML = html;
   }
 
-  // ═══════════════════════════════
-  //  СЕРИАЛИЗАЦИЯ И ДЕЛЬТЫ
-  // ═══════════════════════════════
-
-  function serializeState() {
-    var eq = {};
-    EQUIP_SLOTS.forEach(function (slot) {
-      var it = G.equipped && G.equipped[slot];
-      eq[slot] = it ? it.id : null;
-    });
-
-    var inv = (G.inventory || []).map(function (it) {
-      var c = clone(it);
-      delete c._equipped;
-      return c;
-    });
-
-    var full = {
-      v: 1,
-      tgId: getTgId(),
-      charId: (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
-
-      // Мгновенные поля
-      inventory: inv,
-      equipped: eq,
-      upg: clone(G.upg),
-      skills: clone(G.skills || {}),
-      potionLv: G.potionLv,
-      potionThreshold: G.potionThreshold,
-      floor: G.floor,
-      level: G.level,
-      pixr: G.pixr,
-      gram: G.gram,
-      bp: clone(G.bp || { active: false, claimed: [] }),
-      prem: clone(G.prem || { tier: null, expiresAt: 0 }),
-      boss: clone(G.boss || { floor: 1, lastFightTime: 0 }),
-
-      // Отложенные поля
-      hp: G.hp,
-      gold: G.gold,
-      xp: G.xp,
-      xpNeeded: G.xpNeeded,
-      killCount: G.killCount,
-      potions: G.potions,
-
-      // Прочие
-      invIdCounter: (typeof _invIdCounter === 'number') ? _invIdCounter : 0,
-      dailyTasks:          clone(G.dailyTasks          || { date: '', seconds: 0, claimed: [] }),
-      specialTasksClaimed: clone(G.specialTasksClaimed || {}),
-      invFilter: G.invFilter || 'all',
-      cp: (typeof calcCP === 'function') ? calcCP() : 0,
-      updatedAt: Date.now(),
-      maxFloor: G.maxFloor || 1,
-    };
-
-    return full;
-  }
-
-  // ── ВЫЧИСЛЕНИЕ ДЕЛЬТ ДЛЯ АТОМАРНОГО СОХРАНЕНИЯ ──
-  function getDelta() {
-    var delta = {
-      tgId: getTgId(),
-      updatedAt: Date.now(),
-    };
-
-    // Изменяемые поля с дельтами
-    var currentGold = G.gold || 0;
-    var currentPixr = G.pixr || 0;
-    var currentGram = G.gram || 0;
-    var currentXp = G.xp || 0;
-    var currentKillCount = G.killCount || 0;
-    var currentPotions = G.potions || 0;
-
-    if (currentGold !== SYNC.lastGold) {
-      delta.goldDelta = currentGold - SYNC.lastGold;
-      SYNC.lastGold = currentGold;
-    }
-    if (currentPixr !== SYNC.lastPixr) {
-      delta.pixrDelta = currentPixr - SYNC.lastPixr;
-      SYNC.lastPixr = currentPixr;
-    }
-    if (currentGram !== SYNC.lastGram) {
-      delta.gramDelta = currentGram - SYNC.lastGram;
-      SYNC.lastGram = currentGram;
-    }
-    if (currentXp !== SYNC.lastXp) {
-      delta.xpDelta = currentXp - SYNC.lastXp;
-      SYNC.lastXp = currentXp;
-    }
-    if (currentKillCount !== SYNC.lastKillCount) {
-      delta.killCountDelta = currentKillCount - SYNC.lastKillCount;
-      SYNC.lastKillCount = currentKillCount;
-    }
-    if (currentPotions !== SYNC.lastPotions) {
-      delta.potionsDelta = currentPotions - SYNC.lastPotions;
-      SYNC.lastPotions = currentPotions;
-    }
-
-    // Мгновенные поля — отправляем целиком для $set
-    var inv = (G.inventory || []).map(function (it) {
-      var c = clone(it);
-      delete c._equipped;
-      return c;
-    });
-    delta.inventory = inv;
-    delta.equipped = {};
-    EQUIP_SLOTS.forEach(function (slot) {
-      var it = G.equipped && G.equipped[slot];
-      delta.equipped[slot] = it ? it.id : null;
-    });
-    delta.upg = clone(G.upg);
-    delta.skills = clone(G.skills || {});
-    delta.potionLv = G.potionLv;
-    delta.potionThreshold = G.potionThreshold;
-    delta.floor = G.floor;
-    delta.level = G.level;
-    delta.bp = clone(G.bp || { active: false, claimed: [] });
-    delta.prem = clone(G.prem || { tier: null, expiresAt: 0 });
-    delta.boss = clone(G.boss || { floor: 1, lastFightTime: 0 });
-    delta.xpNeeded = G.xpNeeded;
-    delta.maxFloor = G.maxFloor || 1;
-    delta.invFilter = G.invFilter || 'all';
-    delta.dailyTasks = clone(G.dailyTasks || { date: '', seconds: 0, claimed: [] });
-    delta.specialTasksClaimed = clone(G.specialTasksClaimed || {});
-    delta.charId = (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null);
-
-    // CP и HP — для информации, но не сохраняются
-    delta.cp = (typeof calcCP === 'function') ? calcCP() : 0;
-    delta.hp = G.hp;
-
-    return delta;
-  }
-
-  // ═══════════════════════════════
-  //  ПРИМЕНЕНИЕ СНАПШОТА
-  // ═══════════════════════════════
-
-  function applySnapshot(s) {
-    if (!s || typeof s !== 'object') return false;
-
-    var currentTgId = getTgId();
-    if (s.tgId && currentTgId && s.tgId !== currentTgId) {
-      console.warn('⚠️ Игнорируем снапшот другого пользователя:', s.tgId);
-      return false;
-    }
-
-    if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
-      G_CHAR = CHARS[s.charId];
-      G.charId = s.charId;
-      if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
-    }
-
-    G.upg = Object.assign(
-      { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
-      s.upg || {}
-    );
-
-    // Восстанавливаем baseStats
-    if (G_CHAR && typeof UPG_DEFS !== 'undefined') {
-      G.baseStats = Object.assign({}, G_CHAR.baseStats);
-      UPG_DEFS.forEach(function(u) {
-        var lv = G.upg[u.id] || 0;
-        if (lv > 0) {
-          G.baseStats[u.stat] = parseFloat(
-            ((G.baseStats[u.stat] || 0) + u.bonus * lv).toFixed(4)
-          );
-        }
-      });
-      var lvBonuses = num(s.level, 1) - 1;
-      if (lvBonuses > 0) {
-        G.baseStats.atk    = (G.baseStats.atk    || 0) + lvBonuses * 2;
-        G.baseStats.def    = (G.baseStats.def    || 0) + lvBonuses * 1;
-        G.baseStats.hp     = (G.baseStats.hp     || 0) + lvBonuses * 10;
-        G.baseStats.atkSpd = parseFloat(
-          ((G.baseStats.atkSpd || 1.0) + lvBonuses * 0.02).toFixed(4)
-        );
-      }
-    } else if (s.baseStats) {
-      G.baseStats = Object.assign({}, s.baseStats);
-    }
-
-    G.skills = s.skills || {};
-    G.potionLv = num(s.potionLv, 0);
-    G.potionThreshold = num(s.potionThreshold, 30);
-    G.floor = num(s.floor, G.floor);
-    G.level = num(s.level, G.level);
-    G.maxFloor = num(s.maxFloor, G.maxFloor);
-    G.pixr = num(s.pixr, G.pixr);
-    G.gram = num(s.gram, G.gram);
-    G.bp = s.bp || { active: false, claimed: [] };
-    if (!G.bp.claimed) G.bp.claimed = [];
-    G.prem = s.prem || { tier: null, expiresAt: 0 };
-    G.boss = s.boss || { floor: 1, lastFightTime: 0 };
-    if (!G.boss.floor) G.boss.floor = 1;
-    G.invFilter = s.invFilter || 'all';
-    G.dailyTasks          = s.dailyTasks          || { date: '', seconds: 0, claimed: [] };
-    G.specialTasksClaimed = s.specialTasksClaimed || {};
-
-    G.gold = num(s.gold, G.gold);
-    G.xp = num(s.xp, G.xp);
-    G.killCount = num(s.killCount, G.killCount);
-    G.potions = num(s.potions, G.potions);
-
-    G.inventory = (s.inventory || []).map(function (it) {
-      var c = clone(it); c._equipped = false; return c;
-    });
-
-    if (typeof s.invIdCounter === 'number') _invIdCounter = s.invIdCounter;
-    G.inventory.forEach(function (i) {
-      if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
-    });
-
-    G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
-    var eq = s.equipped || {};
-    EQUIP_SLOTS.forEach(function (slot) {
-      var id = eq[slot];
-      if (id == null) return;
-      var it = G.inventory.find(function (i) { return i.id === id; });
-      if (it) { it._equipped = true; G.equipped[slot] = it; }
-    });
-
-    if (typeof recalcStats === 'function') recalcStats();
-    
-    G.maxHp = num(s.maxHp, G.maxHp);
-    G.xpNeeded = num(s.xpNeeded, 0);
-    if (!G.xpNeeded || G.xpNeeded < 100) {
-      var _xp = 100;
-      for (var _lv = 1; _lv < G.level; _lv++) {
-        _xp = Math.floor(_xp * (_lv < 7 ? 2.5 : 1.1));
-      }
-      G.xpNeeded = _xp;
-    }
-    
-    var hp = num(s.hp, G.maxHp);
-    if (hp <= 0) hp = Math.floor(G.maxHp * 0.3);
-    G.hp = Math.max(1, Math.min(hp, G.maxHp));
-
-    // Обновляем последние значения для дельт
-    SYNC.lastHp = G.hp;
-    SYNC.lastGold = G.gold;
-    SYNC.lastXp = G.xp;
-    SYNC.lastKillCount = G.killCount;
-    SYNC.lastPotions = G.potions;
-    SYNC.lastPixr = G.pixr || 0;
-    SYNC.lastGram = G.gram || 0;
-
-    // Сохраняем в localStorage как кэш
-    saveLocal();
-
-    return true;
-  }
-
-  // ═══════════════════════════════
-  //  СЕРВЕРНЫЕ ЗАПРОСЫ
-  // ═══════════════════════════════
-
-  var START_PARAM = '';
-
-  function serverLoad() {
-    if (!SYNC.online) return Promise.resolve(null);
-    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 5000) : null;
-    
-    return fetch(API + '/api/load', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT, startParam: START_PARAM }),
-      signal: ctrl ? ctrl.signal : undefined,
-    }).then(function (r) { 
-      clearTimeout(timer); 
-      return r.json(); 
-    })
-    .catch(function (e) { 
-      clearTimeout(timer); 
-      console.error('❌ [serverLoad] ошибка:', e.message);
-      throw e; 
-    });
-  }
-
-  function serverSaveInstant(data) {
-    if (!SYNC.online || !SYNC.serverConfirmed) return Promise.resolve({ ok: false });
-    
-    var delta = getDelta();
-    Object.keys(data).forEach(function(key) {
-      delta[key] = data[key];
-    });
-    delta.updatedAt = Date.now();
-    
-    return fetch(API + '/api/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT, data: delta }),
-    }).then(function (r) { return r.json(); });
-  }
-
-  // ⚡ ОТЛОЖЕННОЕ СОХРАНЕНИЕ — КАЖДЫЕ 3 СЕКУНДЫ
-  function serverSaveBatch() {
-    if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
-      return;
-    }
-
-    if (SYNC.rlBackoffUntil && Date.now() < SYNC.rlBackoffUntil) {
-      return;
-    }
-    
-    var delta = getDelta();
-    
-    // Проверяем, есть ли реальные изменения
-    var hasChanges = false;
-    for (var key in delta) {
-      if (key !== 'tgId' && key !== 'updatedAt' && key !== 'cp' && key !== 'hp') {
-        hasChanges = true;
-        break;
-      }
-    }
-    if (!hasChanges) return;
-
-    SYNC.pushing = true;
-    delta.updatedAt = Date.now();
-    
-    fetch(API + '/api/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT, data: delta }),
-    }).then(function (r) { return r.json(); })
-      .then(function (r) {
-        if (r && r.ok) {
-          SYNC.lastServerTs = r.updatedAt || delta.updatedAt;
-          SYNC.rlBackoffUntil = 0;
-          saveLocal();
-        } else if (r && r.error === 'rate_limit') {
-          SYNC.rlBackoffUntil = Date.now() + 6000;
-          console.warn('⚠️ [save] rate limit, пауза 6s');
-        }
-      })
-      .catch(function () {})
-      .then(function () { SYNC.pushing = false; });
-  }
-
-  function saveInstant(data) {
-    if (!SYNC.started || !SYNC.online) return;
-    saveLocal();
-    serverSaveInstant(data).catch(function() {});
-  }
-
-  function touch() {
-    if (!SYNC.started || !SYNC.online) return;
-    clearTimeout(SYNC.dirtyTimer);
-    SYNC.dirtyTimer = setTimeout(serverSaveBatch, 500);
-  }
-
-  function flush() {
-    if (!SYNC.started) return;
-    saveLocal();
-    if (!SYNC.online || !SYNC.serverConfirmed) return;
-    var delta = getDelta();
-    delta.updatedAt = Date.now();
-    try {
-      fetch(API + '/api/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT, data: delta }),
-        keepalive: true,
-      });
-    } catch (e) {}
-  }
-
-  // ═══════════════════════════════
-  //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
-  // ═══════════════════════════════
-
   function stopCharSelectAnims() {
     try { if (typeof _csSpriteTimers !== 'undefined') Object.keys(_csSpriteTimers).forEach(function (k) { clearInterval(_csSpriteTimers[k]); }); } catch (e) {}
     try { if (typeof _csParticleTimer !== 'undefined' && _csParticleTimer) cancelAnimationFrame(_csParticleTimer); } catch (e) {}
   }
-  
+
   function hideCharSelect() {
     var cs = document.getElementById('charSelect');
     if (cs) cs.classList.add('hidden');
     stopCharSelectAnims();
   }
-
-  // ═══════════════════════════════
-  //  СТАРТ ИЗ СНАПШОТА
-  // ═══════════════════════════════
 
   function bootFromSnapshot(snap) {
     if (SYNC.started) return;
@@ -522,39 +307,8 @@
     hideCharSelect();
     SYNC.started = true;
     if (typeof startGame === 'function') startGame();
+    startPeriodicSave();
   }
-
-  function hotApply(snap) {
-    if (!applySnapshot(snap)) return;
-    if (typeof updateHUD === 'function') updateHUD();
-    if (typeof initSkillsHud === 'function') initSkillsHud();
-    if (typeof updatePotionHud === 'function') updatePotionHud();
-    try { if (typeof switchTab === 'function' && typeof activeTab !== 'undefined') switchTab(activeTab); } catch (e) {}
-  }
-
-  // ═══════════════════════════════
-  //  ЦИКЛЫ СИНХРОНИЗАЦИИ — 3 СЕКУНДЫ
-  // ═══════════════════════════════
-
-  function startSyncLoops() {
-    SYNC.batchTimer = setInterval(serverSaveBatch, 3000);
-    setInterval(saveLocal, 10000);
-
-    document.addEventListener('visibilitychange', function () {
-      if (document.hidden) flush();
-    });
-
-    if (window.Telegram && window.Telegram.WebApp) {
-      try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
-    }
-
-    window.addEventListener('pagehide', flush);
-    window.addEventListener('beforeunload', flush);
-  }
-
-  // ═══════════════════════════════
-  //  СБРОС К ЭКРАНУ ВЫБОРА
-  // ═══════════════════════════════
 
   function resetToCharSelect() {
     if (typeof gameActive !== 'undefined') window.gameActive = false;
@@ -583,171 +337,60 @@
     if (skillsHud) skillsHud.classList.remove('visible');
   }
 
-  // ═══════════════════════════════
-  //  BOOT (исправленный)
-  // ═══════════════════════════════
-
   function initTelegram() {
     if (window.Telegram && window.Telegram.WebApp) {
       try { window.Telegram.WebApp.ready(); } catch (e) {}
       try { window.Telegram.WebApp.expand(); } catch (e) {}
       try { window.Telegram.WebApp.disableVerticalSwipes && window.Telegram.WebApp.disableVerticalSwipes(); } catch (e) {}
       TG_INIT = window.Telegram.WebApp.initData || '';
-      try {
-        START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
-      } catch (e) { START_PARAM = ''; }
-    }
-    if (!START_PARAM) {
-      try {
-        var urlRef = new URLSearchParams(window.location.search).get('ref') || '';
-        if (urlRef) START_PARAM = urlRef;
-      } catch (e) {}
     }
     SYNC.online = !!TG_INIT;
-    
     var tgId = getTgId();
     if (tgId) SYNC.currentTgId = tgId;
     console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
   }
 
-  // ── Загрузка из localStorage ТОЛЬКО как фолбэк ──
-  function _tryBootFromLocal() {
-    if (SYNC.started) return false;
-    var local = loadLocal();
-    if (!local || !local.charId) return false;
-    var currentTgId = getTgId();
-    if (local.tgId && currentTgId && local.tgId !== currentTgId) return false;
-    console.warn('⚠️ [boot] Сервер недоступен, загружаем из localStorage');
-    lsSetStatus('Офлайн режим', 85);
-    if (applySnapshot(local)) {
-      hideCharSelect();
-      SYNC.started = true;
-      // serverConfirmed остаётся false — сохранения на сервер не пойдут
-      if (typeof startGame === 'function') startGame();
-      return true;
-    }
-    return false;
-  }
-
+  // ── ЗАГРУЗКА ИГРЫ ──
   function boot() {
     lsInitStars();
     lsSetStatus('Подключение', 10);
     initTelegram();
 
-    var _emergencyTimer = setTimeout(function () {
-      console.warn('⚠️ [boot] emergency hide');
-      lsHide();
-    }, 8000);
-
-    function _bootFinalize() {
-      clearTimeout(_emergencyTimer);
-      try {
-        SYNC.booted = true;
-        startSyncLoops();
-        if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
-          serverSaveBatch();
-        }
-      } catch (e) {
-        console.error('❌ [boot] finalize error:', e.message);
-      }
-      lsHide();
+    if (!SYNC.online) {
+      lsSetStatus('❌ Нет подключения', 100);
+      setTimeout(function() {
+        lsHide();
+        resetToCharSelect();
+      }, 1000);
+      return;
     }
 
-    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
+    lsSetStatus('Загрузка данных', 50);
 
-    serverLoad().then(function (r) {
-      // СЕРВЕР ВСЕГДА ПРИОРИТЕТНЕЕ
-      if (r && r.ok && r.save && r.save.data) {
-        var serverData = r.save.data;
-        var currentTgId = getTgId();
-        
-        if (serverData.tgId && currentTgId && serverData.tgId !== currentTgId) {
-          console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
-          if (!_tryBootFromLocal()) resetToCharSelect();
-          return;
-        }
-
-        // Применяем данные с сервера
-        SYNC.serverConfirmed = true;
-        lsSetStatus('Применение данных', 85);
-        
-        if (!SYNC.started) {
-          bootFromSnapshot(serverData);
+    serverLoad()
+      .then(function (r) {
+        if (r && r.ok && r.save && r.save.data) {
+          SYNC.serverConfirmed = true;
+          lsSetStatus('Применение данных', 80);
+          bootFromSnapshot(r.save.data);
         } else {
-          hotApply(serverData);
-        }
-        // Перезаписываем локальный кэш данными с сервера
-        saveLocal();
-      } else {
-        // Если на сервере нет данных — пробуем локальный сейв
-        if (!_tryBootFromLocal()) {
+          lsSetStatus('Нет сохранений', 80);
           resetToCharSelect();
         }
-      }
-    }).catch(function (err) {
-      console.error('❌ [boot] serverLoad ошибка:', err.message);
-      // Сервер недоступен — пробуем локальный сейв
-      if (!_tryBootFromLocal()) {
-        resetToCharSelect();
-      }
-    }).then(function () {
-      _bootFinalize();
-    });
+      })
+      .catch(function (err) {
+        console.error('❌ [boot] ошибка:', err.message);
+        lsSetStatus('❌ Ошибка загрузки', 100);
+        setTimeout(function() {
+          resetToCharSelect();
+        }, 1000);
+      })
+      .then(function () {
+        lsHide();
+      });
   }
 
-  // ═══════════════════════════════
-  //  ХУКИ
-  // ═══════════════════════════════
-
-  function hookCharSelect() {
-    var orig = window.confirmChar;
-    if (typeof orig !== 'function') return;
-    window.confirmChar = function () {
-      var r = orig.apply(this, arguments);
-      if (typeof G_CHAR === 'undefined' || !G_CHAR) return r;
-      G.charId = G_CHAR.id;
-      SYNC.started = true;
-      SYNC.serverConfirmed = true;
-      stopCharSelectAnims();
-      
-      if (SYNC.online) {
-        try {
-          fetch(API + '/api/character', {
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ initData: TG_INIT, charId: G.charId }),
-          });
-        } catch (e) {}
-        var snap = getDelta();
-        serverSaveInstant({
-          charId: G.charId,
-          inventory: snap.inventory,
-          equipped: snap.equipped,
-          upg: snap.upg,
-          skills: snap.skills,
-          potionLv: snap.potionLv,
-          potionThreshold: snap.potionThreshold,
-          floor: snap.floor,
-          level: snap.level,
-          pixr: snap.pixr,
-          gram: snap.gram,
-          bp: snap.bp,
-          prem: snap.prem,
-        });
-      }
-      return r;
-    };
-  }
-
-  var _hudSaveTimer = null;
-  function saveToServerDebounced() {
-    if (_hudSaveTimer) return;
-    _hudSaveTimer = setTimeout(function () { 
-      _hudSaveTimer = null; 
-      serverSaveBatch(); 
-    }, 500);
-  }
-
+  // ── ХУКИ ДЛЯ МГНОВЕННОГО СОХРАНЕНИЯ ──
   function hookActions() {
     var instantActions = [
       'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
@@ -760,66 +403,74 @@
       if (typeof fn !== 'function') return;
       window[name] = function () {
         var r = fn.apply(this, arguments);
-        try {
-          saveInstant({});
-        } catch (e) {}
+        if (SYNC.started) saveInstant();
         return r;
       };
     });
-
-    var origHUD = window.updateHUD;
-    if (typeof origHUD === 'function') {
-      window.updateHUD = function () {
-        var r = origHUD.apply(this, arguments);
-        if (SYNC.started) saveToServerDebounced();
-        return r;
-      };
-    }
   }
 
-  // ═══════════════════════════════
-  //  ЭКСПОРТ ДЛЯ ИГРОВЫХ СОБЫТИЙ
-  // ═══════════════════════════════
-
+  // ── ЭКСПОРТ ──
   window.onPixrDrop = function(amount) {
     G.pixr = (G.pixr || 0) + amount;
-    saveInstant({ pixrDelta: amount });
+    saveInstant();
   };
 
   window.onExchangePixr = function() {
-    saveInstant({ pixr: G.pixr, gram: G.gram });
+    saveInstant();
   };
 
   window.onItemDrop = function(item) {
     G.inventory.push(item);
-    saveInstant({ inventory: G.inventory });
+    saveInstant();
   };
 
   window.onEquip = function(item) {
-    saveInstant({ equipped: G.equipped });
+    saveInstant();
   };
 
   window.onUpgrade = function(upgId, newLevel) {
-    saveInstant({ upg: G.upg });
+    saveInstant();
   };
 
   window.onSkillUpgrade = function(skillId, newLevel) {
-    saveInstant({ skills: G.skills });
+    saveInstant();
   };
 
   window.onLevelUp = function() {
-    saveInstant({ level: G.level, xpNeeded: G.xpNeeded });
+    saveInstant();
   };
 
   window.onFloorChange = function(newFloor) {
-    saveInstant({ floor: G.floor, maxFloor: G.maxFloor });
+    saveInstant();
   };
 
-  // ═══════════════════════════════
-  //  ИНИЦИАЛИЗАЦИЯ
-  // ═══════════════════════════════
+  // ── ПРИНУДИТЕЛЬНОЕ СОХРАНЕНИЕ ПРИ ЗАКРЫТИИ ──
+  function flushOnClose() {
+    if (!SYNC.started || !SYNC.online || !SYNC.serverConfirmed) return;
+    var snapshot = getFullSnapshot();
+    snapshot.updatedAt = Date.now();
+    try {
+      fetch(API + '/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData: TG_INIT, data: snapshot }),
+        keepalive: true,
+      });
+    } catch (e) {}
+  }
 
-  hookCharSelect();
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) flushOnClose();
+  });
+
+  if (window.Telegram && window.Telegram.WebApp) {
+    try { window.Telegram.WebApp.onEvent('close', flushOnClose); } catch (e) {}
+  }
+
+  window.addEventListener('pagehide', flushOnClose);
+  window.addEventListener('beforeunload', flushOnClose);
+
+  // ── ЗАПУСК ──
   hookActions();
 
   if (document.readyState === 'complete') {
@@ -829,17 +480,12 @@
   }
 
   window.GameSync = {
-    save:        serverSaveBatch,
-    flush:       flush,
-    touch:       touch,
-    serialize:   getDelta,
-    apply:       applySnapshot,
-    state:       SYNC,
-    getTgId:     getTgId,
+    save: function() { saveToServer(false); },
     saveInstant: saveInstant,
-    saveLocal:   saveLocal,
-    clearLocal:  clearLocal,
-    _API:        API,
+    flush: flushOnClose,
+    state: SYNC,
+    getTgId: getTgId,
+    _API: API,
     get _INIT() { return TG_INIT; },
   };
 })();
