@@ -66,7 +66,7 @@ const SaveSchema = new mongoose.Schema({
   username:  { type: String, default: '' },
   firstName: { type: String, default: '' },
   charId:    { type: String, default: null },
-  data:      { type: mongoose.Schema.Types.Mixed, default: null },
+  data:      { type: mongoose.Schema.Types.Mixed, default: {} },
   level:     { type: Number, default: 1 },
   cp:        { type: Number, default: 0 },
   floor:     { type: Number, default: 1 },
@@ -109,7 +109,8 @@ const AdminLogSchema = new mongoose.Schema({
   timestamp: { type: Number, default: Date.now }
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
-// ── Специальные задания (создаются через админку) ──
+
+// ── Специальные задания ──
 const SpecialTaskSchema = new mongoose.Schema({
   taskId:       { type: String, required: true, unique: true },
   title:        { type: String, required: true },
@@ -123,7 +124,6 @@ const SpecialTaskSchema = new mongoose.Schema({
 }, { minimize: false });
 SpecialTaskSchema.index({ active: 1, createdAt: -1 });
 const SpecialTask = mongoose.model('SpecialTask', SpecialTaskSchema);
-
 
 // ═══════════════════════════════
 //  КОНФИГ КОШЕЛЬКА
@@ -213,6 +213,25 @@ function calcPendingGold(refMilestones, friends) {
   return { gold, newMilestones };
 }
 
+// ── Вспомогательная функция для безопасного обновления data ──
+async function safeUpdateData(tgId, updates) {
+  const user = await Save.findOne({ tgId: tgId });
+  if (!user) return null;
+  
+  if (!user.data || typeof user.data !== 'object') {
+    user.data = { tgId: tgId };
+  }
+  
+  Object.keys(updates).forEach(key => {
+    if (key === 'tgId' || key === 'updatedAt') return;
+    user.data[key] = updates[key];
+  });
+  
+  user.updatedAt = Date.now();
+  await user.save();
+  return user;
+}
+
 // ═══════════════════════════════
 //  Кэш лидерборда
 // ═══════════════════════════════
@@ -258,7 +277,7 @@ app.post('/api/load', async (req, res) => {
         firstName: tg.firstName,
         refBy, 
         refMilestones: {},
-        data: null,
+        data: { tgId: tg.id },
       });
       console.log(`🆕 [load] Новый пользователь: ${tg.id}`);
 
@@ -290,7 +309,7 @@ app.post('/api/load', async (req, res) => {
 
       return res.json({
         ok: true,
-        save: { charId: null, data: null, updatedAt: 0 },
+        save: { charId: null, data: doc.data, updatedAt: 0 },
         user: { id: tg.id, username: tg.username, firstName: tg.firstName },
       });
     }
@@ -304,7 +323,7 @@ app.post('/api/load', async (req, res) => {
       ok: true,
       save: {
         charId: doc.charId,
-        data: doc.data,
+        data: doc.data || { tgId: tg.id },
         updatedAt: doc.updatedAt || 0,
       },
       user: { id: tg.id, username: tg.username, firstName: tg.firstName },
@@ -315,7 +334,7 @@ app.post('/api/load', async (req, res) => {
   }
 });
 
-// ── Сохранение ──
+// ── Сохранение (ИСПРАВЛЕНО) ──
 app.post('/api/save', async (req, res) => {
   const startTime = Date.now();
   
@@ -327,44 +346,56 @@ app.post('/api/save', async (req, res) => {
       return res.status(429).json({ ok: false, error: 'rate_limit' });
     }
     
-    const data = req.body && req.body.data;
-    if (!data || typeof data !== 'object') {
+    const newData = req.body && req.body.data;
+    if (!newData || typeof newData !== 'object') {
       console.error('❌ [save] Нет данных');
       return res.status(400).json({ ok: false, error: 'bad_data' });
     }
 
-    if (data.tgId && data.tgId !== tg.id) {
+    if (newData.tgId && newData.tgId !== tg.id) {
       console.error(`❌ [save] Несоответствие tgId!`);
       return res.status(403).json({ ok: false, error: 'user_mismatch' });
     }
 
-    data.tgId = tg.id;
-    data.updatedAt = Date.now();
-
-    await Save.findOneAndUpdate(
-      { tgId: tg.id },
-      { 
-        $set: {
-          username: tg.username, 
-          firstName: tg.firstName,
-          charId: data.charId || null, 
-          data: data,
-          level: Number(data.level) || 1,
-          cp:    Number(data.cp)    || 0,
-          floor: Number(data.floor) || 1,
-          updatedAt: data.updatedAt,
-        }
-      },
-      { 
-        upsert: true,
-        new: false,
-        lean: true,
+    // ✅ ИСПРАВЛЕНО: получаем пользователя и обновляем поля ПОСТЕПЕННО
+    let user = await Save.findOne({ tgId: tg.id });
+    
+    if (!user) {
+      user = new Save({ tgId: tg.id });
+    }
+    
+    // Гарантируем, что data существует
+    if (!user.data || typeof user.data !== 'object') {
+      user.data = { tgId: tg.id };
+    }
+    
+    // Обновляем поля data ПОСТЕПЕННО, не перезаписывая весь объект
+    const safeFields = ['inventory', 'equipped', 'upg', 'skills', 'potionLv', 
+                        'potionThreshold', 'floor', 'level', 'pixr', 'gram', 
+                        'bp', 'prem', 'boss', 'dailyTasks', 'specialTasksClaimed',
+                        'gold', 'hp', 'xp', 'xpNeeded', 'killCount', 'potions',
+                        'invIdCounter', 'invFilter', 'charId'];
+    
+    safeFields.forEach(key => {
+      if (newData[key] !== undefined) {
+        user.data[key] = newData[key];
       }
-    );
+    });
+    
+    // Обновляем корневые поля
+    user.username = tg.username;
+    user.firstName = tg.firstName;
+    if (newData.charId !== undefined) user.charId = newData.charId;
+    if (newData.level !== undefined) user.level = Number(newData.level);
+    if (newData.cp !== undefined) user.cp = Number(newData.cp);
+    if (newData.floor !== undefined) user.floor = Number(newData.floor);
+    user.updatedAt = Date.now();
+    
+    await user.save();
 
     const duration = Date.now() - startTime;
     console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms)`);
-    res.json({ ok: true, updatedAt: data.updatedAt });
+    res.json({ ok: true, updatedAt: user.updatedAt });
 
   } catch (e) {
     const duration = Date.now() - startTime;
@@ -391,27 +422,27 @@ app.post('/api/character', async (req, res) => {
   console.log(`🎭 [character] tgId: ${tg.id}, charId: ${charId}`);
   
   try {
-    let doc = await Save.findOne({ tgId: tg.id });
+    let user = await Save.findOne({ tgId: tg.id });
     
-    if (!doc) {
-      doc = await Save.create({
+    if (!user) {
+      user = new Save({
         tgId: tg.id,
         username: tg.username,
         firstName: tg.firstName,
         charId: charId,
         data: { tgId: tg.id, charId: charId },
       });
-      console.log(`🆕 [character] Создан новый пользователь: ${tg.id}`);
     } else {
-      if (!doc.data || typeof doc.data !== 'object') {
-        doc.data = {};
+      if (!user.data || typeof user.data !== 'object') {
+        user.data = { tgId: tg.id };
       }
-      doc.data.tgId = tg.id;
-      doc.data.charId = charId;
-      doc.charId = charId;
-      await doc.save();
-      console.log(`✅ [character] Обновлен персонаж для ${tg.id}: ${charId}`);
+      user.data.tgId = tg.id;
+      user.data.charId = charId;
+      user.charId = charId;
     }
+    
+    await user.save();
+    console.log(`✅ [character] Обновлен персонаж для ${tg.id}: ${charId}`);
     
     res.json({ ok: true });
   } catch (e) { 
@@ -494,29 +525,23 @@ app.post('/api/ref/claim', async (req, res) => {
   _claiming.add(tg.id);
   
   try {
-    const doc = await Save.findOne({ tgId: tg.id });
-    if (!doc) return res.json({ ok: true, goldEarned: 0 });
+    const user = await Save.findOne({ tgId: tg.id });
+    if (!user) return res.json({ ok: true, goldEarned: 0 });
 
     const friends = await Save.find({ refBy: tg.id })
       .select('tgId level -_id').lean();
 
-    const { gold, newMilestones } = calcPendingGold(doc.refMilestones || {}, friends);
+    const { gold, newMilestones } = calcPendingGold(user.refMilestones || {}, friends);
     if (gold === 0) return res.json({ ok: true, goldEarned: 0 });
 
-    if (!doc.data) doc.data = { tgId: tg.id };
-    doc.data.tgId = tg.id;
-    doc.data.gold = (doc.data.gold || 0) + gold;
-
-    await Save.findOneAndUpdate(
-      { tgId: tg.id, refClaimVer: doc.refClaimVer || 0 },
-      { 
-        $set: { 
-          refMilestones: newMilestones, 
-          data: doc.data 
-        }, 
-        $inc: { refClaimVer: 1 } 
-      }
-    );
+    if (!user.data || typeof user.data !== 'object') {
+      user.data = { tgId: tg.id };
+    }
+    user.data.gold = (user.data.gold || 0) + gold;
+    user.refMilestones = newMilestones;
+    user.refClaimVer = (user.refClaimVer || 0) + 1;
+    user.updatedAt = Date.now();
+    await user.save();
 
     res.json({ ok: true, goldEarned: gold });
   } catch (e) {
@@ -526,8 +551,6 @@ app.post('/api/ref/claim', async (req, res) => {
     _claiming.delete(tg.id);
   }
 });
-
-
 
 // ═══════════════════════════════
 //  ЗАДАНИЯ
@@ -571,8 +594,13 @@ app.post('/api/tasks/daily/claim', async (req, res) => {
   if (!milestone) return res.status(400).json({ ok: false, error: 'invalid_milestone' });
   try {
     const user = await Save.findOne({ tgId: tg.id });
-    if (!user || !user.data) return res.status(404).json({ ok: false, error: 'no_save' });
-    const daily    = user.data.dailyTasks || { date: '', seconds: 0, claimed: [] };
+    if (!user) return res.status(404).json({ ok: false, error: 'no_save' });
+    
+    if (!user.data || typeof user.data !== 'object') {
+      user.data = { tgId: tg.id };
+    }
+    
+    const daily = user.data.dailyTasks || { date: '', seconds: 0, claimed: [] };
     const todayStr = new Date().toISOString().slice(0, 10);
     if (daily.date !== todayStr)
       return res.status(400).json({ ok: false, error: 'day_reset' });
@@ -580,12 +608,18 @@ app.post('/api/tasks/daily/claim', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'already_claimed' });
     if (Math.floor((daily.seconds || 0) / 60) < milestone.minutes)
       return res.status(400).json({ ok: false, error: 'not_enough_time' });
-    const rewardField = 'data.' + milestone.rewardType;
-    const newClaimed  = [...(daily.claimed || []), milestoneId];
-    await Save.findOneAndUpdate(
-      { tgId: tg.id },
-      { $inc: { [rewardField]: milestone.amount }, $set: { 'data.dailyTasks.claimed': newClaimed } }
-    );
+    
+    // Начисляем награду
+    const rewardField = milestone.rewardType;
+    user.data[rewardField] = (user.data[rewardField] || 0) + milestone.amount;
+    user.data.dailyTasks = {
+      date: daily.date,
+      seconds: daily.seconds,
+      claimed: [...(daily.claimed || []), milestoneId]
+    };
+    user.updatedAt = Date.now();
+    await user.save();
+    
     res.json({ ok: true, reward: { type: milestone.rewardType, amount: milestone.amount } });
   } catch (e) {
     console.error('❌ [tasks/daily/claim] error:', e.message);
@@ -606,14 +640,21 @@ app.post('/api/tasks/special/claim', async (req, res) => {
     ]);
     if (!task) return res.status(404).json({ ok: false, error: 'task_not_found' });
     if (!user)  return res.status(404).json({ ok: false, error: 'no_save' });
-    const claimed = (user.data && user.data.specialTasksClaimed) || {};
+    
+    if (!user.data || typeof user.data !== 'object') {
+      user.data = { tgId: tg.id };
+    }
+    
+    const claimed = user.data.specialTasksClaimed || {};
     if (claimed[taskId]) return res.status(400).json({ ok: false, error: 'already_claimed' });
-    const rewardField  = 'data.' + task.rewardType;
-    const newClaimed   = Object.assign({}, claimed, { [taskId]: Date.now() });
-    await Save.findOneAndUpdate(
-      { tgId: tg.id },
-      { $inc: { [rewardField]: task.rewardAmount }, $set: { 'data.specialTasksClaimed': newClaimed } }
-    );
+    
+    // Начисляем награду
+    const rewardField = task.rewardType;
+    user.data[rewardField] = (user.data[rewardField] || 0) + task.rewardAmount;
+    user.data.specialTasksClaimed = Object.assign({}, claimed, { [taskId]: Date.now() });
+    user.updatedAt = Date.now();
+    await user.save();
+    
     res.json({ ok: true, reward: { type: task.rewardType, amount: task.rewardAmount } });
   } catch (e) {
     console.error('❌ [tasks/special/claim] error:', e.message);
@@ -623,18 +664,14 @@ app.post('/api/tasks/special/claim', async (req, res) => {
 
 // ═══════════════════════════════
 //  АВАТАРКА ПОЛЬЗОВАТЕЛЯ
-//  GET /api/avatar/:tgId
-//  Проксирует фото профиля через Bot API.
-//  Кешируется в памяти на 1 час (URL не меняется часто).
 // ═══════════════════════════════
-const _avatarCache = new Map(); // tgId -> { url, ts }
-const AVATAR_CACHE_TTL = 3600 * 1000; // 1 час
+const _avatarCache = new Map();
+const AVATAR_CACHE_TTL = 3600 * 1000;
 
 app.get('/api/avatar/:tgId', async (req, res) => {
   const tgId = req.params.tgId;
   if (!tgId || !/^\d+$/.test(tgId)) return res.status(400).json({ ok: false });
 
-  // Кеш
   const cached = _avatarCache.get(tgId);
   if (cached && Date.now() - cached.ts < AVATAR_CACHE_TTL) {
     return res.redirect(302, cached.url);
@@ -644,7 +681,6 @@ app.get('/api/avatar/:tgId', async (req, res) => {
   if (!token) return res.status(503).json({ ok: false, error: 'no_token' });
 
   try {
-    // 1. Получаем список фото профиля
     const photosRes = await fetch(
       `https://api.telegram.org/bot${token}/getUserProfilePhotos?user_id=${tgId}&limit=1`
     );
@@ -654,11 +690,9 @@ app.get('/api/avatar/:tgId', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'no_photo' });
     }
 
-    // Берём самый большой размер первой фотографии
     const sizes = photosData.result.photos[0];
     const fileId = sizes[sizes.length - 1].file_id;
 
-    // 2. Получаем file_path
     const fileRes = await fetch(
       `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`
     );
@@ -679,7 +713,7 @@ app.get('/api/avatar/:tgId', async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  ТРАНЗАКЦИИ (Пополнение/Вывод)
+//  ТРАНЗАКЦИИ
 // ═══════════════════════════════
 
 // ── Создание пополнения ──
@@ -712,8 +746,7 @@ app.post('/api/wallet/deposit', async (req, res) => {
       createdAt: Date.now()
     });
     
-    // Уведомляем админа в боте
-    if (bot) {
+    if (bot && process.env.ADMIN_TG_ID) {
       const adminMsg = `
 💰 **НОВАЯ ТРАНЗАКЦИЯ**
 
@@ -725,23 +758,20 @@ app.post('/api/wallet/deposit', async (req, res) => {
 
 Статус: ⏳ Ожидание подтверждения
       `;
-      
-      if (process.env.ADMIN_TG_ID) {
-        try {
-          await bot.sendMessage(process.env.ADMIN_TG_ID, adminMsg, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: '✅ Подтвердить', callback_data: `approve_${tx.id}` },
-                  { text: '❌ Отклонить', callback_data: `reject_${tx.id}` }
-                ]
+      try {
+        await bot.sendMessage(process.env.ADMIN_TG_ID, adminMsg, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Подтвердить', callback_data: `approve_${tx.id}` },
+                { text: '❌ Отклонить', callback_data: `reject_${tx.id}` }
               ]
-            }
-          });
-        } catch (e) {
-          console.error('❌ [wallet] Ошибка уведомления админа:', e.message);
-        }
+            ]
+          }
+        });
+      } catch (e) {
+        console.error('❌ [wallet] Ошибка уведомления админа:', e.message);
       }
     }
     
@@ -813,7 +843,6 @@ app.post('/api/wallet/withdraw', async (req, res) => {
 
 Статус: ⏳ Ожидание подтверждения
       `;
-      
       try {
         await bot.sendMessage(process.env.ADMIN_TG_ID, adminMsg, {
           parse_mode: 'Markdown',
@@ -848,7 +877,7 @@ app.post('/api/wallet/withdraw', async (req, res) => {
 });
 
 // ── Получение транзакций пользователя ──
-app.post('/api/wallet/transactions', async (req, res) => {  // ← GET → POST
+app.post('/api/wallet/transactions', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
   
@@ -865,7 +894,7 @@ app.post('/api/wallet/transactions', async (req, res) => {  // ← GET → POST
   }
 });
 
-// ── ОБМЕН PIXR → GRAM ──
+// ── ОБМЕН PIXR → GRAM (ИСПРАВЛЕНО) ──
 app.post('/api/wallet/exchange', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -881,28 +910,29 @@ app.post('/api/wallet/exchange', async (req, res) => {
   
   try {
     const gramEarned = amount / 1000;
-
-    // Атомарно списываем PIXR и начисляем GRAM через $inc
-    // Условие 'data.pixr': { $gte: amount } гарантирует атомарную проверку баланса
-    const result = await Save.findOneAndUpdate(
-      { tgId: tg.id, 'data.pixr': { $gte: amount } },
-      {
-        $inc: {
-          'data.pixr': -amount,
-          'data.gram': gramEarned,
-        }
-      },
-      { new: true }
-    );
-
-    if (!result) {
+    
+    // ✅ ИСПРАВЛЕНО: безопасное обновление
+    const user = await Save.findOne({ tgId: tg.id });
+    if (!user) return res.status(404).json({ ok: false, error: 'user_not_found' });
+    
+    if (!user.data || typeof user.data !== 'object') {
+      user.data = { tgId: tg.id };
+    }
+    
+    const pixr = user.data.pixr || 0;
+    if (pixr < amount) {
       return res.status(400).json({ ok: false, error: 'Недостаточно PIXR' });
     }
+    
+    user.data.pixr = pixr - amount;
+    user.data.gram = (user.data.gram || 0) + gramEarned;
+    user.updatedAt = Date.now();
+    await user.save();
 
     res.json({
       ok: true,
-      pixr: result.data.pixr,
-      gram: result.data.gram,
+      pixr: user.data.pixr,
+      gram: user.data.gram,
       earned: gramEarned
     });
   } catch (e) {
@@ -911,11 +941,8 @@ app.post('/api/wallet/exchange', async (req, res) => {
   }
 });
 
-
 // ═══════════════════════════════
-//  БОТ: подтверждение/отклонение транзакций
-//  POST /bot/transaction/:txId/:action
-//  Защищён BOT_TOKEN в заголовке x-bot-secret
+//  БОТ: подтверждение/отклонение транзакций (ИСПРАВЛЕНО)
 // ═══════════════════════════════
 app.post('/bot/transaction/:txId/:action', async (req, res) => {
   const secret = req.headers['x-bot-secret'];
@@ -936,11 +963,22 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
     if (action === 'approve') {
       tx.status = 'approved';
       tx.approvedAt = Date.now();
+      
+      // ✅ ИСПРАВЛЕНО: безопасное обновление через user.save()
+      const user = await Save.findOne({ tgId: tx.userId });
+      if (!user) {
+        return res.status(404).json({ ok: false, error: 'user_not_found' });
+      }
+      
+      if (!user.data || typeof user.data !== 'object') {
+        user.data = { tgId: tx.userId };
+      }
+      
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      await Save.findOneAndUpdate(
-        { tgId: tx.userId },
-        { $inc: { 'data.gram': gramDelta } }
-      );
+      user.data.gram = (user.data.gram || 0) + gramDelta;
+      user.updatedAt = Date.now();
+      await user.save();
+      
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -949,7 +987,6 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
     await tx.save();
     await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
 
-    // Уведомляем пользователя
     if (bot) {
       const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
       const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}`;
@@ -967,7 +1004,6 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
 //  АДМИН-ПАНЕЛЬ
 // ═══════════════════════════════
 
-// ── Конфиг админов ──
 const ADMIN_CREDENTIALS = {
   admin: {
     password: process.env.ADMIN_PASSWORD || 'pixel2024',
@@ -975,7 +1011,6 @@ const ADMIN_CREDENTIALS = {
   }
 };
 
-// ── Сессии ──
 const adminSessions = new Map();
 
 function generateSessionId() {
@@ -1022,7 +1057,7 @@ async function logAdminAction(admin, action, target, details) {
   }
 }
 
-// ── Админ: подтвердить/отклонить транзакцию ──
+// ── Админ: подтвердить/отклонить транзакцию (ИСПРАВЛЕНО) ──
 app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
   try {
     const { txId, action } = req.params;
@@ -1044,12 +1079,21 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       tx.status = 'approved';
       tx.approvedAt = Date.now();
 
-      // Атомарно начисляем/списываем GRAM через $inc — не перезаписываем весь data
+      // ✅ ИСПРАВЛЕНО: безопасное обновление
+      const user = await Save.findOne({ tgId: tx.userId });
+      if (!user) {
+        return res.status(404).json({ ok: false, error: 'user_not_found' });
+      }
+      
+      if (!user.data || typeof user.data !== 'object') {
+        user.data = { tgId: tx.userId };
+      }
+      
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      await Save.findOneAndUpdate(
-        { tgId: tx.userId },
-        { $inc: { 'data.gram': gramDelta } }
-      );
+      user.data.gram = (user.data.gram || 0) + gramDelta;
+      user.updatedAt = Date.now();
+      await user.save();
+      
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -1101,7 +1145,7 @@ app.get('/admin/api/transactions', requireAdmin, async (req, res) => {
   }
 });
 
-// ── Админ: роуты пользователей ──
+// ── Админ: список пользователей ──
 app.get('/admin/api/users', requireAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -1151,57 +1195,7 @@ app.get('/admin/api/users', requireAdmin, async (req, res) => {
   }
 });
 
-
-// ── Admin: список заданий ──
-app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
-    res.json({ ok: true, tasks });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: создать задание ──
-app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
-    if (!title || !rewardType || !rewardAmount)
-      return res.status(400).json({ ok: false, error: 'missing_fields' });
-    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    const task   = await SpecialTask.create({
-      taskId, title,
-      description:  description  || '',
-      link:         link         || '',
-      linkText:     linkText     || 'Перейти',
-      rewardType,
-      rewardAmount: Number(rewardAmount),
-      active: true,
-      createdAt: Date.now(),
-    });
-    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
-    res.json({ ok: true, task });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: удалить задание ──
-app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
-  try {
-    await SpecialTask.deleteOne({ taskId: req.params.taskId });
-    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: вкл/выкл задание ──
-app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
-  try {
-    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
-    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
-    task.active = !task.active;
-    await task.save();
-    res.json({ ok: true, active: task.active });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
+// ── Админ: получить пользователя ──
 app.get('/admin/api/user/:tgId', requireAdmin, async (req, res) => {
   try {
     const user = await Save.findOne({ tgId: req.params.tgId }).lean();
@@ -1231,37 +1225,42 @@ app.get('/admin/api/user/:tgId', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: обновить пользователя (ИСПРАВЛЕНО) ──
 app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
     const updates = req.body;
     
-    const updateData = {};
+    const user = await Save.findOne({ tgId: tgId });
+    if (!user) {
+      return res.status(404).json({ ok: false, error: 'user_not_found' });
+    }
     
-    if (updates.gold !== undefined) updateData['data.gold'] = updates.gold;
-    if (updates.pixr !== undefined) updateData['data.pixr'] = updates.pixr;
-    if (updates.gram !== undefined) updateData['data.gram'] = updates.gram;
-    if (updates.hp !== undefined) updateData['data.hp'] = updates.hp;
-    if (updates.level !== undefined) updateData.level = updates.level;
-    if (updates.floor !== undefined) updateData.floor = updates.floor;
-    if (updates.charId !== undefined) updateData.charId = updates.charId;
+    if (!user.data || typeof user.data !== 'object') {
+      user.data = { tgId: tgId };
+    }
     
-    updateData.updatedAt = Date.now();
+    // Обновляем только переданные поля
+    if (updates.gold !== undefined) user.data.gold = updates.gold;
+    if (updates.pixr !== undefined) user.data.pixr = updates.pixr;
+    if (updates.gram !== undefined) user.data.gram = updates.gram;
+    if (updates.hp !== undefined) user.data.hp = updates.hp;
+    if (updates.level !== undefined) user.level = updates.level;
+    if (updates.floor !== undefined) user.floor = updates.floor;
+    if (updates.charId !== undefined) user.charId = updates.charId;
+    if (updates.inventory !== undefined) user.data.inventory = updates.inventory;
+    if (updates.equipped !== undefined) user.data.equipped = updates.equipped;
     
-    await Save.updateOne(
-      { tgId: tgId },
-      { $set: updateData }
-    );
+    user.updatedAt = Date.now();
+    await user.save();
     
     await logAdminAction(req.admin.login, 'update_user', tgId, updates);
-    
     res.json({ ok: true });
   } catch (e) {
     console.error('❌ [admin] update error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 
 // ── Admin: список заданий ──
 app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
@@ -1278,11 +1277,11 @@ app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
     if (!title || !rewardType || !rewardAmount)
       return res.status(400).json({ ok: false, error: 'missing_fields' });
     const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    const task   = await SpecialTask.create({
+    const task = await SpecialTask.create({
       taskId, title,
-      description:  description  || '',
-      link:         link         || '',
-      linkText:     linkText     || 'Перейти',
+      description: description || '',
+      link: link || '',
+      linkText: linkText || 'Перейти',
       rewardType,
       rewardAmount: Number(rewardAmount),
       active: true,
@@ -1313,6 +1312,7 @@ app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ── Admin: рефералы пользователя ──
 app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
@@ -1340,6 +1340,7 @@ app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Admin: выдать предмет ──
 app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
@@ -1354,7 +1355,9 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
       return res.status(404).json({ ok: false, error: 'user_not_found' });
     }
     
-    if (!user.data) user.data = { tgId: tgId };
+    if (!user.data || typeof user.data !== 'object') {
+      user.data = { tgId: tgId };
+    }
     if (!user.data.inventory) user.data.inventory = [];
     
     const item = {
@@ -1371,10 +1374,10 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     if (forClass) item.forClass = forClass;
     
     user.data.inventory.push(item);
+    user.updatedAt = Date.now();
     await user.save();
     
     await logAdminAction(req.admin.login, 'give_item', tgId, { item });
-    
     res.json({ ok: true, item });
   } catch (e) {
     console.error('❌ [admin] give-item error:', e.message);
@@ -1382,6 +1385,7 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Admin: список предметов для выдачи ──
 app.get('/admin/api/items/list', requireAdmin, (req, res) => {
   try {
     const items = [];
@@ -1425,6 +1429,7 @@ app.get('/admin/api/items/list', requireAdmin, (req, res) => {
   }
 });
 
+// ── Admin: статистика ──
 app.get('/admin/api/stats', requireAdmin, async (req, res) => {
   try {
     const totalUsers = await Save.countDocuments();
@@ -1463,6 +1468,7 @@ app.get('/admin/api/stats', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Admin: логи ──
 app.get('/admin/api/logs', requireAdmin, async (req, res) => {
   try {
     const logs = await AdminLog.find()
@@ -1477,6 +1483,7 @@ app.get('/admin/api/logs', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Admin: рассылка ──
 app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
   try {
     const { message, target } = req.body;
@@ -1508,6 +1515,7 @@ app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Admin: логин ──
 app.post('/admin/login', express.json(), (req, res) => {
   const { login, password } = req.body;
   
@@ -1530,6 +1538,7 @@ app.post('/admin/login', express.json(), (req, res) => {
   });
 });
 
+// ── Admin: проверка сессии ──
 app.get('/admin/check', (req, res) => {
   const sessionId = req.headers['x-admin-session'] || req.query.session;
   const session = getSession(sessionId);
@@ -1541,6 +1550,7 @@ app.get('/admin/check', (req, res) => {
   res.json({ ok: true, role: session.role, login: session.login });
 });
 
+// ── Admin: логаут ──
 app.post('/admin/logout', (req, res) => {
   const sessionId = req.headers['x-admin-session'] || req.body.session;
   if (sessionId) {
@@ -1549,10 +1559,10 @@ app.post('/admin/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Admin: страница ──
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
-
 
 // ═══════════════════════════════
 //  Бот
