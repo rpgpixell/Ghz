@@ -1178,8 +1178,8 @@ io.on('connection', (socket) => {
 // ═══════════════════════════════
 //  ЗАПУСК
 // ═══════════════════════════════
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server on :${PORT} (Socket.io enabled)`);
   console.log(`📊 MongoDB: 5GB, Pool: 50`);
 });
