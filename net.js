@@ -69,20 +69,30 @@
     }
 
     ws.onopen = function() {
-      console.log('✅ WebSocket подключен');
-      isConnected = true;
-      updateLoadingStatus('Загрузка данных...', 50);
+  console.log('✅ WebSocket подключен');
+  isConnected = true;
+  updateLoadingStatus('Загрузка данных...', 50);
 
-      var tgId = getTgId();
-      if (tgId) {
-        ws.send(JSON.stringify({
-          type: 'auth',
-          tgId: tgId
-        }));
-      } else {
-        console.warn('⚠️ Нет tgId для авторизации');
+  var tgId = TG_ID || getTgId();
+  if (tgId) {
+    ws.send(JSON.stringify({
+      type: 'auth',
+      tgId: tgId
+    }));
+  } else {
+    console.warn('⚠️ Нет tgId для авторизации');
+    // Повторная попытка получить tgId
+    try {
+      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
+      if (unsafe && unsafe.user && unsafe.user.id) {
+        tgId = String(unsafe.user.id);
+        TG_ID = tgId;
+        try { localStorage.setItem('tgId', tgId); } catch(e) {}
+        ws.send(JSON.stringify({ type: 'auth', tgId: tgId }));
       }
-    };
+    } catch(e) {}
+  }
+};
 
     ws.onmessage = function(event) {
       try {
@@ -550,9 +560,7 @@
   // ═══════════════════════════════
   //  ИНИЦИАЛИЗАЦИЯ TELEGRAM
   // ═══════════════════════════════
-
-  // net.js — найти функцию initTelegram и исправить:
-
+  
 function initTelegram() {
   if (window.Telegram && window.Telegram.WebApp) {
     try {
@@ -562,12 +570,12 @@ function initTelegram() {
         window.Telegram.WebApp.disableVerticalSwipes();
       }
       
-      // ⭐ ГЛАВНОЕ: сохраняем initData
       TG_INIT = window.Telegram.WebApp.initData || '';
       
       var unsafe = window.Telegram.WebApp.initDataUnsafe;
       if (unsafe && unsafe.user && unsafe.user.id) {
         TG_ID = String(unsafe.user.id);
+        try { localStorage.setItem('tgId', TG_ID); } catch(e) {}
       }
     } catch (e) {
       console.error('❌ Ошибка инициализации Telegram:', e.message);
@@ -575,14 +583,15 @@ function initTelegram() {
   }
 
   if (!TG_ID) {
-    try {
-      TG_ID = localStorage.getItem('tgId');
-    } catch (e) {}
+    try { TG_ID = localStorage.getItem('tgId'); } catch(e) {}
   }
 
+  // ⭐ ГЛАВНОЕ — принудительно устанавливаем online
+  SYNC.online = !!TG_ID;
+  
   console.log('🟢 [initTelegram] Пользователь:', TG_ID);
   console.log('🟢 [initTelegram] INIT DATA:', TG_INIT ? '✅ есть' : '❌ нет');
-  SYNC.online = !!TG_ID;
+  console.log('🟢 [initTelegram] Online:', SYNC.online);
 }
 
   // ═══════════════════════════════
