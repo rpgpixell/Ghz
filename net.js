@@ -117,6 +117,43 @@
       connected = true;
       connecting = false;
       if (callback) callback(null);
+      
+      // ── АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ДАННЫХ ──
+      window.logNet && window.logNet('📥 Запрашиваю данные игрока...');
+      loadGame((response) => {
+        if (response && response.ok) {
+          console.log('✅ [net] Данные загружены!');
+          window.logOk && window.logOk('✅ Игрок загружен');
+          
+          // Скрываем экран загрузки
+          const ls = document.getElementById('loadingScreen');
+          if (ls) {
+            ls.classList.add('fade-out');
+            setTimeout(() => ls.classList.add('hidden-done'), 500);
+          }
+          
+          // Если есть персонаж — запускаем игру
+          if (response.save && response.save.charId) {
+            if (typeof window.startGame === 'function') {
+              window.startGame();
+            }
+          } else {
+            // Показать экран выбора персонажа
+            const cs = document.getElementById('charSelect');
+            if (cs) cs.classList.remove('hidden');
+          }
+        } else {
+          console.error('❌ [net] Ошибка загрузки:', response?.error);
+          window.logError && window.logError('Ошибка загрузки: ' + (response?.error || 'unknown'));
+          
+          // Показываем ошибку на экране загрузки
+          const status = document.getElementById('lsStatus');
+          if (status) {
+            status.innerHTML = '❌ Ошибка: ' + (response?.error || 'неизвестная ошибка');
+            status.style.color = '#e74c3c';
+          }
+        }
+      });
     });
 
     socket.on('connect_error', (err) => {
@@ -171,10 +208,10 @@
       if (response.ok) {
         if (response.save && response.save.data) {
           applySnapshot(response.save.data);
-          if (response.save.charId && typeof applyCharacterSprites === 'function') {
+          if (response.save.charId && typeof window.applyCharacterSprites === 'function') {
             const CHARS = window.CHARS || {};
             if (CHARS[response.save.charId]) {
-              applyCharacterSprites(CHARS[response.save.charId]);
+              window.applyCharacterSprites(CHARS[response.save.charId]);
             }
           }
         }
@@ -229,9 +266,9 @@
       }
     });
 
-    if (typeof recalcStats === 'function') recalcStats();
-    if (typeof updateHUD === 'function') updateHUD();
-    if (typeof updatePotionHud === 'function') updatePotionHud();
+    if (typeof window.recalcStats === 'function') window.recalcStats();
+    if (typeof window.updateHUD === 'function') window.updateHUD();
+    if (typeof window.updatePotionHud === 'function') window.updatePotionHud();
 
     return true;
   }
