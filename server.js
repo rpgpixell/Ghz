@@ -1392,14 +1392,6 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'missing_fields' });
     }
     
-    const user = await Save.findOne({ tgId: tgId });
-    if (!user) {
-      return res.status(404).json({ ok: false, error: 'user_not_found' });
-    }
-    
-    if (!user.data) user.data = { tgId: tgId };
-    if (!user.data.inventory) user.data.inventory = [];
-    
     const item = {
       id: Date.now() + Math.floor(Math.random() * 10000),
       slot: slot,
@@ -1413,8 +1405,21 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     if (forClass) item.forClass = forClass;
     
-    user.data.inventory.push(item);
-    await user.save();
+    // 🔥 Используем $push для атомарного добавления в массив
+    const result = await Save.findOneAndUpdate(
+      { tgId: tgId },
+      { 
+        $push: { 'data.inventory': item },
+        $set: { updatedAt: Date.now() }
+      },
+      { new: true }  // ← возвращаем обновлённый документ
+    );
+    
+    if (!result) {
+      return res.status(404).json({ ok: false, error: 'user_not_found' });
+    }
+    
+    console.log(`✅ [admin] Предмет выдан ${tgId}: ${name}, теперь ${result.data?.inventory?.length || 0} предметов`);
     
     await logAdminAction(req.admin.login, 'give_item', tgId, { item });
     
