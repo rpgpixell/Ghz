@@ -1,678 +1,416 @@
 /*
   ══════════════════════════════════════════════════════
-  net.js — WebSocket клиент
-  Единый источник истины — сервер
+  net.js — Сетевой слой (Socket.io)
   ══════════════════════════════════════════════════════
 */
 
 (function() {
   'use strict';
 
-  var API = (function() {
-    var url = new URLSearchParams(window.location.search).get('api') || 
-              window.ENV_API_URL || 
-              'https://ghz-production.up.railway.app';
-    return url.replace(/\/$/, '');
-  })();
+  const API_URL = 'https://ghz-production.up.railway.app';
+  let socket = null;
+  let connected = false;
+  let connecting = false;
+  let tgId = null;
+  let G = window.G || {};
 
-  var WS_URL = API.replace('https://', 'wss://').replace('http://', 'ws://');
-
-  var ws = null;
-  var isConnected = false;
-  var isReady = false;
-  var isSynced = false; // ← ПОЛУЧИЛИ ЛИ ДАННЫЕ С СЕРВЕРА?
-  var reconnectTimer = null;
-  var saveQueue = [];
-  var isSaving = false;
-  var TG_INIT = '';
-  var TG_ID = null;
-  var SYNC = {
-    booted: false,
-    started: false,
-    online: false,
-    serverConfirmed: false
-  };
-
-  // ═══════════════════════════════
-  //  ПОЛУЧЕНИЕ TG ID
-  // ═══════════════════════════════
-
+  // ── ПОЛУЧИТЬ TG ID ──
   function getTgId() {
     try {
-      if (window.Telegram && window.Telegram.WebApp) {
-        var unsafe = window.Telegram.WebApp.initDataUnsafe;
-        if (unsafe && unsafe.user && unsafe.user.id) {
-          return String(unsafe.user.id);
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe) {
+        const user = window.Telegram.WebApp.initDataUnsafe.user;
+        if (user && user.id) {
+          return String(user.id);
         }
       }
     } catch (e) {}
-    return TG_ID;
+    return null;
   }
 
-  // ═══════════════════════════════
-  //  ПОДКЛЮЧЕНИЕ К WEBSOCKET
-  // ═══════════════════════════════
-
-  function connectWebSocket() {
-    if (ws && ws.readyState === WebSocket.OPEN) return;
-    if (ws && ws.readyState === WebSocket.CONNECTING) return;
-
-    console.log('🔌 Подключение к WebSocket...');
-    updateLoadingStatus('Подключение к серверу...', 30);
-
+  // ── ПОЛУЧИТЬ INIT DATA ──
+  function getInitData() {
     try {
-      ws = new WebSocket(WS_URL + '/ws');
-    } catch (e) {
-      console.error('❌ Ошибка создания WebSocket:', e.message);
-      scheduleReconnect();
+      if (window.Telegram && window.Telegram.WebApp) {
+        return window.Telegram.WebApp.initData || '';
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  // ── ПОДКЛЮЧЕНИЕ ──
+  function connect(callback) {
+    if (socket && connected) {
+      if (callback) callback(null);
       return;
     }
 
-    ws.onopen = function() {
-  console.log('✅ WebSocket подключен');
-  isConnected = true;
-  updateLoadingStatus('Загрузка данных...', 50);
-
-  var tgId = TG_ID || getTgId();
-  if (tgId) {
-    ws.send(JSON.stringify({
-      type: 'auth',
-      tgId: tgId
-    }));
-  } else {
-    console.warn('⚠️ Нет tgId для авторизации');
-    // Повторная попытка получить tgId
-    try {
-      var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
-      if (unsafe && unsafe.user && unsafe.user.id) {
-        tgId = String(unsafe.user.id);
-        TG_ID = tgId;
-        try { localStorage.setItem('tgId', tgId); } catch(e) {}
-        ws.send(JSON.stringify({ type: 'auth', tgId: tgId }));
-      }
-    } catch(e) {}
-  }
-};
-
-    ws.onmessage = function(event) {
-      try {
-        var msg = JSON.parse(event.data);
-        handleWebSocketMessage(msg);
-      } catch (e) {
-        console.error('❌ Ошибка парсинга сообщения:', e.message);
-      }
-    };
-
-    ws.onclose = function() {
-      console.log('❌ WebSocket отключен');
-      isConnected = false;
-      isReady = false;
-      scheduleReconnect();
-    };
-
-    ws.onerror = function(err) {
-      console.error('❌ WebSocket ошибка:', err.message);
-    };
-  }
-
-  // ═══════════════════════════════
-  //  ОБНОВЛЕНИЕ ЭКРАНА ЗАГРУЗКИ
-  // ═══════════════════════════════
-
-  function updateLoadingStatus(text, pct) {
-    var status = document.getElementById('lsStatus');
-    var bar = document.getElementById('lsBar');
-    if (status) status.innerHTML = '<span class="ls-dots">' + text + '</span>';
-    if (bar && pct !== undefined) bar.style.width = pct + '%';
-  }
-
-  function hideLoadingScreen() {
-    var el = document.getElementById('loadingScreen');
-    if (!el || el.classList.contains('fade-out')) return;
-    el.style.pointerEvents = 'none';
-    el.classList.add('fade-out');
-    setTimeout(function() {
-      el.style.display = 'none';
-      el.classList.add('hidden-done');
-    }, 520);
-  }
-
-  // ═══════════════════════════════
-  //  ПЕРЕПОДКЛЮЧЕНИЕ
-  // ═══════════════════════════════
-
-  function scheduleReconnect() {
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(function() {
-      console.log('🔄 Переподключение...');
-      updateLoadingStatus('Переподключение...', 20);
-      connectWebSocket();
-    }, 3000);
-  }
-
-  // ═══════════════════════════════
-  //  ОБРАБОТКА СООБЩЕНИЙ
-  // ═══════════════════════════════
-
-  function handleWebSocketMessage(msg) {
-    switch (msg.type) {
-      case 'auth_ok':
-        console.log('✅ Авторизация на сервере успешна');
-        isReady = true;
-        SYNC.serverConfirmed = true;
-        SYNC.online = true;
-        updateLoadingStatus('Авторизация...', 60);
-        break;
-
-      case 'sync':
-        console.log('📥 Получены данные с сервера');
-        updateLoadingStatus('Применение данных...', 80);
-        
-        // Применяем данные
-        if (msg.data) {
-          applySnapshot(msg.data);
-          
-          // ⭐ ЕСТЬ ЛИ ПЕРСОНАЖ?
-          if (msg.data.charId) {
-            // ✅ Есть персонаж → запускаем игру
-            console.log('✅ Персонаж найден:', msg.data.charId);
-            isSynced = true;
-            
-            // Обновляем UI
-            if (typeof updateHUD === 'function') updateHUD();
-            if (typeof initSkillsHud === 'function') initSkillsHud();
-            if (typeof updatePotionHud === 'function') updatePotionHud();
-            if (typeof renderInventory === 'function' && typeof activeTab !== 'undefined' && activeTab === 'inv') renderInventory();
-            if (typeof renderWallet === 'function' && typeof activeTab !== 'undefined' && activeTab === 'wallet') renderWallet();
-            
-            // Скрываем экран загрузки
-            hideLoadingScreen();
-            
-            // Скрываем выбор персонажа
-            var cs = document.getElementById('charSelect');
-            if (cs) cs.classList.add('hidden');
-            
-            // Запускаем игру (только если ещё не запущена)
-            if (!SYNC.started && typeof startGame === 'function') {
-              SYNC.started = true;
-              updateLoadingStatus('Запуск игры...', 95);
-              // Небольшая задержка для плавности
-              setTimeout(function() {
-                startGame();
-                hideLoadingScreen();
-              }, 300);
-            }
-          } else {
-            // ❌ Нет персонажа → показать выбор
-            console.log('ℹ️ Персонаж не выбран, показываем выбор');
-            isSynced = true;
-            
-            // Скрываем загрузку
-            hideLoadingScreen();
-            
-            // Показываем выбор персонажа
-            var cs = document.getElementById('charSelect');
-            if (cs) cs.classList.remove('hidden');
-            
-            // Скрываем HUD навыков
-            var skillsHud = document.getElementById('skillsHud');
-            if (skillsHud) skillsHud.classList.remove('visible');
+    if (connecting) {
+      if (callback) {
+        const check = setInterval(() => {
+          if (connected || !connecting) {
+            clearInterval(check);
+            callback(connected ? null : new Error('timeout'));
           }
-        }
-        break;
-
-      case 'update':
-        console.log('🔄 Обновление от сервера:', Object.keys(msg.data));
-        applyUpdate(msg.data);
-        if (typeof updateHUD === 'function') updateHUD();
-        break;
-
-      case 'saved':
-        isSaving = false;
-        if (saveQueue.length > 0) {
-          var next = saveQueue.shift();
-          sendSave(next);
-        }
-        break;
-
-      case 'error':
-        console.error('❌ Ошибка сервера:', msg.message);
-        break;
-
-      default:
-        console.log('📨 Неизвестное сообщение:', msg.type);
+        }, 100);
+      }
+      return;
     }
+
+    tgId = getTgId();
+    if (!tgId) {
+      console.warn('⚠️ [socket] Нет tgId');
+      if (callback) callback(new Error('no_tg_id'));
+      return;
+    }
+
+    connecting = true;
+    const initData = getInitData();
+
+    if (typeof io === 'undefined') {
+      console.error('❌ [socket] io не определён!');
+      connecting = false;
+      if (callback) callback(new Error('socket_not_loaded'));
+      return;
+    }
+
+    socket = io(API_URL, {
+      auth: { initData },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+
+    socket.on('connect', () => {
+      console.log('🟢 [socket] Подключен');
+      connected = true;
+      connecting = false;
+      if (callback) callback(null);
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error('❌ [socket] Ошибка:', err.message);
+      connected = false;
+      connecting = false;
+      if (callback) callback(err);
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.warn(`⚠️ [socket] Отключен: ${reason}`);
+      connected = false;
+    });
+
+    socket.io.on('reconnect', () => {
+      console.log('🔄 [socket] Переподключен');
+      connected = true;
+    });
+
+    socket.io.on('reconnect_error', (err) => {
+      console.error('❌ [socket] Ошибка переподключения:', err.message);
+    });
   }
 
-  // ═══════════════════════════════
-  //  ПРИМЕНЕНИЕ ДАННЫХ (полный снапшот)
-  // ═══════════════════════════════
-
-  function applySnapshot(s) {
-    if (!s || typeof s !== 'object') return false;
-
-    // Персонаж
-    if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
-      G_CHAR = CHARS[s.charId];
-      G.charId = s.charId;
-      if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
-    }
-
-    // Инвентарь
-    if (s.inventory && Array.isArray(s.inventory)) {
-      G.inventory = s.inventory.map(function(item) {
-        var c = Object.assign({}, item);
-        c._equipped = false;
-        return c;
+  // ── ЗАГРУЗКА ──
+  function loadGame(callback) {
+    function doLoad() {
+      if (!socket || !connected) {
+        return callback({ ok: false, error: 'offline' });
+      }
+      socket.emit('load', (response) => {
+        if (response.ok) {
+          if (response.save && response.save.data) {
+            applySnapshot(response.save.data);
+            if (response.save.charId && typeof applyCharacterSprites === 'function') {
+              const CHARS = window.CHARS || {};
+              if (CHARS[response.save.charId]) {
+                applyCharacterSprites(CHARS[response.save.charId]);
+              }
+            }
+          }
+          callback({ ok: true, save: response.save });
+        } else {
+          callback({ ok: false, error: response.error });
+        }
       });
     }
 
-    // Экипировка
-    if (s.equipped) {
-      G.equipped = s.equipped;
-      if (G.inventory) {
-        G.inventory.forEach(function(item) {
-          item._equipped = false;
-          Object.keys(G.equipped).forEach(function(slot) {
-            if (G.equipped[slot] && G.equipped[slot].id === item.id) {
-              item._equipped = true;
-            }
-          });
-        });
+    if (!socket || !connected) {
+      connect((err) => {
+        if (err) return callback({ ok: false, error: err.message });
+        doLoad();
+      });
+    } else {
+      doLoad();
+    }
+  }
+
+  // ── СОХРАНЕНИЕ (каждую секунду) ──
+  function saveGame(data, callback) {
+    if (!socket || !connected) {
+      saveLocal(data);
+      if (callback) callback({ ok: false, error: 'offline', local: true });
+      return;
+    }
+
+    socket.emit('save', data, (response) => {
+      if (response && response.ok) {
+        if (callback) callback({ ok: true });
+      } else {
+        saveLocal(data);
+        if (callback) callback({ ok: false, error: response?.error || 'save_failed', local: true });
       }
+    });
+  }
+
+  // ── МГНОВЕННОЕ СОХРАНЕНИЕ ──
+  function saveInstant(data, callback) {
+    if (!socket || !connected) {
+      saveLocal(data);
+      if (callback) callback({ ok: false, error: 'offline', local: true });
+      return;
     }
 
-    // Улучшения
-    if (s.upg) {
-      G.upg = Object.assign({ atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 }, s.upg);
-    }
+    socket.emit('save_instant', data, (response) => {
+      if (callback) callback(response || { ok: false });
+    });
+  }
 
-    // Навыки
-    if (s.skills) {
-      G.skills = s.skills;
-    }
+  // ── ЛОКАЛЬНОЕ ХРАНЕНИЕ (резерв) ──
+  const LS_KEY = 'pixrpg_save_v2';
 
-    // Прогресс
-    if (s.level !== undefined) G.level = s.level;
-    if (s.xp !== undefined) G.xp = s.xp;
-    if (s.xpNeeded !== undefined) G.xpNeeded = s.xpNeeded;
-    if (s.floor !== undefined) G.floor = s.floor;
-    if (s.maxFloor !== undefined) G.maxFloor = s.maxFloor;
-    if (s.killCount !== undefined) G.killCount = s.killCount;
+  function saveLocal(data) {
+    try {
+      let full = {};
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        try { full = JSON.parse(raw); } catch (e) {}
+      }
+      Object.assign(full, data);
+      full._savedAt = Date.now();
+      localStorage.setItem(LS_KEY, JSON.stringify(full));
+    } catch (e) {}
+  }
 
-    // Валюта
-    if (s.gold !== undefined) G.gold = s.gold;
-    if (s.pixr !== undefined) G.pixr = s.pixr;
-    if (s.gram !== undefined) G.gram = s.gram;
+  function loadLocal() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (data && data._savedAt && (Date.now() - data._savedAt) > 7 * 24 * 3600 * 1000) {
+        return null;
+      }
+      return data;
+    } catch (e) { return null; }
+  }
 
-    // HP
-    if (s.hp !== undefined) G.hp = s.hp;
-    if (s.maxHp !== undefined) G.maxHp = s.maxHp;
+  function clearLocal() {
+    try { localStorage.removeItem(LS_KEY); } catch (e) {}
+  }
 
-    // Зелья
-    if (s.potions !== undefined) G.potions = s.potions;
-    if (s.potionLv !== undefined) G.potionLv = s.potionLv;
-    if (s.potionThreshold !== undefined) G.potionThreshold = s.potionThreshold;
+  // ── ПРИМЕНЕНИЕ СНАПШОТА ──
+  function applySnapshot(s) {
+    if (!s || typeof s !== 'object') return false;
+    
+    const localG = window.G;
+    if (!localG) return false;
 
-    // Подписки
-    if (s.bp) G.bp = s.bp;
-    if (s.prem) G.prem = s.prem;
+    // Применяем данные к G
+    Object.keys(s).forEach(key => {
+      if (key !== '_savedAt' && key !== '_offlineOnly') {
+        localG[key] = s[key];
+      }
+    });
 
-    // Боссы
-    if (s.boss) G.boss = s.boss;
-
-    // Задания
-    if (s.dailyTasks) G.dailyTasks = s.dailyTasks;
-    if (s.specialTasksClaimed) G.specialTasksClaimed = s.specialTasksClaimed;
-
-    // Пересчёт статов
+    // Пересчёт
     if (typeof recalcStats === 'function') recalcStats();
+    if (typeof updateHUD === 'function') updateHUD();
+    if (typeof updatePotionHud === 'function') updatePotionHud();
 
     return true;
   }
 
-  // ═══════════════════════════════
-  //  ПРИМЕНЕНИЕ ОБНОВЛЕНИЙ (частичных)
-  // ═══════════════════════════════
+  // ── ВЫБОР ПЕРСОНАЖА ──
+  function selectCharacter(charId, callback) {
+    if (!socket || !connected) {
+      saveLocal({ charId });
+      if (callback) callback({ ok: true, local: true });
+      return;
+    }
 
-  function applyUpdate(data) {
-    if (!data) return;
-
-    Object.keys(data).forEach(function(key) {
-      switch (key) {
-        case 'inventory':
-          if (Array.isArray(data[key])) {
-            G.inventory = data[key].map(function(item) {
-              var c = Object.assign({}, item);
-              c._equipped = false;
-              return c;
-            });
-          }
-          break;
-
-        case 'equipped':
-          G.equipped = data[key];
-          if (G.inventory) {
-            G.inventory.forEach(function(item) {
-              item._equipped = false;
-              Object.keys(G.equipped).forEach(function(slot) {
-                if (G.equipped[slot] && G.equipped[slot].id === item.id) {
-                  item._equipped = true;
-                }
-              });
-            });
-          }
-          break;
-
-        case 'upg':
-          G.upg = Object.assign({ atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 }, data[key]);
-          break;
-
-        case 'skills':
-          G.skills = data[key];
-          break;
-
-        case 'level':
-          G.level = data[key];
-          break;
-
-        case 'xp':
-          G.xp = data[key];
-          break;
-
-        case 'xpNeeded':
-          G.xpNeeded = data[key];
-          break;
-
-        case 'floor':
-          G.floor = data[key];
-          break;
-
-        case 'maxFloor':
-          G.maxFloor = data[key];
-          break;
-
-        case 'gold':
-          G.gold = data[key];
-          break;
-
-        case 'pixr':
-          G.pixr = data[key];
-          break;
-
-        case 'gram':
-          G.gram = data[key];
-          break;
-
-        case 'hp':
-          G.hp = data[key];
-          break;
-
-        case 'maxHp':
-          G.maxHp = data[key];
-          break;
-
-        case 'potions':
-          G.potions = data[key];
-          break;
-
-        case 'potionLv':
-          G.potionLv = data[key];
-          break;
-
-        case 'potionThreshold':
-          G.potionThreshold = data[key];
-          break;
-
-        case 'bp':
-          G.bp = data[key];
-          break;
-
-        case 'prem':
-          G.prem = data[key];
-          break;
-
-        case 'boss':
-          G.boss = data[key];
-          break;
-
-        case 'dailyTasks':
-          G.dailyTasks = data[key];
-          break;
-
-        case 'specialTasksClaimed':
-          G.specialTasksClaimed = data[key];
-          break;
-
-        case 'killCount':
-          G.killCount = data[key];
-          break;
-
-        case 'charId':
-          G.charId = data[key];
-          if (data[key] && typeof CHARS !== 'undefined' && CHARS[data[key]]) {
-            G_CHAR = CHARS[data[key]];
-            if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
-          }
-          break;
-
-        default:
-          G[key] = data[key];
-      }
+    socket.emit('select_character', charId, (response) => {
+      if (callback) callback(response || { ok: false });
     });
-
-    if (data.inventory || data.equipped || data.upg) {
-      if (typeof recalcStats === 'function') recalcStats();
-    }
-
-    if (typeof updatePotionHud === 'function') updatePotionHud();
-    if (typeof updateSkillsHud === 'function') updateSkillsHud();
   }
 
-  // ═══════════════════════════════
-  //  ПОЛНЫЙ СНАПШОТ СОСТОЯНИЯ
-  // ═══════════════════════════════
-
-  function getFullState() {
-    return {
-      inventory: G.inventory || [],
-      equipped: G.equipped || {},
-      upg: G.upg || { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
-      skills: G.skills || {},
-      level: G.level || 1,
-      xp: G.xp || 0,
-      xpNeeded: G.xpNeeded || 100,
-      floor: G.floor || 1,
-      maxFloor: G.maxFloor || 1,
-      gold: G.gold || 0,
-      pixr: G.pixr || 0,
-      gram: G.gram || 0,
-      hp: G.hp || 100,
-      maxHp: G.maxHp || 100,
-      potions: G.potions || 0,
-      potionLv: G.potionLv || 0,
-      potionThreshold: G.potionThreshold || 30,
-      bp: G.bp || { active: false, claimed: [] },
-      prem: G.prem || { tier: null, expiresAt: 0 },
-      boss: G.boss || { floor: 1, lastFightTime: 0 },
-      dailyTasks: G.dailyTasks || { date: '', seconds: 0, claimed: [] },
-      specialTasksClaimed: G.specialTasksClaimed || {},
-      killCount: G.killCount || 0,
-      charId: G.charId || null
-    };
-  }
-
-  // ═══════════════════════════════
-  //  СОХРАНЕНИЕ
-  // ═══════════════════════════════
-
-  function sendSave(data) {
-    if (!isReady || !ws || ws.readyState !== WebSocket.OPEN) {
-      saveQueue.push(data);
+  // ── ЛИДЕРБОРД ──
+  function getLeaderboard(callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
       return;
     }
 
-    isSaving = true;
-    ws.send(JSON.stringify({
-      type: 'save',
-      data: data
-    }));
-  }
-
-  function saveEverything() {
-    if (!isReady) {
-      saveQueue.push(getFullState());
-      return;
-    }
-
-    if (isSaving) {
-      saveQueue.push(getFullState());
-      return;
-    }
-
-    sendSave(getFullState());
-  }
-
-  function saveInstant(data) {
-    var full = getFullState();
-    Object.keys(data).forEach(function(key) {
-      full[key] = data[key];
+    socket.emit('leaderboard', (response) => {
+      callback(response || { ok: false });
     });
-    
-    if (!isReady || isSaving) {
-      saveQueue.push(full);
+  }
+
+  // ── РЕФЕРАЛЫ ──
+  function getRefFriends(callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
       return;
     }
 
-    sendSave(full);
+    socket.emit('ref_friends', (response) => {
+      callback(response || { ok: false });
+    });
   }
 
-  // ═══════════════════════════════
-  //  ЗАГРУЗКА С СЕРВЕРА
-  // ═══════════════════════════════
+  function claimRefReward(callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
+      return;
+    }
 
-  function loadFromServer() {
-    if (isReady && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'load' }));
+    socket.emit('ref_claim', (response) => {
+      callback(response || { ok: false });
+    });
+  }
+
+  // ── ТРАНЗАКЦИИ ──
+  function deposit(amount, callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
+      return;
+    }
+
+    socket.emit('deposit', amount, (response) => {
+      callback(response || { ok: false });
+    });
+  }
+
+  function withdraw(data, callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
+      return;
+    }
+
+    socket.emit('withdraw', data, (response) => {
+      callback(response || { ok: false });
+    });
+  }
+
+  function getTransactions(callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
+      return;
+    }
+
+    socket.emit('get_transactions', (response) => {
+      callback(response || { ok: false });
+    });
+  }
+
+  // ── ЗАДАНИЯ ──
+  function getTasks(callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
+      return;
+    }
+
+    socket.emit('get_tasks', (response) => {
+      callback(response || { ok: false });
+    });
+  }
+
+  function claimDailyTask(milestoneId, callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
+      return;
+    }
+
+    socket.emit('claim_daily_task', milestoneId, (response) => {
+      callback(response || { ok: false });
+    });
+  }
+
+  function claimSpecialTask(taskId, callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
+      return;
+    }
+
+    socket.emit('claim_special_task', taskId, (response) => {
+      callback(response || { ok: false });
+    });
+  }
+
+  // ── ОБМЕН PIXR → GRAM ──
+  function exchangePixr(amount, callback) {
+    if (!socket || !connected) {
+      callback({ ok: false, error: 'offline' });
+      return;
+    }
+
+    socket.emit('exchange_pixr', amount, (response) => {
+      callback(response || { ok: false });
+    });
+  }
+
+  // ── ПРОВЕРКА СТАТУСА ──
+  function isConnected() { return connected; }
+
+  function getSocket() { return socket; }
+
+  // ═══════════════════════════════════
+  //  АВТОМАТИЧЕСКОЕ ПОДКЛЮЧЕНИЕ
+  // ═══════════════════════════════════
+
+  function autoConnect() {
+    const id = getTgId();
+    if (id) {
+      tgId = id;
+      connect();
     }
   }
 
-  // ═══════════════════════════════
-  //  ИНИЦИАЛИЗАЦИЯ TELEGRAM
-  // ═══════════════════════════════
-  
-function initTelegram() {
-  if (window.Telegram && window.Telegram.WebApp) {
-    try {
-      window.Telegram.WebApp.ready();
-      window.Telegram.WebApp.expand();
-      if (window.Telegram.WebApp.disableVerticalSwipes) {
-        window.Telegram.WebApp.disableVerticalSwipes();
-      }
-      
-      TG_INIT = window.Telegram.WebApp.initData || '';
-      
-      var unsafe = window.Telegram.WebApp.initDataUnsafe;
-      if (unsafe && unsafe.user && unsafe.user.id) {
-        TG_ID = String(unsafe.user.id);
-        try { localStorage.setItem('tgId', TG_ID); } catch(e) {}
-      }
-    } catch (e) {
-      console.error('❌ Ошибка инициализации Telegram:', e.message);
-    }
+  // ── ИНИЦИАЛИЗАЦИЯ ──
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    autoConnect();
+  } else {
+    document.addEventListener('DOMContentLoaded', autoConnect);
   }
 
-  if (!TG_ID) {
-    try { TG_ID = localStorage.getItem('tgId'); } catch(e) {}
-  }
-
-  // ⭐ ГЛАВНОЕ — принудительно устанавливаем online
-  SYNC.online = !!TG_ID;
-  
-  console.log('🟢 [initTelegram] Пользователь:', TG_ID);
-  console.log('🟢 [initTelegram] INIT DATA:', TG_INIT ? '✅ есть' : '❌ нет');
-  console.log('🟢 [initTelegram] Online:', SYNC.online);
-}
-
-  // ═══════════════════════════════
-  //  ЗАПУСК
-  // ═══════════════════════════════
-
-  function startGameFlow() {
-    // Показываем экран загрузки
-    var loadingScreen = document.getElementById('loadingScreen');
-    if (loadingScreen) {
-      loadingScreen.style.display = 'flex';
-      loadingScreen.classList.remove('fade-out', 'hidden-done');
-    }
-    
-    updateLoadingStatus('Подключение...', 10);
-    
-    // Подключаемся к WebSocket
-    connectWebSocket();
-    
-    // Таймаут на случай, если данные не пришли
-    setTimeout(function() {
-      if (!isSynced) {
-        console.warn('⚠️ Данные не получены, показываем выбор персонажа');
-        hideLoadingScreen();
-        var cs = document.getElementById('charSelect');
-        if (cs) cs.classList.remove('hidden');
-      }
-    }, 10000);
-  }
-
-  function init() {
-    initTelegram();
-    
-    // Если есть персонаж в G, но не запущена игра
-    if (G_CHAR && !SYNC.started) {
-      // ... но лучше дождаться данных с сервера
-    }
-    
-    startGameFlow();
-  }
-
-  // ═══════════════════════════════
+  // ═══════════════════════════════════
   //  ЭКСПОРТ
-  // ═══════════════════════════════
+  // ═══════════════════════════════════
 
-  window.GameSync = {
-    connect: connectWebSocket,
-    save: saveEverything,
-    saveInstant: saveInstant,
-    load: loadFromServer,
-    isConnected: function() { return isReady; },
-    getTgId: getTgId,
-    applyUpdate: applyUpdate,
-    applySnapshot: applySnapshot,
-    getFullState: getFullState,
-    state: SYNC,
-    _API: API,
-    get _INIT() { return TG_INIT; }
+  window.GameSocket = {
+    connect,
+    loadGame,
+    saveGame,
+    saveInstant,
+    selectCharacter,
+    getLeaderboard,
+    getRefFriends,
+    claimRefReward,
+    deposit,
+    withdraw,
+    getTransactions,
+    getTasks,
+    claimDailyTask,
+    claimSpecialTask,
+    exchangePixr,
+    getTgId,
+    getInitData,
+    applySnapshot,
+    saveLocal,
+    loadLocal,
+    clearLocal,
+    isConnected,
+    getSocket,
   };
 
-  // ═══════════════════════════════
-  //  АВТОЗАПУСК
-  // ═══════════════════════════════
-
-  if (document.readyState === 'complete') {
-    init();
-  } else {
-    window.addEventListener('load', init);
-  }
-
-  // Сохраняем при закрытии
-  window.addEventListener('beforeunload', function() {
-    if (isReady) {
-      var data = getFullState();
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'save',
-          data: data
-        }));
-      }
-    }
-  });
-
+  console.log('🔌 [net] GameSocket инициализирован');
 })();

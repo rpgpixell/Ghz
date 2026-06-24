@@ -1,10 +1,11 @@
 /*
   ══════════════════════════════════════════════════════
-  game.js — Игровая логика (update loop)
+  game.js — Игровая логика (update loop) с автосохранением
   Содержит: объект player, спавн монстров, шаблоны врагов,
   боевую систему, снаряды, частицы, XP/лвл-ап,
   проверку открытия этажей, game over, HUD update,
-  touch-управление, главный игровой цикл (loop)
+  touch-управление, главный игровой цикл (loop),
+  АВТОСОХРАНЕНИЕ КАЖДУЮ СЕКУНДУ
   ══════════════════════════════════════════════════════
 */
 
@@ -19,6 +20,11 @@ const player = {
 
 // ── Игровые переменные ──
 let monsters       = [];
+// ── Зелья ──
+if (!G.potions)             G.potions = 0;
+if (!G.potionThreshold)     G.potionThreshold = 30;
+if (!G.dailyTasks)          G.dailyTasks = { date: '', seconds: 0, claimed: [] };
+if (!G.specialTasksClaimed) G.specialTasksClaimed = {};
 let potionCooldown = 0;
 let nextMonsterSpawn = 600;
 let particles      = [];
@@ -120,6 +126,51 @@ function showDmgPop(text, screenX, screenY, color) {
 }
 
 // ═══════════════════════════════
+//  АВТОСОХРАНЕНИЕ КАЖДУЮ СЕКУНДУ (Socket.io)
+// ═══════════════════════════════
+
+function autoSave() {
+  if (!G_CHAR || player.state === 'dead') return;
+  
+  const data = {
+    hp: G.hp,
+    gold: G.gold,
+    xp: G.xp,
+    level: G.level,
+    floor: G.floor,
+    killCount: G.killCount,
+    potions: G.potions,
+    pixr: G.pixr,
+    gram: G.gram,
+    upg: G.upg,
+    boss: G.boss,
+    bp: G.bp,
+    prem: G.prem,
+    potionLv: G.potionLv,
+    potionThreshold: G.potionThreshold,
+  };
+  
+  if (window.GameSocket && window.GameSocket.saveGame) {
+    window.GameSocket.saveGame(data);
+  }
+}
+
+// Запускаем автосохранение каждую секунду
+setInterval(autoSave, 1000);
+
+// Сохраняем при переключении вкладок
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) {
+    autoSave();
+  }
+});
+
+// Сохраняем перед закрытием страницы
+window.addEventListener('beforeunload', function() {
+  autoSave();
+});
+
+// ═══════════════════════════════
 //  UPDATE — главный игровой тик
 // ═══════════════════════════════
 function update(dt) {
@@ -184,6 +235,7 @@ function update(dt) {
         atkFired = true;
         const _ptype = G_CHAR ? G_CHAR.id : 'fire';
         if (_ptype === 'light') {
+          // Молния — мгновенный урон, объект только для анимации вспышки
           var _m = atkTarget;
           var _dmg = atkDmg;
           if (_m && _m.hp > 0) {
@@ -339,11 +391,6 @@ function update(dt) {
         }
         updateHUD();
         checkFloorUnlock();
-        
-        // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET (золото, PIXR, killCount)
-        if (window.GameSync) {
-          GameSync.save();
-        }
       }
       return false;
     }
@@ -370,9 +417,9 @@ function gainXP(amount) {
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
     
-    // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET (уровень, опыт)
-    if (window.GameSync) {
-      GameSync.save();
+    // Мгновенное сохранение уровня
+    if (window.GameSocket && window.GameSocket.saveInstant) {
+      window.GameSocket.saveInstant({ level: G.level, xpNeeded: G.xpNeeded });
     }
   }
   if (typeof window.onLevelUp === 'function') window.onLevelUp();
@@ -392,9 +439,9 @@ function checkFloorUnlock() {
     setTimeout(function() { fu.classList.remove('show'); }, 3500);
     if (typeof window.onFloorChange === 'function') window.onFloorChange(G.maxFloor);
     
-    // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET (макс. этаж)
-    if (window.GameSync) {
-      GameSync.save();
+    // Мгновенное сохранение этажа
+    if (window.GameSocket && window.GameSocket.saveInstant) {
+      window.GameSocket.saveInstant({ floor: G.floor, maxFloor: G.maxFloor });
     }
   }
 }
@@ -480,9 +527,9 @@ function _onBossKilled(m) {
   // Прогрессируем на следующего босса (если не последний)
   if (G.boss.floor < 10) G.boss.floor = bossId + 1;
   
-  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-  if (window.GameSync) {
-    GameSync.save();
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ boss: G.boss, pixr: G.pixr, gold: G.gold });
   }
   
   updateHUD();
@@ -571,6 +618,11 @@ function revivePlayer() {
   player.state = 'run';
   player.invincible = 2.0;
   updateHUD();
+  
+  // Мгновенное сохранение после респавна
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ hp: G.hp });
+  }
 }
 
 // ═══════════════════════════════
@@ -660,9 +712,9 @@ function upgPotion() {
   updateHUD();
   openPotionModal();
   
-  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-  if (window.GameSync) {
-    GameSync.save();
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ potionLv: G.potionLv, gold: G.gold });
   }
 }
 function closePotionModal() {
@@ -678,19 +730,17 @@ function buyPotions(n) {
   document.getElementById('pmCount').textContent = G.potions;
   document.getElementById('pmGold').textContent = G.gold;
   
-  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-  if (window.GameSync) {
-    GameSync.save();
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ potions: G.potions, gold: G.gold });
   }
 }
 function savePotionThreshold(val) {
   var v = parseInt(val);
   if (v >= 1 && v <= 99) {
     G.potionThreshold = v;
-    
-    // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-    if (window.GameSync) {
-      GameSync.save();
+    if (window.GameSocket && window.GameSocket.saveInstant) {
+      window.GameSocket.saveInstant({ potionThreshold: G.potionThreshold });
     }
   }
 }
@@ -701,7 +751,8 @@ function savePotionThreshold(val) {
 const BP_REWARDS = [
   { lv: 5,  iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '5 000 золота',
     apply: function() { G.gold += 5000; updateHUD(); 
-      if (window.GameSync) GameSync.save(); } },
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ gold: G.gold });
+    } },
   { lv: 10, iconFn: function() { var cls = G_CHAR ? G_CHAR.id : 'fire'; var p={fire:'wf',light:'wl',water:'ww'}[cls]||'wf'; return '<img src="images/'+p+'e.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Оружие Lv.10 Epic (свой класс)',
     apply: function() {
       if (!G_CHAR) return;
@@ -718,7 +769,7 @@ const BP_REWARDS = [
         forClass: st.forClass, classLabel: st.classLabel, classColor: st.classColor };
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
-      if (window.GameSync) GameSync.save();
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ inventory: G.inventory });
     }},
   { lv: 15, iconFn: function() { return '<img src="images/ringe.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Кольцо Lv.10 Epic',
     apply: function() {
@@ -728,12 +779,16 @@ const BP_REWARDS = [
         icon: itemIcon('ring', 'epic', null), rarity: 'epic', level: 10, stats: stats };
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
-      if (window.GameSync) GameSync.save();
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ inventory: G.inventory });
     }},
   { lv: 20, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '20 000 золота',
-    apply: function() { G.gold += 20000; updateHUD(); if (window.GameSync) GameSync.save(); } },
+    apply: function() { G.gold += 20000; updateHUD(); 
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ gold: G.gold });
+    } },
   { lv: 25, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '100 PIXR',
-    apply: function() { G.pixr = (G.pixr||0) + 100; updateHUD(); if (window.GameSync) GameSync.save(); } },
+    apply: function() { G.pixr = (G.pixr||0) + 100; updateHUD(); 
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ pixr: G.pixr });
+    } },
   { lv: 30, iconFn: function() { var cls = G_CHAR ? G_CHAR.id : 'fire'; var p={fire:'wf',light:'wl',water:'ww'}[cls]||'wf'; return '<img src="images/'+p+'l.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Оружие Lv.20 Legendary (свой класс)',
     apply: function() {
       if (!G_CHAR) return;
@@ -752,16 +807,24 @@ const BP_REWARDS = [
         forClass: st.forClass, classLabel: st.classLabel, classColor: st.classColor };
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
-      if (window.GameSync) GameSync.save();
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ inventory: G.inventory });
     }},
   { lv: 35, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '100 000 золота',
-    apply: function() { G.gold += 100000; updateHUD(); if (window.GameSync) GameSync.save(); } },
+    apply: function() { G.gold += 100000; updateHUD(); 
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ gold: G.gold });
+    } },
   { lv: 40, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '200 PIXR',
-    apply: function() { G.pixr = (G.pixr||0) + 200; updateHUD(); if (window.GameSync) GameSync.save(); } },
+    apply: function() { G.pixr = (G.pixr||0) + 200; updateHUD(); 
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ pixr: G.pixr });
+    } },
   { lv: 50, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '500 000 золота',
-    apply: function() { G.gold += 500000; updateHUD(); if (window.GameSync) GameSync.save(); } },
+    apply: function() { G.gold += 500000; updateHUD(); 
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ gold: G.gold });
+    } },
   { lv: 60, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '1000 PIXR',
-    apply: function() { G.pixr = (G.pixr||0) + 1000; updateHUD(); if (window.GameSync) GameSync.save(); } },
+    apply: function() { G.pixr = (G.pixr||0) + 1000; updateHUD(); 
+      if (window.GameSocket && window.GameSocket.saveInstant) window.GameSocket.saveInstant({ pixr: G.pixr });
+    } },
 ];
 
 function openBattlePass() {
@@ -783,9 +846,9 @@ function buyBattlePass() {
   G.bp.active = true;
   renderBattlePass();
   
-  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-  if (window.GameSync) {
-    GameSync.save();
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ gram: G.gram, bp: G.bp });
   }
 }
 function claimBpReward(idx) {
@@ -798,9 +861,9 @@ function claimBpReward(idx) {
   G.bp.claimed.push(idx);
   renderBattlePass();
   
-  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-  if (window.GameSync) {
-    GameSync.save();
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ bp: G.bp });
   }
 }
 function renderBattlePass() {
@@ -808,6 +871,7 @@ function renderBattlePass() {
   var active = G.bp.active;
   var claimed = G.bp.claimed || [];
 
+  // Статус
   var statusEl = document.getElementById('bpStatus');
   if (active) {
     statusEl.innerHTML = '✅ Battle Pass активен · Уровень <b>' + G.level + '</b>';
@@ -817,9 +881,11 @@ function renderBattlePass() {
     statusEl.style.color = '#aaa';
   }
 
+  // Кнопка покупки
   var buyRow = document.getElementById('bpBuyRow');
   buyRow.classList.toggle('hidden', active);
 
+  // Список наград
   var list = document.getElementById('bpRewardsList');
   list.innerHTML = '';
   BP_REWARDS.forEach(function(r, idx) {
@@ -893,15 +959,16 @@ function buyPrem(tier) {
     return;
   }
   G.gram = parseFloat(((G.gram || 0) - t.cost).toFixed(3));
+  // Если уже активен — продлеваем
   var base = (G.prem && G.prem.expiresAt > Date.now()) ? G.prem.expiresAt : Date.now();
   G.prem = { tier: tier, expiresAt: base + t.days * 86400000 };
   updatePremStatus();
   closePremModal();
   showDmgPop('👑 ' + t.name + ' активен!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
   
-  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
-  if (window.GameSync) {
-    GameSync.save();
+  // Мгновенное сохранение
+  if (window.GameSocket && window.GameSocket.saveInstant) {
+    window.GameSocket.saveInstant({ gram: G.gram, prem: G.prem });
   }
 }
 
