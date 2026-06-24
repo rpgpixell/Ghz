@@ -1,6 +1,7 @@
 /*
   ══════════════════════════════════════════════════════
-  net.js — Сетевой слой (Socket.io)
+  net.js — Сетевой слой (Socket.io) — ТОЛЬКО ОНЛАЙН
+  БЕЗ localStorage, БЕЗ офлайн-режима
   ══════════════════════════════════════════════════════
 */
 
@@ -35,6 +36,25 @@
       }
     } catch (e) {}
     return '';
+  }
+
+  // ── ПРОВЕРКА ИНТЕРНЕТА ──
+  function isOnline() {
+    return navigator.onLine && connected;
+  }
+
+  // ── ПОКАЗАТЬ ОШИБКУ ОФЛАЙН ──
+  function showOfflineError() {
+    const msg = '❌ Нет соединения с сервером!\nПроверьте интернет.';
+    const el = document.getElementById('floorUnlock');
+    if (el) {
+      el.querySelector('.fu-title').textContent = '⚠️ ' + msg;
+      el.classList.remove('show');
+      void el.offsetWidth;
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 4000);
+    }
+    console.error('❌ [socket] Офлайн, данные не сохранены');
   }
 
   // ── ПОДКЛЮЧЕНИЕ ──
@@ -77,7 +97,7 @@
       auth: { initData },
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: Infinity,
+      reconnectionAttempts: 5, // ← ограничиваем попытки
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
     });
@@ -93,12 +113,14 @@
       console.error('❌ [socket] Ошибка:', err.message);
       connected = false;
       connecting = false;
+      showOfflineError();
       if (callback) callback(err);
     });
 
     socket.on('disconnect', (reason) => {
       console.warn(`⚠️ [socket] Отключен: ${reason}`);
       connected = false;
+      showOfflineError();
     });
 
     socket.io.on('reconnect', () => {
@@ -108,48 +130,45 @@
 
     socket.io.on('reconnect_error', (err) => {
       console.error('❌ [socket] Ошибка переподключения:', err.message);
+      showOfflineError();
+    });
+
+    socket.io.on('reconnect_failed', () => {
+      console.error('❌ [socket] Не удалось переподключиться');
+      showOfflineError();
     });
   }
 
-  // ── ЗАГРУЗКА ──
+  // ── ЗАГРУЗКА (ТОЛЬКО С СЕРВЕРА) ──
   function loadGame(callback) {
-    function doLoad() {
-      if (!socket || !connected) {
-        return callback({ ok: false, error: 'offline' });
-      }
-      socket.emit('load', (response) => {
-        if (response.ok) {
-          if (response.save && response.save.data) {
-            applySnapshot(response.save.data);
-            if (response.save.charId && typeof applyCharacterSprites === 'function') {
-              const CHARS = window.CHARS || {};
-              if (CHARS[response.save.charId]) {
-                applyCharacterSprites(CHARS[response.save.charId]);
-              }
+    if (!socket || !connected) {
+      showOfflineError();
+      return callback({ ok: false, error: 'offline' });
+    }
+
+    socket.emit('load', (response) => {
+      if (response.ok) {
+        if (response.save && response.save.data) {
+          applySnapshot(response.save.data);
+          if (response.save.charId && typeof applyCharacterSprites === 'function') {
+            const CHARS = window.CHARS || {};
+            if (CHARS[response.save.charId]) {
+              applyCharacterSprites(CHARS[response.save.charId]);
             }
           }
-          callback({ ok: true, save: response.save });
-        } else {
-          callback({ ok: false, error: response.error });
         }
-      });
-    }
-
-    if (!socket || !connected) {
-      connect((err) => {
-        if (err) return callback({ ok: false, error: err.message });
-        doLoad();
-      });
-    } else {
-      doLoad();
-    }
+        callback({ ok: true, save: response.save });
+      } else {
+        callback({ ok: false, error: response.error });
+      }
+    });
   }
 
-  // ── СОХРАНЕНИЕ (каждую секунду) ──
+  // ── СОХРАНЕНИЕ (ТОЛЬКО НА СЕРВЕР) ──
   function saveGame(data, callback) {
     if (!socket || !connected) {
-      saveLocal(data);
-      if (callback) callback({ ok: false, error: 'offline', local: true });
+      showOfflineError();
+      if (callback) callback({ ok: false, error: 'offline' });
       return;
     }
 
@@ -157,55 +176,23 @@
       if (response && response.ok) {
         if (callback) callback({ ok: true });
       } else {
-        saveLocal(data);
-        if (callback) callback({ ok: false, error: response?.error || 'save_failed', local: true });
+        console.error('❌ [save] Ошибка сервера:', response?.error);
+        if (callback) callback({ ok: false, error: response?.error || 'save_failed' });
       }
     });
   }
 
-  // ── МГНОВЕННОЕ СОХРАНЕНИЕ ──
+  // ── МГНОВЕННОЕ СОХРАНЕНИЕ (ТОЛЬКО НА СЕРВЕР) ──
   function saveInstant(data, callback) {
     if (!socket || !connected) {
-      saveLocal(data);
-      if (callback) callback({ ok: false, error: 'offline', local: true });
+      showOfflineError();
+      if (callback) callback({ ok: false, error: 'offline' });
       return;
     }
 
     socket.emit('save_instant', data, (response) => {
       if (callback) callback(response || { ok: false });
     });
-  }
-
-  // ── ЛОКАЛЬНОЕ ХРАНЕНИЕ (резерв) ──
-  const LS_KEY = 'pixrpg_save_v2';
-
-  function saveLocal(data) {
-    try {
-      let full = {};
-      const raw = localStorage.getItem(LS_KEY);
-      if (raw) {
-        try { full = JSON.parse(raw); } catch (e) {}
-      }
-      Object.assign(full, data);
-      full._savedAt = Date.now();
-      localStorage.setItem(LS_KEY, JSON.stringify(full));
-    } catch (e) {}
-  }
-
-  function loadLocal() {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (!raw) return null;
-      const data = JSON.parse(raw);
-      if (data && data._savedAt && (Date.now() - data._savedAt) > 7 * 24 * 3600 * 1000) {
-        return null;
-      }
-      return data;
-    } catch (e) { return null; }
-  }
-
-  function clearLocal() {
-    try { localStorage.removeItem(LS_KEY); } catch (e) {}
   }
 
   // ── ПРИМЕНЕНИЕ СНАПШОТА ──
@@ -215,14 +202,12 @@
     const localG = window.G;
     if (!localG) return false;
 
-    // Применяем данные к G
     Object.keys(s).forEach(key => {
       if (key !== '_savedAt' && key !== '_offlineOnly') {
         localG[key] = s[key];
       }
     });
 
-    // Пересчёт
     if (typeof recalcStats === 'function') recalcStats();
     if (typeof updateHUD === 'function') updateHUD();
     if (typeof updatePotionHud === 'function') updatePotionHud();
@@ -233,8 +218,8 @@
   // ── ВЫБОР ПЕРСОНАЖА ──
   function selectCharacter(charId, callback) {
     if (!socket || !connected) {
-      saveLocal({ charId });
-      if (callback) callback({ ok: true, local: true });
+      showOfflineError();
+      if (callback) callback({ ok: false, error: 'offline' });
       return;
     }
 
@@ -246,6 +231,7 @@
   // ── ЛИДЕРБОРД ──
   function getLeaderboard(callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -258,6 +244,7 @@
   // ── РЕФЕРАЛЫ ──
   function getRefFriends(callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -269,6 +256,7 @@
 
   function claimRefReward(callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -281,6 +269,7 @@
   // ── ТРАНЗАКЦИИ ──
   function deposit(amount, callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -292,6 +281,7 @@
 
   function withdraw(data, callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -303,6 +293,7 @@
 
   function getTransactions(callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -315,6 +306,7 @@
   // ── ЗАДАНИЯ ──
   function getTasks(callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -326,6 +318,7 @@
 
   function claimDailyTask(milestoneId, callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -337,6 +330,7 @@
 
   function claimSpecialTask(taskId, callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -349,6 +343,7 @@
   // ── ОБМЕН PIXR → GRAM ──
   function exchangePixr(amount, callback) {
     if (!socket || !connected) {
+      showOfflineError();
       callback({ ok: false, error: 'offline' });
       return;
     }
@@ -363,6 +358,16 @@
 
   function getSocket() { return socket; }
 
+  // ── ОТПРАВКА СОБЫТИЙ ──
+  function emit(event, data, callback) {
+    if (!socket || !connected) {
+      showOfflineError();
+      if (callback) callback({ ok: false, error: 'offline' });
+      return;
+    }
+    socket.emit(event, data, callback);
+  }
+
   // ═══════════════════════════════════
   //  АВТОМАТИЧЕСКОЕ ПОДКЛЮЧЕНИЕ
   // ═══════════════════════════════════
@@ -371,9 +376,27 @@
     const id = getTgId();
     if (id) {
       tgId = id;
-      connect();
+      connect((err) => {
+        if (err) {
+          showOfflineError();
+        }
+      });
     }
   }
+
+  // ── СЛУШАЕМ ИЗМЕНЕНИЕ СТАТУСА ИНТЕРНЕТА ──
+  window.addEventListener('online', () => {
+    console.log('🌐 Интернет появился, подключаемся...');
+    if (!connected) {
+      connect();
+    }
+  });
+
+  window.addEventListener('offline', () => {
+    console.warn('🌐 Интернет пропал');
+    connected = false;
+    showOfflineError();
+  });
 
   // ── ИНИЦИАЛИЗАЦИЯ ──
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -387,30 +410,48 @@
   // ═══════════════════════════════════
 
   window.GameSocket = {
+    // Подключение
     connect,
+    isConnected,
+    getSocket,
+    getTgId,
+    getInitData,
+    isOnline,
+    
+    // Загрузка/сохранение
     loadGame,
     saveGame,
     saveInstant,
+    applySnapshot,
+    
+    // Игрок
     selectCharacter,
+    
+    // Лидерборд
     getLeaderboard,
+    
+    // Рефералы
     getRefFriends,
     claimRefReward,
+    
+    // Транзакции
     deposit,
     withdraw,
     getTransactions,
+    
+    // Задания
     getTasks,
     claimDailyTask,
     claimSpecialTask,
+    
+    // Обмен
     exchangePixr,
-    getTgId,
-    getInitData,
-    applySnapshot,
-    saveLocal,
-    loadLocal,
-    clearLocal,
-    isConnected,
-    getSocket,
+    
+    // Универсальный emit
+    emit,
   };
 
-  console.log('🔌 [net] GameSocket инициализирован');
+  console.log('🔌 [net] GameSocket инициализирован (ТОЛЬКО ОНЛАЙН)');
+  console.log('📡 API_URL:', API_URL);
+
 })();
