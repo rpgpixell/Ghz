@@ -169,22 +169,45 @@ function equipItem(itemId) {
     showDmgPop('НЕ ТВОЙ!', W * 0.4, GROUND * 0.5, '#e74c3c');
     return;
   }
+  
+  // Снимаем старый предмет в этом слоте
   var old = G.equipped[item.slot];
-  if (old) old._equipped = false;
+  if (old) {
+    old._equipped = false;
+  }
+  
+  // Надеваем новый
   G.equipped[item.slot] = item;
   item._equipped = true;
-  recalcStats(); updateHUD(); closeItemModal();
+  
+  recalcStats(); 
+  updateHUD(); 
+  closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSync && window.GameSync.saveInstant) {
+    window.GameSync.saveInstant({ equipped: G.equipped, inventory: G.inventory });
+  }
 }
 
 // ── Снять предмет ──
 function unequipItem(itemId) {
   var item = G.inventory.find(function(i) { return i.id === itemId; });
   if (!item) return;
+  
   G.equipped[item.slot] = null;
   item._equipped = false;
-  recalcStats(); updateHUD(); closeItemModal();
+  
+  recalcStats(); 
+  updateHUD(); 
+  closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSync && window.GameSync.saveInstant) {
+    window.GameSync.saveInstant({ equipped: G.equipped, inventory: G.inventory });
+  }
 }
 
 // ── Уничтожить предмет ──
@@ -192,10 +215,19 @@ function destroyItem(itemId) {
   var idx = G.inventory.findIndex(function(i) { return i.id === itemId; });
   if (idx === -1) return;
   var item = G.inventory[idx];
-  if (item._equipped) { G.equipped[item.slot] = null; recalcStats(); }
+  if (item._equipped) { 
+    G.equipped[item.slot] = null; 
+    recalcStats(); 
+  }
   G.inventory.splice(idx, 1);
-  updateHUD(); closeItemModal();
+  updateHUD(); 
+  closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSync && window.GameSync.saveInstant) {
+    window.GameSync.saveInstant({ inventory: G.inventory, equipped: G.equipped });
+  }
 }
 
 // ═══════════════════════════════
@@ -224,7 +256,7 @@ function refineItem(itemId) {
   if (G.gold < cost) { showRefineResult(null, item, false, cost); return; }
   G.gold -= cost;
   updateHUD();
-  var success = Math.random() * 100 < refineSuccessChance(stars);
+  var success = Math.random() * 100 < (refineSuccessChance(stars) + premRefineBonus());
   if (success) {
     item.refine = stars + 1;
     var bonus = refineStatBonus(stars);
@@ -239,6 +271,15 @@ function refineItem(itemId) {
     showRefineResult(false, item, false, cost);
   }
   updateHUD();
+  
+  // Мгновенное сохранение
+  if (window.GameSync && window.GameSync.saveInstant) {
+    window.GameSync.saveInstant({ 
+      inventory: G.inventory, 
+      equipped: G.equipped, 
+      gold: G.gold 
+    });
+  }
 }
 
 // ── Оверлей результата заточки ──
@@ -312,6 +353,11 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
+  
+  // Мгновенное сохранение
+  if (window.GameSync && window.GameSync.saveInstant) {
+    window.GameSync.saveInstant({ inventory: G.inventory, skills: G.skills });
+  }
 }
 
 // ═══════════════════════════════
@@ -331,30 +377,76 @@ function rarityOrder(id) {
 }
 
 // ── Режим мультивыбора ──
-function toggleInvSelectMode() { _invSelectMode = !_invSelectMode; _invSelected = {}; renderInventory(); }
+function toggleInvSelectMode() { 
+  _invSelectMode = !_invSelectMode; 
+  _invSelected = {}; 
+  renderInventory(); 
+}
+
 function toggleInvSelect(itemId) {
-  if (_invSelected[itemId]) delete _invSelected[itemId]; else _invSelected[itemId] = true;
+  var id = typeof itemId === 'number' ? itemId : Number(itemId);
+  if (_invSelected[id]) {
+    delete _invSelected[id];
+  } else {
+    _invSelected[id] = true;
+  }
   renderInventory();
 }
+
 function invSelectAll() {
   var items = G.inventory.slice();
-  if (G.invFilter !== 'all') items = items.filter(function(i){ return i.slot === G.invFilter; });
-  items.forEach(function(i) { if (!i._equipped) _invSelected[i.id] = true; });
+  if (G.invFilter !== 'all') {
+    items = items.filter(function(i) { return i.slot === G.invFilter; });
+  }
+  items.forEach(function(i) {
+    if (!i._equipped) {
+      _invSelected[i.id] = true;
+    }
+  });
   renderInventory();
 }
-function invDeselectAll() { _invSelected = {}; renderInventory(); }
+
+function invDeselectAll() { 
+  _invSelected = {}; 
+  renderInventory(); 
+}
+
 function deleteSelected() {
   var ids = Object.keys(_invSelected).map(Number);
-  if (!ids.length) return;
+  if (!ids.length) {
+    showDmgPop('Выберите предметы для удаления', PLAYER_SCREEN_X, player.y - 20, '#f5c542');
+    return;
+  }
+  
+  if (!confirm('Удалить выбранные предметы (' + ids.length + ' шт.)?')) return;
+  
+  var removed = [];
   ids.forEach(function(id) {
-    var idx = G.inventory.findIndex(function(i){ return i.id === id; });
+    var idx = G.inventory.findIndex(function(i) { return i.id === id; });
     if (idx === -1) return;
     var item = G.inventory[idx];
-    if (item._equipped) { G.equipped[item.slot] = null; recalcStats(); }
+    if (item._equipped) {
+      G.equipped[item.slot] = null;
+    }
+    removed.push(item.name);
     G.inventory.splice(idx, 1);
   });
+  
   _invSelected = {};
-  updateHUD(); renderInventory();
+  recalcStats();
+  updateHUD();
+  renderInventory();
+  
+  if (window.GameSync && window.GameSync.saveInstant) {
+    window.GameSync.saveInstant({ 
+      inventory: G.inventory,
+      equipped: G.equipped 
+    });
+  }
+  
+  if (removed.length > 0) {
+    showDmgPop('🗑 Удалено: ' + removed.length + ' предметов', PLAYER_SCREEN_X, player.y - 30, '#e74c3c');
+  }
 }
 
 // ── Закрытие модалки предмета ──
@@ -443,10 +535,10 @@ function openItemModal(itemId) {
   var refineHtml = '';
   if (stars < REFINE_MAX) {
     var cost    = refineCost(stars);
-    var chance  = refineSuccessChance(stars);
+    var chance  = refineSuccessChance(stars) + premRefineBonus();
     var nextBonus = refineStatBonus(stars);
     refineHtml = '<div class="refine-info"><span class="refine-stars">' + refineStarsStr(stars) + '</span>' +
-      '<span class="refine-chance">' + chance + '% · ' + cost + '💰</span></div>' +
+      '<span class="refine-chance">' + Math.min(100, chance) + '% · ' + cost + '💰</span></div>' +
       '<div style="font-size:10px;color:#665;margin-bottom:8px;text-align:right;">успех: все статы +' + nextBonus + ' · провал: предмет исчезнет</div>';
   } else {
     refineHtml = '<div class="refine-info"><span class="refine-stars">' + refineStarsStr(stars) + '</span>' +
@@ -476,6 +568,8 @@ function openItemModal(itemId) {
 // ═══════════════════════════════
 function renderInventory() {
   var body  = document.getElementById('invBody');
+  if (!body) return;
+  
   var cp    = calcCP();
   var bonus = equippedStats();
 
