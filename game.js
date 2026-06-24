@@ -19,11 +19,6 @@ const player = {
 
 // ── Игровые переменные ──
 let monsters       = [];
-// ── Зелья ──
-if (!G.potions)             G.potions = 0;
-if (!G.potionThreshold)     G.potionThreshold = 30;
-if (!G.dailyTasks)          G.dailyTasks = { date: '', seconds: 0, claimed: [] };
-if (!G.specialTasksClaimed) G.specialTasksClaimed = {};
 let potionCooldown = 0;
 let nextMonsterSpawn = 600;
 let particles      = [];
@@ -189,7 +184,6 @@ function update(dt) {
         atkFired = true;
         const _ptype = G_CHAR ? G_CHAR.id : 'fire';
         if (_ptype === 'light') {
-          // Молния — мгновенный урон, объект только для анимации вспышки
           var _m = atkTarget;
           var _dmg = atkDmg;
           if (_m && _m.hp > 0) {
@@ -345,6 +339,11 @@ function update(dt) {
         }
         updateHUD();
         checkFloorUnlock();
+        
+        // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET (золото, PIXR, killCount)
+        if (window.GameSync) {
+          GameSync.save();
+        }
       }
       return false;
     }
@@ -370,6 +369,11 @@ function gainXP(amount) {
     G.hp = G.maxHp;
     showDmgPop('LV UP!', W * 0.4, GROUND * 0.5, '#fa0');
     updateHUD();
+    
+    // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET (уровень, опыт)
+    if (window.GameSync) {
+      GameSync.save();
+    }
   }
   if (typeof window.onLevelUp === 'function') window.onLevelUp();
 }
@@ -387,6 +391,11 @@ function checkFloorUnlock() {
     fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
     setTimeout(function() { fu.classList.remove('show'); }, 3500);
     if (typeof window.onFloorChange === 'function') window.onFloorChange(G.maxFloor);
+    
+    // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET (макс. этаж)
+    if (window.GameSync) {
+      GameSync.save();
+    }
   }
 }
 
@@ -470,7 +479,12 @@ function _onBossKilled(m) {
   G.boss.lastFightTime = Date.now();
   // Прогрессируем на следующего босса (если не последний)
   if (G.boss.floor < 10) G.boss.floor = bossId + 1;
-  if (window.GameSync) window.GameSync.saveInstant({ boss: G.boss, pixr: G.pixr });
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
+  
   updateHUD();
 
   _showBossVictory(m.name, bossId, pixr, gold, xp, item);
@@ -645,6 +659,11 @@ function upgPotion() {
   G.potionLv = lv + 1;
   updateHUD();
   openPotionModal();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 function closePotionModal() {
   document.getElementById('potionModal').classList.add('hidden');
@@ -658,12 +677,21 @@ function buyPotions(n) {
   updatePotionHud();
   document.getElementById('pmCount').textContent = G.potions;
   document.getElementById('pmGold').textContent = G.gold;
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 function savePotionThreshold(val) {
   var v = parseInt(val);
   if (v >= 1 && v <= 99) {
     G.potionThreshold = v;
-    if (window.GameSync) window.GameSync.saveInstant({ potionThreshold: G.potionThreshold });
+    
+    // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+    if (window.GameSync) {
+      GameSync.save();
+    }
   }
 }
 
@@ -672,7 +700,8 @@ function savePotionThreshold(val) {
 // ═══════════════════════════════
 const BP_REWARDS = [
   { lv: 5,  iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '5 000 золота',
-    apply: function() { G.gold += 5000; updateHUD(); } },
+    apply: function() { G.gold += 5000; updateHUD(); 
+      if (window.GameSync) GameSync.save(); } },
   { lv: 10, iconFn: function() { var cls = G_CHAR ? G_CHAR.id : 'fire'; var p={fire:'wf',light:'wl',water:'ww'}[cls]||'wf'; return '<img src="images/'+p+'e.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Оружие Lv.10 Epic (свой класс)',
     apply: function() {
       if (!G_CHAR) return;
@@ -689,6 +718,7 @@ const BP_REWARDS = [
         forClass: st.forClass, classLabel: st.classLabel, classColor: st.classColor };
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
+      if (window.GameSync) GameSync.save();
     }},
   { lv: 15, iconFn: function() { return '<img src="images/ringe.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Кольцо Lv.10 Epic',
     apply: function() {
@@ -698,11 +728,12 @@ const BP_REWARDS = [
         icon: itemIcon('ring', 'epic', null), rarity: 'epic', level: 10, stats: stats };
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
+      if (window.GameSync) GameSync.save();
     }},
   { lv: 20, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '20 000 золота',
-    apply: function() { G.gold += 20000; updateHUD(); } },
+    apply: function() { G.gold += 20000; updateHUD(); if (window.GameSync) GameSync.save(); } },
   { lv: 25, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '100 PIXR',
-    apply: function() { G.pixr = (G.pixr||0) + 100; updateHUD(); } },
+    apply: function() { G.pixr = (G.pixr||0) + 100; updateHUD(); if (window.GameSync) GameSync.save(); } },
   { lv: 30, iconFn: function() { var cls = G_CHAR ? G_CHAR.id : 'fire'; var p={fire:'wf',light:'wl',water:'ww'}[cls]||'wf'; return '<img src="images/'+p+'l.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: 'Оружие Lv.20 Legendary (свой класс)',
     apply: function() {
       if (!G_CHAR) return;
@@ -721,15 +752,16 @@ const BP_REWARDS = [
         forClass: st.forClass, classLabel: st.classLabel, classColor: st.classColor };
       G.inventory.push(item);
       if (typeof renderInventory === 'function') renderInventory();
+      if (window.GameSync) GameSync.save();
     }},
   { lv: 35, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '100 000 золота',
-    apply: function() { G.gold += 100000; updateHUD(); } },
+    apply: function() { G.gold += 100000; updateHUD(); if (window.GameSync) GameSync.save(); } },
   { lv: 40, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '200 PIXR',
-    apply: function() { G.pixr = (G.pixr||0) + 200; updateHUD(); } },
+    apply: function() { G.pixr = (G.pixr||0) + 200; updateHUD(); if (window.GameSync) GameSync.save(); } },
   { lv: 50, iconFn: function() { return '<svg width="28" height="28" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>'; }, desc: '500 000 золота',
-    apply: function() { G.gold += 500000; updateHUD(); } },
+    apply: function() { G.gold += 500000; updateHUD(); if (window.GameSync) GameSync.save(); } },
   { lv: 60, iconFn: function() { return '<img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;">'; }, desc: '1000 PIXR',
-    apply: function() { G.pixr = (G.pixr||0) + 1000; updateHUD(); } },
+    apply: function() { G.pixr = (G.pixr||0) + 1000; updateHUD(); if (window.GameSync) GameSync.save(); } },
 ];
 
 function openBattlePass() {
@@ -750,6 +782,11 @@ function buyBattlePass() {
   G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
   G.bp.active = true;
   renderBattlePass();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 function claimBpReward(idx) {
   if (!G.bp || !G.bp.active) return;
@@ -760,13 +797,17 @@ function claimBpReward(idx) {
   r.apply();
   G.bp.claimed.push(idx);
   renderBattlePass();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 function renderBattlePass() {
   if (!G.bp) G.bp = { active: false, claimed: [] };
   var active = G.bp.active;
   var claimed = G.bp.claimed || [];
 
-  // Статус
   var statusEl = document.getElementById('bpStatus');
   if (active) {
     statusEl.innerHTML = '✅ Battle Pass активен · Уровень <b>' + G.level + '</b>';
@@ -776,11 +817,9 @@ function renderBattlePass() {
     statusEl.style.color = '#aaa';
   }
 
-  // Кнопка покупки
   var buyRow = document.getElementById('bpBuyRow');
   buyRow.classList.toggle('hidden', active);
 
-  // Список наград
   var list = document.getElementById('bpRewardsList');
   list.innerHTML = '';
   BP_REWARDS.forEach(function(r, idx) {
@@ -854,12 +893,16 @@ function buyPrem(tier) {
     return;
   }
   G.gram = parseFloat(((G.gram || 0) - t.cost).toFixed(3));
-  // Если уже активен — продлеваем
   var base = (G.prem && G.prem.expiresAt > Date.now()) ? G.prem.expiresAt : Date.now();
   G.prem = { tier: tier, expiresAt: base + t.days * 86400000 };
   updatePremStatus();
   closePremModal();
   showDmgPop('👑 ' + t.name + ' активен!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
 // ═══════════════════════════════

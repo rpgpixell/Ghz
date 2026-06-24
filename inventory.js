@@ -10,13 +10,12 @@
 var _invIdCounter  = 0;
 var _modalItemId   = null;
 var _invSelectMode = false;
-var _invSelected   = {};  // { itemId: true }
+var _invSelected   = {};
 
 // ═══════════════════════════════
 //  ГЕНЕРАЦИЯ ПРЕДМЕТОВ
 // ═══════════════════════════════
 
-// Розыгрыш редкости с учётом этажа (выше этаж — выше шанс редкого)
 function rollRarity(floor) {
   var bonus = (floor - 1) * 0.3;
   var weights = RARITIES.map(function(r, i) {
@@ -31,20 +30,17 @@ function rollRarity(floor) {
   return RARITIES[0];
 }
 
-// Множитель статов по редкости
 function rarityMultiplier(rarityId) {
   var idx = RARITIES.findIndex(function(r) { return r.id === rarityId; });
   return 1 + idx * 0.55;
 }
 
-// Создание случайного предмета
 function generateItem(floor) {
   var rarity = rollRarity(floor);
   var itemLv  = Math.max(1, floor * 2 + Math.floor(Math.random() * 3) - 1);
   var mult    = rarityMultiplier(rarity.id);
   var base    = itemLv * 2.5;
 
-  // 25% шанс — посох (только для своего класса)
   var type;
   if (Math.random() < 0.25) {
     type = STAFF_TYPES[Math.floor(Math.random() * STAFF_TYPES.length)];
@@ -58,7 +54,6 @@ function generateItem(floor) {
     var val = Math.floor(base * mult * (isPrimary ? 1.0 : 0.45) * (0.85 + Math.random() * 0.3));
     if (val > 0) stats[s] = val;
   });
-  // Легендарный — дополнительный случайный стат
   if (rarity.id === 'legend') {
     var bonus = ['atk','def','hp','crit','dodge','spd'].filter(function(s) { return !stats[s]; });
     if (bonus.length) stats[bonus[Math.floor(Math.random() * bonus.length)]] = Math.floor(base * 0.5);
@@ -74,12 +69,9 @@ function generateItem(floor) {
   };
 }
 
-// Шанс выпадения предмета (растёт с этажом)
 function dropChance(floor)          { return 0.025 + (floor - 1) * 0.005; }
-// Шанс выпадения книги навыка (очень редко)
 function skillBookDropChance(floor) { return 0.0008 + (floor - 1) * 0.0001; }
 
-// ── Попытка выдать книгу навыка после убийства монстра ──
 function tryDropSkillBook(floor) {
   if (Math.random() > skillBookDropChance(floor)) return;
   if (!G_CHAR) return;
@@ -106,9 +98,13 @@ function tryDropSkillBook(floor) {
   G.inventory.push(book);
   showDropNotif(book);
   if (activeTab === 'inv') renderInventory();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
-// ── Попытка выдать предмет после убийства монстра ──
 function tryDropItem(floor) {
   tryDropSkillBook(floor);
   if (Math.random() > dropChance(floor) * premMult('drop')) return;
@@ -116,9 +112,13 @@ function tryDropItem(floor) {
   var item = generateItem(floor);
   G.inventory.push(item);
   showDropNotif(item);
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
-// ── Уведомление о новом дропе ──
 function showDropNotif(item) {
   var r  = RARITIES.find(function(x) { return x.id === item.rarity; });
   var el = document.createElement('div');
@@ -134,7 +134,6 @@ function showDropNotif(item) {
 //  ЭКИПИРОВКА И СТАТЫ
 // ═══════════════════════════════
 
-// Суммарный бонус от надетых предметов
 function equippedStats() {
   var bonus = { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0 };
   Object.values(G.equipped).forEach(function(item) {
@@ -144,7 +143,6 @@ function equippedStats() {
   return bonus;
 }
 
-// Пересчёт характеристик (база + экипировка + улучшения)
 function recalcStats() {
   var base  = G.baseStats;
   var bonus = equippedStats();
@@ -161,7 +159,6 @@ function recalcStats() {
   G.hp = Math.min(G.hp, G.maxHp);
 }
 
-// ── Надеть предмет ──
 function equipItem(itemId) {
   var item = G.inventory.find(function(i) { return i.id === itemId; });
   if (!item) return;
@@ -175,9 +172,13 @@ function equipItem(itemId) {
   item._equipped = true;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
-// ── Снять предмет ──
 function unequipItem(itemId) {
   var item = G.inventory.find(function(i) { return i.id === itemId; });
   if (!item) return;
@@ -185,9 +186,13 @@ function unequipItem(itemId) {
   item._equipped = false;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
-// ── Уничтожить предмет ──
 function destroyItem(itemId) {
   var idx = G.inventory.findIndex(function(i) { return i.id === itemId; });
   if (idx === -1) return;
@@ -196,12 +201,17 @@ function destroyItem(itemId) {
   G.inventory.splice(idx, 1);
   updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
 // ═══════════════════════════════
-//  ЗАТОЧКА ПРЕДМЕТОВ (+1..+10)
+//  ЗАТОЧКА ПРЕДМЕТОВ
 // ═══════════════════════════════
-// Шанс успеха: +0=75%, +1=60%, +2=50% ... +9=2%
+
 var REFINE_CHANCES = [75, 60, 50, 40, 30, 20, 12, 7, 4, 2];
 var REFINE_MAX     = 10;
 
@@ -214,7 +224,6 @@ function refineStarsStr(n) {
   return '★'.repeat(n) + '✧'.repeat(Math.max(0, REFINE_MAX - n));
 }
 
-// ── Попытка заточить предмет ──
 function refineItem(itemId) {
   var item = G.inventory.find(function(i) { return i.id === itemId; });
   if (!item) return;
@@ -232,16 +241,19 @@ function refineItem(itemId) {
     if (item._equipped) recalcStats();
     showRefineResult(true, item, false, cost, bonus);
   } else {
-    // Провал — предмет уничтожается
     if (item._equipped) { G.equipped[item.slot] = null; recalcStats(); }
     var idx = G.inventory.findIndex(function(i) { return i.id === itemId; });
     G.inventory.splice(idx, 1);
     showRefineResult(false, item, false, cost);
   }
   updateHUD();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
-// ── Оверлей результата заточки ──
 function showRefineResult(success, item, maxed, cost, bonus) {
   var overlay = document.getElementById('refineOverlay');
   var icon    = document.getElementById('refineIcon');
@@ -273,7 +285,6 @@ function showRefineResult(success, item, maxed, cost, bonus) {
 //  КНИГИ НАВЫКОВ
 // ═══════════════════════════════
 
-// Стоимость использования: unlock=1, затем N*30+1 книг
 function skillBookCost(st) {
   if (!st.unlocked)     return 1;
   if (st.level === 0)   return 1;
@@ -312,15 +323,22 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
 // ═══════════════════════════════
 //  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ═══════════════════════════════
+
 function slotName(slot) {
   var map = { weapon: 'Оружие', body: 'Тело', legs: 'Штаны', gloves: 'Перчи', boots: 'Боты', helmet: 'Шлем', ring: 'Кольцо', belt: 'Пояс', book: 'Книга' };
   return map[slot] || slot;
 }
+
 function slotEmptyIcon(slot) {
   var pfx = { weapon: 'wwc', body: 'ac', legs: 'lc', gloves: 'pc', boots: 'bc', helmet: 'hc', ring: 'ringc', belt: 'beltc' }[slot] || 'ac';
   return 'images/' + pfx + '.png';
@@ -330,7 +348,6 @@ function rarityOrder(id) {
   return RARITIES.findIndex(function(r) { return r.id === id; });
 }
 
-// ── Режим мультивыбора ──
 function toggleInvSelectMode() { _invSelectMode = !_invSelectMode; _invSelected = {}; renderInventory(); }
 function toggleInvSelect(itemId) {
   if (_invSelected[itemId]) delete _invSelected[itemId]; else _invSelected[itemId] = true;
@@ -355,20 +372,24 @@ function deleteSelected() {
   });
   _invSelected = {};
   updateHUD(); renderInventory();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
-// ── Закрытие модалки предмета ──
 function closeItemModal() {
   document.getElementById('itemModal').classList.remove('show');
   _modalItemId = null;
 }
 
-// ── Фильтр инвентаря ──
 function setInvFilter(f) { G.invFilter = f; renderInventory(); }
 
 // ═══════════════════════════════
 //  ОТКРЫТИЕ МОДАЛЬНОГО ОКНА ПРЕДМЕТА
 // ═══════════════════════════════
+
 function openItemModal(itemId) {
   var item = G.inventory.find(function(i) { return i.id === itemId; });
   if (!item) return;
@@ -439,7 +460,6 @@ function openItemModal(itemId) {
   });
   document.getElementById('mStats').innerHTML = statsHtml || '<div style="color:#445;font-size:11px;">Нет бонусов</div>';
 
-  // Блок заточки
   var refineHtml = '';
   if (stars < REFINE_MAX) {
     var cost    = refineCost(stars);
@@ -474,6 +494,7 @@ function openItemModal(itemId) {
 // ═══════════════════════════════
 //  РЕНДЕР ИНВЕНТАРЯ
 // ═══════════════════════════════
+
 function renderInventory() {
   var body  = document.getElementById('invBody');
   var cp    = calcCP();
@@ -490,7 +511,6 @@ function renderInventory() {
   });
   filterHtml += '</div>';
 
-  // Слоты экипировки
   var eqHtml = '<div style="font-size:9px;color:#556;letter-spacing:1px;margin-bottom:6px;">ЭКИПИРОВАНО</div>';
   eqHtml += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:12px;">';
   ['weapon','body','legs','gloves','boots','helmet','ring','belt'].forEach(function(slot) {
@@ -508,7 +528,6 @@ function renderInventory() {
   });
   eqHtml += '</div>';
 
-  // Суммарный бонус
   var bonusHtml = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px;">';
   var statLabels = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT%', dodge: 'DODGE%' };
   Object.keys(bonus).forEach(function(s) {

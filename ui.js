@@ -26,7 +26,14 @@ function buyUpgrade(u) {
   G.gold -= cost;
   G.upg[u.id]++;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
-  recalcStats(); updateHUD(); renderUpgrades();
+  recalcStats();
+  updateHUD();
+  renderUpgrades();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
 function renderUpgrades() {
@@ -144,6 +151,7 @@ function renderUpgrades() {
 // ═══════════════════════════════
 //  ВКЛАДКА ЭТАЖЕЙ
 // ═══════════════════════════════
+
 function openFloorLoot(floorN) {
   var f = FLOORS[floorN - 1];
   if (!f) return;
@@ -251,14 +259,19 @@ function goToFloor(n) {
   G.maxFloor = Math.max(G.maxFloor, n);
   monsters = [];
   nextMonsterSpawn = player.worldX + 400;
-  updateHUD(); switchTab('game');
+  updateHUD();
+  switchTab('game');
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
 // ═══════════════════════════════
-//  ВКЛАДКА РЕЙТИНГА (исправленная)
+//  ВКЛАДКА РЕЙТИНГА
 // ═══════════════════════════════
 
-// Кэш рейтинга
 var _ratingCache = null;
 var _ratingCacheTime = 0;
 var _ratingLoading = false;
@@ -267,17 +280,14 @@ function renderRating() {
   var body = document.getElementById('ratingBody');
   if (!body) return;
   
-  // Показываем кэш если есть
   if (_ratingCache && Date.now() - _ratingCacheTime < 30000) {
     renderRatingData(_ratingCache, body);
     return;
   }
   
-  // Показываем загрузку
   body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">⏳ Загрузка рейтинга...</div>';
   
-  // Если нет GameSync или не онлайн — показываем заглушку
-  if (!window.GameSync || !window.GameSync.state.online) {
+  if (!window.GameSync || !window.GameSync.isConnected()) {
     body.innerHTML = '<div style="text-align:center;padding:30px 0;color:#445;font-size:12px;">📱 Рейтинг доступен только в Telegram</div>';
     return;
   }
@@ -297,10 +307,8 @@ function renderRating() {
         return;
       }
       
-      // Кэшируем
       _ratingCache = r.top;
       _ratingCacheTime = Date.now();
-      
       renderRatingData(r.top, body);
     })
     .catch(function() {
@@ -314,7 +322,6 @@ function renderRatingData(players, body) {
   var charEmojis = { fire: '🔥', light: '✨', water: '💧' };
   var charColors = { fire: '#ff7030', light: '#ffd040', water: '#40d0ff' };
   
-  // Находим текущего игрока
   var tgId = window.GameSync ? window.GameSync.getTgId() : null;
   var myIndex = -1;
   
@@ -325,7 +332,6 @@ function renderRatingData(players, body) {
     return;
   }
   
-  // Используем только топ-50
   var topPlayers = players.slice(0, 50);
   
   topPlayers.forEach(function(p, i) {
@@ -362,7 +368,6 @@ function renderRatingData(players, body) {
       '</div>';
   });
   
-  // Если текущий игрок не в топ-50, добавляем его внизу
   if (myIndex === -1 && tgId) {
     var myCp = typeof calcCP === 'function' ? calcCP() : 0;
     var myLevel = G.level || 1;
@@ -371,7 +376,6 @@ function renderRatingData(players, body) {
     var myEmoji = charEmojis[myChar] || '';
     var myColor = charColors[myChar] || '#aaa';
     
-    // Аватарка текущего игрока
     var myAvatarUrl = (window.GameSync && window.GameSync._API)
       ? window.GameSync._API + '/api/avatar/' + tgId : '';
     
@@ -393,7 +397,10 @@ function renderRatingData(players, body) {
   body.innerHTML = html;
 }
 
-// ── SVG иконки для кошелька/статистики ──
+// ═══════════════════════════════
+//  SVG ИКОНКИ
+// ═══════════════════════════════
+
 function swordStatSvg(c) { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="7" fill="${c}"/><rect x="2" y="3" width="6" height="2" fill="${c}"/><rect x="4" y="7" width="2" height="1" fill="${c}" opacity="0.7"/><rect x="3" y="8" width="4" height="1" fill="${c}" opacity="0.7"/><rect x="4" y="9" width="2" height="1" fill="${c}" opacity="0.7"/></svg>`; }
 function shieldSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#3498db"/><rect x="0" y="2" width="2" height="4" fill="#3498db"/><rect x="8" y="2" width="2" height="4" fill="#3498db"/><rect x="2" y="0" width="2" height="3" fill="#5dade2"/><rect x="6" y="0" width="2" height="3" fill="#5dade2"/><rect x="2" y="6" width="3" height="2" fill="#3498db"/><rect x="5" y="6" width="3" height="2" fill="#3498db"/><rect x="4" y="8" width="2" height="2" fill="#2980b9"/></svg>`; }
 function heartSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="3" height="2" fill="#e74c3c"/><rect x="6" y="1" width="3" height="2" fill="#e74c3c"/><rect x="0" y="2" width="10" height="4" fill="#e74c3c"/><rect x="1" y="6" width="8" height="2" fill="#e74c3c"/><rect x="2" y="8" width="6" height="1" fill="#c0392b"/><rect x="3" y="9" width="4" height="1" fill="#c0392b"/></svg>`; }
@@ -409,7 +416,7 @@ function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10"
 //  ВКЛАДКА КОШЕЛЕК
 // ═══════════════════════════════
 
-var _walletTab = 'wallet'; // 'wallet' | 'stats'
+var _walletTab = 'wallet';
 
 function renderWallet() {
   const cp = calcCP();
@@ -422,7 +429,7 @@ function renderWallet() {
         border-radius:8px;border:1.5px solid ${_walletTab === 'wallet' ? '#40d0ff' : '#2a2a5a'};
         background:${_walletTab === 'wallet' ? 'rgba(64,208,255,0.1)' : 'rgba(255,255,255,0.03)'};
         color:${_walletTab === 'wallet' ? '#40d0ff' : '#556'};cursor:pointer;">
-        ?? Кошелек
+        👛 Кошелек
       </button>
       <button onclick="switchWalletTab('stats')" style="flex:1;padding:8px;font-size:12px;font-family:Courier New,monospace;
         border-radius:8px;border:1.5px solid ${_walletTab === 'stats' ? '#f5c542' : '#2a2a5a'};
@@ -438,13 +445,11 @@ function renderWallet() {
     return;
   }
   
-  // ── КОШЕЛЕК ──
   const canExchange = pixr >= 1000;
   
   const html = `
     ${tabsHtml}
     
-    <!-- Балансы -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
       <div style="padding:14px;background:rgba(255,68,204,0.06);border:1.5px solid #4a2a5a;border-radius:12px;text-align:center;">
         <img src="images/pixr.png" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;display:block;margin:0 auto 4px;">
@@ -458,7 +463,6 @@ function renderWallet() {
       </div>
     </div>
     
-    <!-- Обмен PIXR → GRAM -->
     <div style="padding:12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:10px;margin-bottom:12px;">
       <div style="font-size:10px;color:#778;margin-bottom:6px;display:flex;align-items:center;gap:4px;"><img src="images/pixr.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"> ОБМЕН PIXR → <img src="images/gram.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"> GRAM (1000:1)</div>
       <div style="display:flex;gap:8px;">
@@ -471,7 +475,6 @@ function renderWallet() {
       <div id="exchangeResult" style="font-size:10px;color:#556;margin-top:4px;min-height:16px;"></div>
     </div>
     
-    <!-- Кнопки Пополнить/Вывести -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
       <button onclick="openDepositModal()" style="padding:14px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;gap:6px;">
         <img src="images/gram.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated"> Пополнить
@@ -481,7 +484,6 @@ function renderWallet() {
       </button>
     </div>
     
-    <!-- Последние транзакции -->
     <div id="txList" style="margin-top:10px;">
       <div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:6px;">ИСТОРИЯ ТРАНЗАКЦИЙ</div>
       <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>
@@ -492,7 +494,6 @@ function renderWallet() {
   loadTransactions();
 }
 
-// ── ОБМЕН PIXR → GRAM ──
 function submitExchange() {
   const amount = parseInt(document.getElementById('exchangeAmount').value);
   const result = document.getElementById('exchangeResult');
@@ -524,6 +525,12 @@ function submitExchange() {
       G.gram = r.gram;
       updateHUD();
       result.innerHTML = `<span style="color:#2ecc71;">✅ Обменяно ${amount} PIXR → ${r.earned} GRAM</span>`;
+      
+      // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+      if (window.GameSync) {
+        GameSync.save();
+      }
+      
       setTimeout(function() {
         renderWallet();
       }, 1000);
@@ -536,7 +543,6 @@ function submitExchange() {
   });
 }
 
-// ── ЗАГРУЗКА ТРАНЗАКЦИЙ ──
 function loadTransactions() {
   var list = document.getElementById('txList');
   if (!list) return;
@@ -638,7 +644,7 @@ function renderStats() {
 }
 
 // ═══════════════════════════════
-//  МОДАЛКИ ПОПОЛНЕНИЯ/ВЫВОДА
+//  МОДАЛКИ КОШЕЛЬКА
 // ═══════════════════════════════
 
 function openDepositModal() {
@@ -706,7 +712,6 @@ function createDepositModal() {
   document.getElementById('depositMemo').textContent = tgId + '_' + Date.now().toString(36);
 }
 
-// ── Копирование поля реквизитов ──
 function _copyDepositField(fieldId, btnId) {
   var el  = document.getElementById(fieldId);
   var btn = document.getElementById(btnId);
@@ -798,7 +803,6 @@ function closeWalletModal(e) {
   document.querySelectorAll('.wallet-modal').forEach(m => m.classList.add('hidden'));
 }
 
-// ── ИСПРАВЛЕННАЯ ОТПРАВКА ЗАПРОСА ПОПОЛНЕНИЯ ──
 function submitDeposit() {
   var amount = parseInt(document.getElementById('depositAmount').value);
   var result = document.getElementById('depositResult');
@@ -808,7 +812,6 @@ function submitDeposit() {
     return;
   }
   
-  // Проверяем, что GameSync инициализирован
   if (!window.GameSync || !window.GameSync._INIT) {
     result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка авторизации. Перезапустите игру.</span>';
     return;
@@ -832,6 +835,12 @@ function submitDeposit() {
     if (r.ok) {
       result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
       document.getElementById('depositAmount').value = '1';
+      
+      // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+      if (window.GameSync) {
+        GameSync.save();
+      }
+      
       loadTransactions();
       setTimeout(closeWalletModal, 3000);
     } else {
@@ -844,7 +853,6 @@ function submitDeposit() {
   });
 }
 
-// ── ИСПРАВЛЕННАЯ ОТПРАВКА ЗАПРОСА ВЫВОДА ──
 function submitWithdraw() {
   var amount = parseInt(document.getElementById('withdrawAmount').value);
   var wallet = document.getElementById('withdrawWallet').value.trim();
@@ -887,6 +895,12 @@ function submitWithdraw() {
       result.innerHTML = '<span style="color:#2ecc71;">✅ Заявка создана! Ожидайте подтверждения админом.</span>';
       document.getElementById('withdrawAmount').value = '1';
       document.getElementById('withdrawWallet').value = '';
+      
+      // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+      if (window.GameSync) {
+        GameSync.save();
+      }
+      
       loadTransactions();
       setTimeout(closeWalletModal, 3000);
     } else {
@@ -902,18 +916,19 @@ function submitWithdraw() {
 // ═══════════════════════════════
 //  ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК
 // ═══════════════════════════════
+
 function switchTab(tab) {
   activeTab = tab;
-  ['game','inv','upgrades','floors','rating','wallet','friends'].forEach(t => {
-    const btn = document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1));
+  ['game','inv','upgrades','floors','rating','wallet','friends','boss'].forEach(function(t) {
+    var btn = document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1));
     if (btn) btn.classList.toggle('active', t === tab);
   });
-  document.getElementById('panelInv').classList.toggle('visible',      tab === 'inv');
+  document.getElementById('panelInv').classList.toggle('visible', tab === 'inv');
   document.getElementById('panelUpgrades').classList.toggle('visible', tab === 'upgrades');
-  document.getElementById('panelFloors').classList.toggle('visible',   tab === 'floors');
-  document.getElementById('panelRating').classList.toggle('visible',   tab === 'rating');
-  document.getElementById('panelWallet').classList.toggle('visible',   tab === 'wallet');
-  document.getElementById('panelFriends').classList.toggle('visible',  tab === 'friends');
+  document.getElementById('panelFloors').classList.toggle('visible', tab === 'floors');
+  document.getElementById('panelRating').classList.toggle('visible', tab === 'rating');
+  document.getElementById('panelWallet').classList.toggle('visible', tab === 'wallet');
+  document.getElementById('panelFriends').classList.toggle('visible', tab === 'friends');
   var bossPanel = document.getElementById('panelBoss');
   if (bossPanel) bossPanel.classList.toggle('visible', tab === 'boss');
   var hudEl = document.getElementById('skillsHud');
@@ -935,18 +950,24 @@ function switchTab(tab) {
   if (tab === 'wallet')   renderWallet();
   if (tab === 'friends')  renderFriends();
   if (tab === 'boss')     renderBossTab();
+  
+  // ✅ При переключении на игру — загружаем свежие данные
+  if (tab === 'game' && window.GameSync) {
+    GameSync.load();
+  }
 }
 
 // ═══════════════════════════════
 //  ВКЛАДКА ДРУЗЕЙ
 // ═══════════════════════════════
+
 var _friendsLoading = false;
 
 function renderFriends() {
   var body = document.getElementById('friendsBody');
   if (!body) return;
 
-  if (!window.GameSync || !window.GameSync.state.online) {
+  if (!window.GameSync || !window.GameSync.isConnected()) {
     body.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#556;font-size:12px;">' +
       '<div style="font-size:32px;margin-bottom:12px;">📱</div>' +
       'Реферальная программа<br>доступна только в Telegram</div>';
@@ -1059,7 +1080,6 @@ function renderFriendsData(r, body) {
 }
 
 function friendsCopyLink(link) {
-  var copied = false;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(link).then(function() {
       showFriendsToast('Ссылка скопирована!');
@@ -1068,6 +1088,7 @@ function friendsCopyLink(link) {
     friendsCopyFallback(link);
   }
 }
+
 function friendsCopyFallback(link) {
   try {
     var ta = document.createElement('textarea');
@@ -1078,6 +1099,7 @@ function friendsCopyFallback(link) {
     showFriendsToast('Ссылка скопирована!');
   } catch(e) { showFriendsToast('Скопируй вручную'); }
 }
+
 function friendsShare(link) {
   var text = 'Играю в Pixel Runner RPG! Заходи по моей ссылке — получишь бонус!';
   var shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
@@ -1086,6 +1108,7 @@ function friendsShare(link) {
   }
   window.open(shareUrl, '_blank');
 }
+
 function friendsClaim(btn) {
   if (!window.GameSync) return;
   btn.disabled = true;
@@ -1100,7 +1123,12 @@ function friendsClaim(btn) {
     if (r.ok && r.goldEarned > 0) {
       G.gold += r.goldEarned;
       updateHUD();
-      if (typeof window.GameSync.touch === 'function') window.GameSync.touch();
+      
+      // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+      if (window.GameSync) {
+        GameSync.save();
+      }
+      
       showFriendsToast('+' + r.goldEarned + ' золота получено!');
       setTimeout(function() { renderFriends(); }, 800);
     } else {
@@ -1113,6 +1141,7 @@ function friendsClaim(btn) {
     btn.textContent = 'Забрать';
   });
 }
+
 function showFriendsToast(msg) {
   var el = document.getElementById('floorUnlock');
   var sub = document.getElementById('fuText');
@@ -1126,6 +1155,7 @@ function showFriendsToast(msg) {
 // ═══════════════════════════════
 //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
 // ═══════════════════════════════
+
 let _csSelected      = null;
 let _csParticleTimer = null;
 let _csSpriteTimers  = {};
@@ -1151,6 +1181,11 @@ function confirmChar() {
   document.getElementById('charSelect').classList.add('hidden');
   startGame();
   updateHudAvatar();
+  
+  // ✅ СОХРАНЕНИЕ ЧЕРЕЗ WEBSOCKET
+  if (window.GameSync) {
+    GameSync.save();
+  }
 }
 
 function applyCharacterSprites(ch) {
@@ -1185,7 +1220,7 @@ function startGame() {
 }
 
 // ═══════════════════════════════
-//  ОБНОВЛЕНИЕ АВАТАРКИ В HUD
+//  ОБНОВЛЕНИЕ АВАТАРКИ
 // ═══════════════════════════════
 
 function updateHudAvatar() {
@@ -1209,7 +1244,6 @@ function updateHudAvatar() {
     return;
   }
 
-  // 1. photo_url из initDataUnsafe (Telegram иногда передаёт напрямую)
   var photoUrl = null;
   try {
     var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
@@ -1218,7 +1252,6 @@ function updateHudAvatar() {
     }
   } catch (e) {}
 
-  // 2. Серверный прокси через Bot API
   if (!photoUrl && window.GameSync && window.GameSync._API) {
     photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
   }
@@ -1249,21 +1282,18 @@ function updateHudAvatar() {
   };
 }
 
-// Ждём пока GameSync._API будет готов, потом загружаем аватарку
 function updateAvatarOnStart() {
   var attempts = 0;
-  var maxAttempts = 20; // до 10 секунд
+  var maxAttempts = 20;
   function tryLoad() {
     attempts++;
     var tgId = window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : null;
     var api  = window.GameSync && window.GameSync._API;
-    // photo_url не требует _API — грузим сразу если есть tgId
     var hasPhotoUrl = false;
     try {
       var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
       if (unsafe && unsafe.user && unsafe.user.photo_url) hasPhotoUrl = true;
     } catch(e) {}
-
     if (tgId && (api || hasPhotoUrl)) {
       updateHudAvatar();
     } else if (attempts < maxAttempts) {
@@ -1330,293 +1360,3 @@ window.addEventListener('load', function() {
 });
 
 window.addEventListener('resize', resize);
-// ═══════════════════════════════
-//  ЗАДАНИЯ
-// ═══════════════════════════════
-
-var DAILY_MILESTONES = [
-  { id: 0, minutes: 10, rewardType: 'potions', amount: 50,   icon: '<svg width="18" height="18" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>', label: '50 зелий' },
-  { id: 1, minutes: 20, rewardType: 'gold',    amount: 1000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '1000 золота' },
-  { id: 2, minutes: 30, rewardType: 'pixr',    amount: 5,    icon: '<img src="images/pixr.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">', label: '5 PIXR' },
-  { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '2000 золота' },
-];
-
-var _specialTaskTimers = {};
-
-function openTaskModal() {
-  document.getElementById('taskModal').classList.remove('hidden');
-  renderTaskModal();
-}
-function closeTaskModal() {
-  document.getElementById('taskModal').classList.add('hidden');
-}
-
-function renderTaskModal() {
-  var body = document.getElementById('taskModalBody');
-  if (!body) return;
-
-  var today = new Date().toISOString().slice(0, 10);
-  if (!G.dailyTasks || G.dailyTasks.date !== today) {
-    G.dailyTasks = { date: today, seconds: 0, claimed: [] };
-  }
-  var mins    = Math.floor((G.dailyTasks.seconds || 0) / 60);
-  var claimed = G.dailyTasks.claimed || [];
-
-  var html = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">ЕЖЕДНЕВНЫЕ (сброс в полночь)</div>';
-
-  DAILY_MILESTONES.forEach(function(m) {
-    var done  = claimed.indexOf(m.id) !== -1;
-    var avail = !done && mins >= m.minutes;
-    var pct   = Math.min(100, Math.floor((mins / m.minutes) * 100));
-    html +=
-      '<div class="task-row' + (done ? ' task-done' : avail ? ' task-avail' : '') + '">' +
-        '<div class="task-row-left">' +
-          '<div class="task-title">⏱ ' + m.minutes + ' мин в игре</div>' +
-          '<div class="task-progress-wrap">' +
-            '<div class="task-progress-bar"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>' +
-            '<span class="task-progress-lbl">' + Math.min(mins, m.minutes) + '/' + m.minutes + 'м</span>' +
-          '</div>' +
-        '</div>' +
-        '<div class="task-row-right">' +
-          '<div class="task-reward-lbl">' + m.icon + ' ' + m.amount + '</div>' +
-          (done ? '<span class="task-done-lbl">✓</span>' :
-           avail ? '<button class="task-claim-btn" onclick="claimDailyTask(' + m.id + ')">Забрать</button>' :
-           '<span class="task-locked-lbl">' + m.minutes + 'м</span>') +
-        '</div>' +
-      '</div>';
-  });
-
-  html += '<div id="specialTasksSection" style="margin-top:16px;">' +
-    '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
-    '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Загрузка...</div></div>';
-
-  body.innerHTML = html;
-
-  if (!window.GameSync || !window.GameSync.state.online) {
-    document.getElementById('specialTasksSection').innerHTML =
-      '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
-      '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Доступно только онлайн</div>';
-    return;
-  }
-
-  fetch(window.GameSync._API + '/api/tasks', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT }),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(r) {
-    if (!r.ok) return;
-    var sec = document.getElementById('specialTasksSection');
-    if (!sec) return;
-    sec.innerHTML = _buildSpecialHtml(r.tasks, r.specialTasksClaimed || {});
-  })
-  .catch(function() {
-    var sec = document.getElementById('specialTasksSection');
-    if (sec) sec.innerHTML = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>' +
-      '<div style="color:#f44;text-align:center;padding:16px;font-size:11px;">Нет соединения</div>';
-  });
-}
-
-function _buildSpecialHtml(tasks, claimed) {
-  var head = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">СПЕЦИАЛЬНЫЕ</div>';
-  if (!tasks || !tasks.length) {
-    return head + '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Нет активных заданий</div>';
-  }
-  var _svgCoin  = '<svg width="16" height="16" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
-  var _imgPixr  = '<img src="images/pixr.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
-  var _imgGram  = '<img src="images/gram.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
-  var _svgPotion= '<svg width="16" height="16" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>';
-  var _svgGift  = '<svg width="16" height="16" viewBox="0 0 12 12" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="1" y="4" width="10" height="7" fill="#9b59b6"/><rect x="2" y="5" width="8" height="5" fill="#c080ff"/><rect x="0" y="3" width="12" height="3" fill="#7d3c98"/><rect x="5" y="0" width="2" height="4" fill="#f5c542"/><rect x="3" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="5" y="3" width="2" height="8" fill="#f5c542"/></svg>';
-  var icons = { gold: _svgCoin, pixr: _imgPixr, potions: _svgPotion, gram: _imgGram };
-  var html  = head;
-  tasks.forEach(function(task) {
-    var done  = !!(claimed[task.taskId]);
-    var timer = _specialTaskTimers[task.taskId];
-    var ic    = icons[task.rewardType] || _svgGift;
-    var action;
-    if (done) {
-      action = '<span class="task-done-lbl">✓</span>';
-    } else if (timer && timer.remaining > 0) {
-      action = '<span class="task-timer-lbl" id="stTimer_' + task.taskId + '">⏱ ' + timer.remaining + 'с</span>';
-    } else if (timer && timer.remaining <= 0) {
-      action = '<button class="task-claim-btn" onclick="claimSpecialTask(\'' + task.taskId + '\')">Забрать</button>';
-    } else if (task.link) {
-      action = '<button class="task-go-btn" onclick="startSpecialTask(\'' + task.taskId + '\',\'' + task.link.replace(/'/g,"\\'") + '\')">' + (task.linkText || 'Перейти') + '</button>';
-    } else {
-      action = '<button class="task-claim-btn" onclick="claimSpecialTask(\'' + task.taskId + '\')">Забрать</button>';
-    }
-    html +=
-      '<div class="task-row' + (done ? ' task-done' : '') + '">' +
-        '<div class="task-row-left">' +
-          '<div class="task-title">' + task.title + '</div>' +
-          (task.description ? '<div class="task-desc">' + task.description + '</div>' : '') +
-        '</div>' +
-        '<div class="task-row-right">' +
-          '<div class="task-reward-lbl">' + ic + ' ' + task.rewardAmount + '</div>' +
-          action +
-        '</div>' +
-      '</div>';
-  });
-  return html;
-}
-
-function startSpecialTask(taskId, link) {
-  if (link) {
-    try {
-      if (window.Telegram && window.Telegram.WebApp && link.startsWith('https://t.me/')) {
-        window.Telegram.WebApp.openTelegramLink(link);
-      } else { window.open(link, '_blank'); }
-    } catch(e) { window.open(link, '_blank'); }
-  }
-  if (_specialTaskTimers[taskId] && _specialTaskTimers[taskId].remaining > 0) return;
-  _specialTaskTimers[taskId] = { remaining: 20 };
-  var iv = setInterval(function() {
-    var t = _specialTaskTimers[taskId];
-    if (!t) { clearInterval(iv); return; }
-    t.remaining--;
-    var el = document.getElementById('stTimer_' + taskId);
-    if (t.remaining > 0) {
-      if (el) el.textContent = '⏱ ' + t.remaining + 'с';
-    } else {
-      clearInterval(iv);
-      if (el) {
-        var btn = document.createElement('button');
-        btn.className = 'task-claim-btn';
-        btn.textContent = 'Забрать';
-        btn.onclick = function() { claimSpecialTask(taskId); };
-        el.parentNode.replaceChild(btn, el);
-      }
-    }
-  }, 1000);
-}
-
-function claimDailyTask(milestoneId) {
-  if (!window.GameSync || !window.GameSync.state.online) return;
-  fetch(window.GameSync._API + '/api/tasks/daily/claim', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT, milestoneId: milestoneId }),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(r) {
-    if (!r.ok) { _taskToast('Ошибка: ' + (r.error || '?')); return; }
-    var rw = r.reward;
-    if (rw.type === 'gold')    G.gold    = (G.gold    || 0) + rw.amount;
-    if (rw.type === 'potions') G.potions = (G.potions || 0) + rw.amount;
-    if (rw.type === 'pixr')    G.pixr    = (G.pixr    || 0) + rw.amount;
-    if (rw.type === 'gram')    G.gram    = (G.gram    || 0) + rw.amount;
-    if (!G.dailyTasks) G.dailyTasks = { date: new Date().toISOString().slice(0,10), seconds:0, claimed:[] };
-    if (G.dailyTasks.claimed.indexOf(milestoneId) === -1) G.dailyTasks.claimed.push(milestoneId);
-    updateHUD();
-    _taskToast('+' + rw.amount + ' ' + (rw.type==='gold'?'золота':rw.type==='potions'?'зелий':'PIXR') + ' получено!');
-    renderTaskModal();
-  })
-  .catch(function() { _taskToast('Нет соединения'); });
-}
-
-function claimSpecialTask(taskId) {
-  if (!window.GameSync || !window.GameSync.state.online) return;
-  fetch(window.GameSync._API + '/api/tasks/special/claim', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: window.GameSync._INIT, taskId: taskId }),
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(r) {
-    if (!r.ok) { _taskToast('Ошибка: ' + (r.error || '?')); return; }
-    var rw = r.reward;
-    if (rw.type === 'gold')    G.gold    = (G.gold    || 0) + rw.amount;
-    if (rw.type === 'potions') G.potions = (G.potions || 0) + rw.amount;
-    if (rw.type === 'pixr')    G.pixr    = (G.pixr    || 0) + rw.amount;
-    if (rw.type === 'gram')    G.gram    = (G.gram    || 0) + rw.amount;
-    if (!G.specialTasksClaimed) G.specialTasksClaimed = {};
-    G.specialTasksClaimed[taskId] = Date.now();
-    delete _specialTaskTimers[taskId];
-    updateHUD();
-    _taskToast('+' + rw.amount + ' ' + rw.type + ' получено!');
-    renderTaskModal();
-  })
-  .catch(function() { _taskToast('Нет соединения'); });
-}
-
-function _taskToast(msg) {
-  var fu = document.getElementById('floorUnlock');
-  var sub = document.getElementById('fuText');
-  if (!fu || !sub) return;
-  fu.querySelector('.fu-title').textContent = '📋 ' + msg;
-  sub.textContent = '';
-  fu.classList.remove('show'); void fu.offsetWidth; fu.classList.add('show');
-  setTimeout(function() { fu.classList.remove('show'); }, 2500);
-}
-// ═══════════════════════════════
-//  ВКЛАДКА БОССОВ
-// ═══════════════════════════════
-function renderBossTab() {
-  var body = document.getElementById('bossBody');
-  if (!body) return;
-  var cp       = calcCP();
-  var boss     = G.boss || { floor: 1, lastFightTime: 0 };
-  var canFight = typeof bossCanFight === 'function' ? bossCanFight() : true;
-  var nextIn   = typeof bossNextFightIn === 'function' ? bossNextFightIn() : null;
-  var html     = '';
-
-  html += '<div style="font-size:11px;color:#778;margin-bottom:12px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;display:flex;justify-content:space-between;align-items:center;">';
-  html += '<span>CP: <strong style="color:#fa0">' + cp + '</strong></span>';
-  if (canFight) {
-    html += '<span style="color:#2ecc71;font-size:10px;">✅ Можно вызвать</span>';
-  } else {
-    html += '<span style="color:#e74c3c;font-size:10px;">⏳ ' + nextIn + '</span>';
-  }
-  html += '</div>';
-
-  BOSS_DEFS.forEach(function(b) {
-    var isUnlocked = cp >= b.cpReq;
-    var isCurrent  = boss.floor === b.id;
-    var isPast     = boss.floor > b.id;
-    var pixr  = Math.floor(Math.pow(2, b.id - 1));
-    var gold  = Math.floor(1000 * Math.pow(2, b.id - 1));
-    var rarNames = ['Обычный','Необычный','Редкий','Эпический','Легендарный'];
-    var rarName  = rarNames[Math.min(b.id - 1, 4)];
-
-    var borderColor = '#2a2a5a', extraStyle = '';
-    if (isCurrent && isUnlocked) { borderColor = '#e74c3c'; extraStyle = 'box-shadow:0 0 12px rgba(231,76,60,0.2);'; }
-    else if (isPast)             { borderColor = '#2a4a3a'; }
-    else if (!isUnlocked)        { extraStyle = 'opacity:0.5;'; }
-
-    html += '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + borderColor + ';' + extraStyle + 'overflow:hidden;">';
-    // Заголовок
-    html += '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border-bottom:1px solid #1a1a35;">';
-    html += '<span style="font-size:26px;line-height:1;">' + b.emoji + '</span>';
-    html += '<div style="flex:1;"><div style="font-size:13px;font-weight:bold;color:' + (isCurrent ? '#e74c3c' : '#ccc') + ';">Босс ' + b.id + ': ' + b.name;
-    if (isCurrent) html += ' <span style="font-size:9px;color:#e74c3c;border:1px solid #e74c3c44;padding:1px 4px;border-radius:3px;margin-left:4px;">ТЕКУЩИЙ</span>';
-    html += '</div><div style="font-size:10px;color:#778;margin-top:2px;">HP: ' + b.hp.toLocaleString() + ' · ATK: ' + b.atk + ' · CP: ' + b.cpReq.toLocaleString() + '</div></div>';
-    if (!isUnlocked) html += '<div style="font-size:9px;color:#f88;text-align:right;min-width:44px;">🔒<br>+' + (b.cpReq - cp) + ' CP</div>';
-    html += '</div>';
-    // Награды
-    html += '<div style="padding:8px 12px 10px;background:rgba(0,0,0,0.15);">';
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px;">';
-    html += '<div style="background:rgba(255,68,204,0.07);border:1px solid #4a2a5a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">PIXR</div><div style="font-size:13px;font-weight:bold;color:#ff44cc;">' + pixr + '</div></div>';
-    html += '<div style="background:rgba(245,197,66,0.07);border:1px solid #4a3a10;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Золото</div><div style="font-size:11px;font-weight:bold;color:#f5c542;">' + (gold >= 1000 ? (gold/1000).toFixed(0)+'K' : gold) + '</div></div>';
-    html += '<div style="background:rgba(167,139,250,0.07);border:1px solid #3a2a6a;border-radius:5px;padding:5px;text-align:center;"><div style="font-size:8px;color:#778;">Предмет</div><div style="font-size:9px;font-weight:bold;color:#a78bfa;">' + rarName + '</div></div>';
-    html += '</div>';
-    // Кнопка
-    if (!isUnlocked) {
-      html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #333;background:rgba(255,255,255,0.02);color:#446;text-align:center;">🔒 Нужно ' + b.cpReq.toLocaleString() + ' CP</div>';
-    } else if (canFight) {
-      html += '<button onclick="callBoss(' + b.id + ')" style="width:100%;padding:10px;font-size:13px;font-family:Courier New,monospace;border-radius:8px;border:1.5px solid #e74c3c;background:rgba(231,76,60,0.15);color:#e74c3c;cursor:pointer;font-weight:bold;">⚔️ Вызвать босса</button>';
-    } else {
-      html += '<div style="padding:9px;font-size:11px;border-radius:8px;border:1px solid #e74c3c44;background:rgba(231,76,60,0.05);color:#e74c3c;text-align:center;">⏳ Следующий бой через ' + nextIn + '</div>';
-    }
-    html += '</div></div>';
-  });
-
-  body.innerHTML = html;
-}
-
-function callBoss(bossId) {
-  if (typeof spawnBoss === 'function') {
-    switchTab('game');
-    setTimeout(function() { spawnBoss(bossId); }, 100);
-  }
-}

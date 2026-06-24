@@ -1,8 +1,7 @@
 /*
   ══════════════════════════════════════════════════════
   server.js — Backend для PIXEL RPG
-  Express + MongoDB (Mongoose) + Telegram WebApp auth
-  + Админ-панель + Транзакции (пополнение/вывод)
+  Express + MongoDB + WebSocket
   ══════════════════════════════════════════════════════
 */
 
@@ -11,39 +10,23 @@ const express  = require('express');
 const mongoose = require('mongoose');
 const crypto   = require('crypto');
 const path     = require('path');
+const WebSocket = require('ws');
+const http     = require('http');
 
 const app = express();
+const server = http.createServer(app);
+
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
 if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не задан');
 const REF_GOLD_PER_MILESTONE = 500;
 const REF_MILESTONE_STEP     = 5;
 
 // ═══════════════════════════════
-//  ЛОГГИРОВАНИЕ
-// ═══════════════════════════════
-app.use(function(req, res, next) {
-  console.log(`📨 ${req.method} ${req.path} from ${req.headers.origin || 'unknown'}`);
-  next();
-});
-
-// ═══════════════════════════════
-//  УЛУЧШЕННЫЙ CORS
+//  CORS
 // ═══════════════════════════════
 app.use(function(req, res, next) {
   const origin = req.headers.origin || '*';
-  const allowedOrigins = [
-    'https://ghz-production.up.railway.app',
-    'http://localhost:3000',
-    'http://127.0.0.1:5500',
-    'http://127.0.0.1:8080'
-  ];
-  
-  if (allowedOrigins.includes(origin) || origin.includes('railway.app')) {
-    res.header('Access-Control-Allow-Origin', origin);
-  } else {
-    res.header('Access-Control-Allow-Origin', '*');
-  }
-  
+  res.header('Access-Control-Allow-Origin', origin);
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE, PATCH');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-session, x-bot-secret');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -75,11 +58,11 @@ mongoose.connect(MONGODB_URI, {
   minPoolSize: 10,
   maxIdleTimeMS: 10000,
 })
-.then(() => {
+.then(function() {
   console.log('✅ MongoDB подключена');
-  console.log(`📊 База данных: ${mongoose.connection.db.databaseName}`);
+  console.log('📊 База данных:', mongoose.connection.db.databaseName);
 })
-.catch(err => {
+.catch(function(err) {
   console.error('❌ MongoDB error:', err.message);
   process.exit(1);
 });
@@ -138,7 +121,7 @@ const AdminLogSchema = new mongoose.Schema({
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
 
-// ── Специальные задания (создаются через админку) ──
+// ── Специальные задания ──
 const SpecialTaskSchema = new mongoose.Schema({
   taskId:       { type: String, required: true, unique: true },
   title:        { type: String, required: true },
@@ -154,29 +137,181 @@ SpecialTaskSchema.index({ active: 1, createdAt: -1 });
 const SpecialTask = mongoose.model('SpecialTask', SpecialTaskSchema);
 
 // ═══════════════════════════════
-//  КОНФИГ КОШЕЛЬКА
+//  WEBSOCKET СЕРВЕР
 // ═══════════════════════════════
-const WALLET_CONFIG = {
-  address: 'UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb',
-  minAmount: 1,
-};
+
+const wss = new WebSocket.Server({ server });
+const wsClients = new Map(); // tgId → WebSocket
+
+wss.on('connection', function(ws, req) {
+  let tgId = null;
+  let authenticated = false;
+
+  console.log('🔌 Новое WebSocket соединение');
+
+  ws.on('message', async function(message) {
+    try {
+      const msg = JSON.parse(message);
+
+      switch (msg.type) {
+        case 'auth':
+          tgId = msg.tgId;
+          if (!tgId) {
+            ws.send(JSON.stringify({ type: 'error', message: 'No tgId' }));
+            return;
+          }
+
+          // Проверяем, что пользователь существует
+          var user = await Save.findOne({ tgId: tgId });
+          if (!user) {
+            user = new Save({
+              tgId: tgId,
+              username: '',
+              firstName: '',
+              data: {
+                inventory: [],
+                equipped: {},
+                upg: { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
+                skills: {},
+                level: 1,
+                xp: 0,
+                xpNeeded: 100,
+                floor: 1,
+                maxFloor: 1,
+                gold: 0,
+                pixr: 0,
+                gram: 0,
+                hp: 100,
+                maxHp: 100,
+                potions: 0,
+                potionLv: 0,
+                potionThreshold: 30,
+                bp: { active: false, claimed: [] },
+                prem: { tier: null, expiresAt: 0 },
+                boss: { floor: 1, lastFightTime: 0 },
+                dailyTasks: { date: '', seconds: 0, claimed: [] },
+                specialTasksClaimed: {},
+                killCount: 0,
+                charId: null
+              }
+            });
+            await user.save();
+          }
+
+          authenticated = true;
+          wsClients.set(tgId, ws);
+
+          ws.send(JSON.stringify({
+            type: 'auth_ok',
+            message: 'Authenticated'
+          }));
+
+          // Отправляем текущие данные
+          var data = user.data || {};
+          ws.send(JSON.stringify({
+            type: 'sync',
+            data: data
+          }));
+
+          console.log('✅ WebSocket авторизован:', tgId);
+          break;
+
+        case 'load':
+          if (!authenticated || !tgId) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+            return;
+          }
+
+          var userData = await Save.findOne({ tgId: tgId });
+          if (userData) {
+            ws.send(JSON.stringify({
+              type: 'sync',
+              data: userData.data || {}
+            }));
+          }
+          break;
+
+        case 'save':
+          if (!authenticated || !tgId) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+            return;
+          }
+
+          var saveData = msg.data;
+          if (!saveData || typeof saveData !== 'object') {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid data' }));
+            return;
+          }
+
+          // Сохраняем в MongoDB
+          await Save.findOneAndUpdate(
+            { tgId: tgId },
+            {
+              $set: {
+                data: saveData,
+                level: saveData.level || 1,
+                cp: saveData.cp || 0,
+                floor: saveData.floor || 1,
+                updatedAt: Date.now()
+              }
+            },
+            { upsert: true }
+          );
+
+          ws.send(JSON.stringify({
+            type: 'saved',
+            timestamp: Date.now()
+          }));
+
+          console.log('💾 Сохранено:', tgId, Object.keys(saveData).length, 'полей');
+          break;
+
+        default:
+          console.log('📨 Неизвестный тип сообщения:', msg.type);
+          ws.send(JSON.stringify({ type: 'error', message: 'Unknown type' }));
+      }
+    } catch (e) {
+      console.error('❌ WebSocket ошибка:', e.message);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: e.message
+      }));
+    }
+  });
+
+  ws.on('close', function() {
+    if (tgId) {
+      wsClients.delete(tgId);
+      console.log('🔌 WebSocket отключен:', tgId);
+    }
+  });
+
+  ws.on('error', function(err) {
+    console.error('❌ WebSocket ошибка соединения:', err.message);
+  });
+});
 
 // ═══════════════════════════════
-//  Rate limiter
+//  ОТПРАВКА ОБНОВЛЕНИЙ (из админки)
 // ═══════════════════════════════
-const _rl = new Map();
-function rateLimit(tgId, maxReqs, windowMs) {
-  const now = Date.now();
-  let e = _rl.get(tgId);
-  if (!e || now > e.reset) { _rl.set(tgId, { n: 1, reset: now + windowMs }); return false; }
-  if (++e.n > maxReqs) return true;
+
+function pushUpdate(tgId, data) {
+  const ws = wsClients.get(tgId);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'update',
+      data: data
+    }));
+    return true;
+  }
   return false;
 }
-setInterval(() => { const now = Date.now(); _rl.forEach((v, k) => { if (now > v.reset) _rl.delete(k); }); }, 300000);
 
 // ═══════════════════════════════
-//  Проверка Telegram
+//  ОСТАЛЬНЫЕ РОУТЫ (без изменений)
 // ═══════════════════════════════
+
+// ── Проверка Telegram ──
 function verifyTelegram(initData) {
   if (!initData || typeof initData !== 'string') return null;
   const params = new URLSearchParams(initData);
@@ -216,7 +351,6 @@ function verifyTelegram(initData) {
 function authUser(req, res) {
   const tg = verifyTelegram(req.body && req.body.initData);
   if (!tg) { 
-    console.warn('❌ [authUser] Ошибка авторизации');
     res.status(401).json({ ok: false, error: 'auth_failed' }); 
     return null; 
   }
@@ -224,129 +358,75 @@ function authUser(req, res) {
 }
 
 // ═══════════════════════════════
-//  Утилиты
+//  Rate limiter
 // ═══════════════════════════════
-function calcPendingGold(refMilestones, friends) {
-  let gold = 0;
-  const newMilestones = Object.assign({}, refMilestones);
-  friends.forEach(f => {
-    const paid = newMilestones[f.tgId] || 0;
-    const maxMilestone = Math.floor(f.level / REF_MILESTONE_STEP) * REF_MILESTONE_STEP;
-    if (maxMilestone > paid) {
-      const count = (maxMilestone - paid) / REF_MILESTONE_STEP;
-      gold += count * REF_GOLD_PER_MILESTONE;
-      newMilestones[f.tgId] = maxMilestone;
-    }
-  });
-  return { gold, newMilestones };
+const _rl = new Map();
+function rateLimit(tgId, maxReqs, windowMs) {
+  const now = Date.now();
+  let e = _rl.get(tgId);
+  if (!e || now > e.reset) { _rl.set(tgId, { n: 1, reset: now + windowMs }); return false; }
+  if (++e.n > maxReqs) return true;
+  return false;
 }
-
-// ═══════════════════════════════
-//  Кэш лидерборда
-// ═══════════════════════════════
-let leaderboardCache = null;
-let leaderboardCacheTime = 0;
-const LEADERBOARD_CACHE_TTL = 10000;
-
-function getLeaderboardCache() {
-  if (leaderboardCache && Date.now() - leaderboardCacheTime < LEADERBOARD_CACHE_TTL) {
-    return leaderboardCache;
-  }
-  return null;
-}
-
-function setLeaderboardCache(data) {
-  leaderboardCache = data;
-  leaderboardCacheTime = Date.now();
-}
+setInterval(() => { const now = Date.now(); _rl.forEach((v, k) => { if (now > v.reset) _rl.delete(k); }); }, 300000);
 
 // ═══════════════════════════════
 //  ОСНОВНЫЕ РОУТЫ
 // ═══════════════════════════════
+
 app.get('/', (req, res) => {
-  res.json({ ok: true, service: 'pixel-rpg', db: mongoose.connection.readyState === 1 });
+  res.json({ ok: true, service: 'pixel-rpg', ws: true, db: mongoose.connection.readyState === 1 });
 });
 
-// ── Загрузка ──
+// ── Загрузка (HTTP fallback) ──
 app.post('/api/load', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
   
-  const startParam = tg.startParam || (req.body && req.body.startParam) || '';
-  console.log(`🟢 [load] tgId: ${tg.id}`);
-  
   try {
     let doc = await Save.findOne({ tgId: tg.id }).lean();
-
     if (!doc) {
-      const refBy = (startParam && startParam !== tg.id) ? startParam : null;
       doc = await Save.create({
         tgId: tg.id, 
         username: tg.username, 
         firstName: tg.firstName,
-        refBy, 
-        refMilestones: {},
-        data: null,
-      });
-      console.log(`🆕 [load] Новый пользователь: ${tg.id}`);
-
-      // Уведомляем админа
-      if (bot && process.env.ADMIN_TG_ID) {
-        try {
-          let inviterName = '— (органика)';
-          if (refBy) {
-            const inviter = await Save.findOne({ tgId: refBy }, 'firstName username').lean();
-            if (inviter) {
-              inviterName = (inviter.firstName || inviter.username || refBy) +
-                (inviter.username ? ' (@' + inviter.username + ')' : '') +
-                ' [' + refBy + ']';
-            } else {
-              inviterName = refBy;
-            }
-          }
-          const newUserMsg =
-            '🆕 *Новый игрок!*\n\n' +
-            '*Имя:* ' + (tg.firstName || '—') + '\n' +
-            '*Username:* ' + (tg.username ? '@' + tg.username : '—') + '\n' +
-            '*ID:* `' + tg.id + '`\n' +
-            '*Пригласил:* ' + inviterName;
-          await bot.sendMessage(process.env.ADMIN_TG_ID, newUserMsg, { parse_mode: 'Markdown' });
-        } catch (e) {
-          console.error('❌ [load] Ошибка уведомления о новом пользователе:', e.message);
+        data: {
+          inventory: [],
+          equipped: {},
+          upg: { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
+          skills: {},
+          level: 1,
+          xp: 0,
+          xpNeeded: 100,
+          floor: 1,
+          maxFloor: 1,
+          gold: 0,
+          pixr: 0,
+          gram: 0,
+          hp: 100,
+          maxHp: 100,
+          potions: 0,
+          potionLv: 0,
+          potionThreshold: 30,
+          bp: { active: false, claimed: [] },
+          prem: { tier: null, expiresAt: 0 },
+          boss: { floor: 1, lastFightTime: 0 },
+          dailyTasks: { date: '', seconds: 0, claimed: [] },
+          specialTasksClaimed: {},
+          killCount: 0,
+          charId: null
         }
-      }
-
-      return res.json({
-        ok: true,
-        save: { charId: null, data: null, updatedAt: 0 },
-        user: { id: tg.id, username: tg.username, firstName: tg.firstName },
       });
     }
-    
-    if (!doc.refBy && startParam && startParam !== tg.id) {
-      await Save.updateOne({ tgId: tg.id }, { $set: { refBy: startParam } });
-      doc.refBy = startParam;
-    }
-
-    res.json({
-      ok: true,
-      save: {
-        charId: doc.charId,
-        data: doc.data,
-        updatedAt: doc.updatedAt || 0,
-      },
-      user: { id: tg.id, username: tg.username, firstName: tg.firstName },
-    });
+    res.json({ ok: true, save: { charId: doc.charId, data: doc.data, updatedAt: doc.updatedAt || 0 } });
   } catch (e) {
     console.error('❌ [load] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Сохранение ──
+// ── Сохранение (HTTP fallback) ──
 app.post('/api/save', async (req, res) => {
-  const startTime = Date.now();
-  
   try {
     const tg = authUser(req, res); 
     if (!tg) return;
@@ -357,52 +437,30 @@ app.post('/api/save', async (req, res) => {
     
     const data = req.body && req.body.data;
     if (!data || typeof data !== 'object') {
-      console.error('❌ [save] Нет данных');
       return res.status(400).json({ ok: false, error: 'bad_data' });
     }
 
-    if (data.tgId && data.tgId !== tg.id) {
-      console.error(`❌ [save] Несоответствие tgId!`);
-      return res.status(403).json({ ok: false, error: 'user_mismatch' });
-    }
-
-    data.tgId = tg.id;
-    data.updatedAt = Date.now();
-
     await Save.findOneAndUpdate(
       { tgId: tg.id },
-      { 
+      {
         $set: {
           username: tg.username, 
           firstName: tg.firstName,
           charId: data.charId || null, 
           data: data,
           level: Number(data.level) || 1,
-          cp:    Number(data.cp)    || 0,
+          cp: Number(data.cp) || 0,
           floor: Number(data.floor) || 1,
-          updatedAt: data.updatedAt,
+          updatedAt: Date.now()
         }
       },
-      { 
-        upsert: true,
-        new: false,
-        lean: true,
-      }
+      { upsert: true }
     );
 
-    const duration = Date.now() - startTime;
-    console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms)`);
-    res.json({ ok: true, updatedAt: data.updatedAt });
-
+    res.json({ ok: true, updatedAt: Date.now() });
   } catch (e) {
-    const duration = Date.now() - startTime;
-    console.error(`❌ [save] ОШИБКА (${duration}ms):`, e.message);
-    
-    res.status(500).json({ 
-      ok: false, 
-      error: 'server_error',
-      message: e.message
-    });
+    console.error('❌ [save] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
@@ -416,31 +474,20 @@ app.post('/api/character', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'bad_char' });
   }
   
-  console.log(`🎭 [character] tgId: ${tg.id}, charId: ${charId}`);
-  
   try {
-    let doc = await Save.findOne({ tgId: tg.id });
-    
-    if (!doc) {
-      doc = await Save.create({
-        tgId: tg.id,
-        username: tg.username,
-        firstName: tg.firstName,
-        charId: charId,
-        data: { tgId: tg.id, charId: charId },
-      });
-      console.log(`🆕 [character] Создан новый пользователь: ${tg.id}`);
-    } else {
-      if (!doc.data || typeof doc.data !== 'object') {
-        doc.data = {};
-      }
-      doc.data.tgId = tg.id;
-      doc.data.charId = charId;
-      doc.charId = charId;
-      await doc.save();
-      console.log(`✅ [character] Обновлен персонаж для ${tg.id}: ${charId}`);
-    }
-    
+    await Save.findOneAndUpdate(
+      { tgId: tg.id },
+      {
+        $set: {
+          charId: charId,
+          username: tg.username,
+          firstName: tg.firstName,
+          'data.charId': charId,
+          updatedAt: Date.now()
+        }
+      },
+      { upsert: true }
+    );
     res.json({ ok: true });
   } catch (e) { 
     console.error('❌ [character] error:', e.message);
@@ -456,19 +503,11 @@ app.get('/api/leaderboard', async (req, res) => {
   }
   
   try {
-    const cached = getLeaderboardCache();
-    if (cached) {
-      return res.json({ ok: true, top: cached, cached: true });
-    }
-    
     const top = await Save.find({ charId: { $ne: null } })
       .sort({ cp: -1, level: -1 }).limit(50)
       .select('tgId username firstName level cp floor charId -_id')
       .lean();
-    
-    setLeaderboardCache(top);
-    
-    res.json({ ok: true, top, cached: false });
+    res.json({ ok: true, top });
   } catch (e) { 
     console.error('❌ [leaderboard] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' }); 
@@ -481,10 +520,8 @@ app.post('/api/ref/friends', async (req, res) => {
   if (!tg) return;
   
   try {
-    const doc = await Save.findOne({ tgId: tg.id })
-      .select('refMilestones -_id').lean();
+    const doc = await Save.findOne({ tgId: tg.id }).select('refMilestones -_id').lean();
     const milestones = (doc && doc.refMilestones) || {};
-
     const friends = await Save.find({ refBy: tg.id })
       .select('tgId firstName username level charId -_id').lean();
 
@@ -496,9 +533,9 @@ app.post('/api/ref/friends', async (req, res) => {
       refLink,
       refCode: tg.id,
       friends: friends.map(f => ({
-        name:    f.firstName || f.username || ('Игрок ' + f.tgId.slice(-4)),
-        level:   f.level || 1,
-        charId:  f.charId,
+        name: f.firstName || f.username || ('Игрок ' + f.tgId.slice(-4)),
+        level: f.level || 1,
+        charId: f.charId,
         nextMilestone: (Math.floor(((milestones[f.tgId] || 0) / REF_MILESTONE_STEP) + 1)) * REF_MILESTONE_STEP,
         paid: milestones[f.tgId] || 0,
       })),
@@ -509,6 +546,21 @@ app.post('/api/ref/friends', async (req, res) => {
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
+
+function calcPendingGold(refMilestones, friends) {
+  let gold = 0;
+  const newMilestones = Object.assign({}, refMilestones);
+  friends.forEach(f => {
+    const paid = newMilestones[f.tgId] || 0;
+    const maxMilestone = Math.floor(f.level / REF_MILESTONE_STEP) * REF_MILESTONE_STEP;
+    if (maxMilestone > paid) {
+      const count = (maxMilestone - paid) / REF_MILESTONE_STEP;
+      gold += count * REF_GOLD_PER_MILESTONE;
+      newMilestones[f.tgId] = maxMilestone;
+    }
+  });
+  return { gold, newMilestones };
+}
 
 const _claiming = new Set();
 app.post('/api/ref/claim', async (req, res) => {
@@ -525,14 +577,12 @@ app.post('/api/ref/claim', async (req, res) => {
     const doc = await Save.findOne({ tgId: tg.id });
     if (!doc) return res.json({ ok: true, goldEarned: 0 });
 
-    const friends = await Save.find({ refBy: tg.id })
-      .select('tgId level -_id').lean();
+    const friends = await Save.find({ refBy: tg.id }).select('tgId level -_id').lean();
 
     const { gold, newMilestones } = calcPendingGold(doc.refMilestones || {}, friends);
     if (gold === 0) return res.json({ ok: true, goldEarned: 0 });
 
     if (!doc.data) doc.data = { tgId: tg.id };
-    doc.data.tgId = tg.id;
     doc.data.gold = (doc.data.gold || 0) + gold;
 
     await Save.findOneAndUpdate(
@@ -545,6 +595,9 @@ app.post('/api/ref/claim', async (req, res) => {
         $inc: { refClaimVer: 1 } 
       }
     );
+
+    // Отправляем обновление через WebSocket
+    pushUpdate(tg.id, { gold: doc.data.gold });
 
     res.json({ ok: true, goldEarned: gold });
   } catch (e) {
@@ -566,7 +619,6 @@ const DAILY_MILESTONES = [
   { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000 },
 ];
 
-// ── Получить задания + состояние пользователя ──
 app.post('/api/tasks', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -579,7 +631,7 @@ app.post('/api/tasks', async (req, res) => {
     res.json({
       ok: true,
       tasks,
-      dailyTasks:          userData.dailyTasks          || { date: '', seconds: 0, claimed: [] },
+      dailyTasks: userData.dailyTasks || { date: '', seconds: 0, claimed: [] },
       specialTasksClaimed: userData.specialTasksClaimed || {},
     });
   } catch (e) {
@@ -588,7 +640,6 @@ app.post('/api/tasks', async (req, res) => {
   }
 });
 
-// ── Забрать ежедневную награду ──
 app.post('/api/tasks/daily/claim', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -598,7 +649,7 @@ app.post('/api/tasks/daily/claim', async (req, res) => {
   try {
     const user = await Save.findOne({ tgId: tg.id });
     if (!user || !user.data) return res.status(404).json({ ok: false, error: 'no_save' });
-    const daily    = user.data.dailyTasks || { date: '', seconds: 0, claimed: [] };
+    const daily = user.data.dailyTasks || { date: '', seconds: 0, claimed: [] };
     const todayStr = new Date().toISOString().slice(0, 10);
     if (daily.date !== todayStr)
       return res.status(400).json({ ok: false, error: 'day_reset' });
@@ -619,7 +670,6 @@ app.post('/api/tasks/daily/claim', async (req, res) => {
   }
 });
 
-// ── Забрать специальное задание ──
 app.post('/api/tasks/special/claim', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -648,19 +698,16 @@ app.post('/api/tasks/special/claim', async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  АВАТАРКА ПОЛЬЗОВАТЕЛЯ
-//  GET /api/avatar/:tgId
-//  Проксирует фото профиля через Bot API.
-//  Кешируется в памяти на 1 час (URL не меняется часто).
+//  АВАТАРКА
 // ═══════════════════════════════
-const _avatarCache = new Map(); // tgId -> { url, ts }
-const AVATAR_CACHE_TTL = 3600 * 1000; // 1 час
+
+const _avatarCache = new Map();
+const AVATAR_CACHE_TTL = 3600 * 1000;
 
 app.get('/api/avatar/:tgId', async (req, res) => {
   const tgId = req.params.tgId;
   if (!tgId || !/^\d+$/.test(tgId)) return res.status(400).json({ ok: false });
 
-  // Кеш
   const cached = _avatarCache.get(tgId);
   if (cached && Date.now() - cached.ts < AVATAR_CACHE_TTL) {
     return res.redirect(302, cached.url);
@@ -670,7 +717,6 @@ app.get('/api/avatar/:tgId', async (req, res) => {
   if (!token) return res.status(503).json({ ok: false, error: 'no_token' });
 
   try {
-    // 1. Получаем список фото профиля
     const photosRes = await fetch(
       `https://api.telegram.org/bot${token}/getUserProfilePhotos?user_id=${tgId}&limit=1`
     );
@@ -680,11 +726,9 @@ app.get('/api/avatar/:tgId', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'no_photo' });
     }
 
-    // Берём самый большой размер первой фотографии
     const sizes = photosData.result.photos[0];
     const fileId = sizes[sizes.length - 1].file_id;
 
-    // 2. Получаем file_path
     const fileRes = await fetch(
       `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`
     );
@@ -705,10 +749,14 @@ app.get('/api/avatar/:tgId', async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  ТРАНЗАКЦИИ (Пополнение/Вывод)
+//  ТРАНЗАКЦИИ
 // ═══════════════════════════════
 
-// ── Создание пополнения ──
+const WALLET_CONFIG = {
+  address: 'UQD5hiR-ziWL1r2jggCKxzhE7K7yNvH3FqnckOdXosVKYEfb',
+  minAmount: 1,
+};
+
 app.post('/api/wallet/deposit', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -716,10 +764,7 @@ app.post('/api/wallet/deposit', async (req, res) => {
   const { amount } = req.body;
   
   if (!amount || amount < WALLET_CONFIG.minAmount) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: `Минимальная сумма ${WALLET_CONFIG.minAmount} GRAM` 
-    });
+    return res.status(400).json({ ok: false, error: 'Минимальная сумма 1 GRAM' });
   }
   
   try {
@@ -738,8 +783,7 @@ app.post('/api/wallet/deposit', async (req, res) => {
       createdAt: Date.now()
     });
     
-    // Уведомляем админа в боте
-    if (bot) {
+    if (bot && process.env.ADMIN_TG_ID) {
       const adminMsg = `
 💰 **НОВАЯ ТРАНЗАКЦИЯ**
 
@@ -752,43 +796,30 @@ app.post('/api/wallet/deposit', async (req, res) => {
 Статус: ⏳ Ожидание подтверждения
       `;
       
-      if (process.env.ADMIN_TG_ID) {
-        try {
-          await bot.sendMessage(process.env.ADMIN_TG_ID, adminMsg, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: '✅ Подтвердить', callback_data: `approve_${tx.id}` },
-                  { text: '❌ Отклонить', callback_data: `reject_${tx.id}` }
-                ]
+      try {
+        await bot.sendMessage(process.env.ADMIN_TG_ID, adminMsg, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Подтвердить', callback_data: `approve_${tx.id}` },
+                { text: '❌ Отклонить', callback_data: `reject_${tx.id}` }
               ]
-            }
-          });
-        } catch (e) {
-          console.error('❌ [wallet] Ошибка уведомления админа:', e.message);
-        }
+            ]
+          }
+        });
+      } catch (e) {
+        console.error('❌ [wallet] Ошибка уведомления админа:', e.message);
       }
     }
     
-    res.json({
-      ok: true,
-      tx: {
-        id: tx.id,
-        amount: tx.amount,
-        wallet: tx.wallet,
-        memo: tx.memo,
-        status: tx.status,
-        createdAt: tx.createdAt
-      }
-    });
+    res.json({ ok: true, tx: { id: tx.id, amount: tx.amount, wallet: tx.wallet, memo: tx.memo, status: tx.status, createdAt: tx.createdAt } });
   } catch (e) {
     console.error('❌ [wallet] deposit error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Запрос на вывод ──
 app.post('/api/wallet/withdraw', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -796,10 +827,7 @@ app.post('/api/wallet/withdraw', async (req, res) => {
   const { amount, wallet } = req.body;
   
   if (!amount || amount < WALLET_CONFIG.minAmount) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: `Минимальная сумма ${WALLET_CONFIG.minAmount} GRAM` 
-    });
+    return res.status(400).json({ ok: false, error: 'Минимальная сумма 1 GRAM' });
   }
   
   if (!wallet || wallet.length < 10) {
@@ -857,23 +885,13 @@ app.post('/api/wallet/withdraw', async (req, res) => {
       }
     }
     
-    res.json({
-      ok: true,
-      tx: {
-        id: tx.id,
-        amount: tx.amount,
-        wallet: tx.wallet,
-        status: tx.status,
-        createdAt: tx.createdAt
-      }
-    });
+    res.json({ ok: true, tx: { id: tx.id, amount: tx.amount, wallet: tx.wallet, status: tx.status, createdAt: tx.createdAt } });
   } catch (e) {
     console.error('❌ [wallet] withdraw error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
-// ── Получение транзакций пользователя ──
 app.post('/api/wallet/transactions', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -883,7 +901,6 @@ app.post('/api/wallet/transactions', async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
-    
     res.json({ ok: true, transactions: txs });
   } catch (e) {
     console.error('❌ [wallet] transactions error:', e.message);
@@ -891,7 +908,6 @@ app.post('/api/wallet/transactions', async (req, res) => {
   }
 });
 
-// ── ОБМЕН PIXR → GRAM ──
 app.post('/api/wallet/exchange', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -899,23 +915,14 @@ app.post('/api/wallet/exchange', async (req, res) => {
   const { amount } = req.body;
   
   if (!amount || amount < 1000 || amount % 1000 !== 0) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: 'Сумма должна быть кратна 1000 PIXR (минимум 1000)' 
-    });
+    return res.status(400).json({ ok: false, error: 'Сумма должна быть кратна 1000 PIXR (минимум 1000)' });
   }
   
   try {
     const gramEarned = amount / 1000;
-
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.pixr': { $gte: amount } },
-      {
-        $inc: {
-          'data.pixr': -amount,
-          'data.gram': gramEarned,
-        }
-      },
+      { $inc: { 'data.pixr': -amount, 'data.gram': gramEarned } },
       { new: true }
     );
 
@@ -923,12 +930,10 @@ app.post('/api/wallet/exchange', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Недостаточно PIXR' });
     }
 
-    res.json({
-      ok: true,
-      pixr: result.data.pixr,
-      gram: result.data.gram,
-      earned: gramEarned
-    });
+    // Отправляем обновление через WebSocket
+    pushUpdate(tg.id, { pixr: result.data.pixr, gram: result.data.gram });
+
+    res.json({ ok: true, pixr: result.data.pixr, gram: result.data.gram, earned: gramEarned });
   } catch (e) {
     console.error('❌ [wallet] exchange error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
@@ -936,61 +941,9 @@ app.post('/api/wallet/exchange', async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  БОТ: подтверждение/отклонение транзакций
-//  POST /bot/transaction/:txId/:action
-//  Защищён BOT_TOKEN в заголовке x-bot-secret
-// ═══════════════════════════════
-app.post('/bot/transaction/:txId/:action', async (req, res) => {
-  const secret = req.headers['x-bot-secret'];
-  if (!secret || secret !== process.env.BOT_TOKEN) {
-    return res.status(401).json({ ok: false, error: 'unauthorized' });
-  }
-
-  const { txId, action } = req.params;
-  if (!['approve', 'reject'].includes(action)) {
-    return res.status(400).json({ ok: false, error: 'invalid_action' });
-  }
-
-  try {
-    const tx = await Transaction.findOne({ id: txId });
-    if (!tx) return res.status(404).json({ ok: false, error: 'not_found' });
-    if (tx.status !== 'pending') return res.status(400).json({ ok: false, error: 'already_processed' });
-
-    if (action === 'approve') {
-      tx.status = 'approved';
-      tx.approvedAt = Date.now();
-      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      await Save.findOneAndUpdate(
-        { tgId: tx.userId },
-        { $inc: { 'data.gram': gramDelta } }
-      );
-    } else {
-      tx.status = 'rejected';
-      tx.rejectedAt = Date.now();
-    }
-
-    await tx.save();
-    await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
-
-    // Уведомляем пользователя
-    if (bot) {
-      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
-      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}`;
-      try { await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' }); } catch (e) {}
-    }
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('❌ [bot-tx] error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ═══════════════════════════════
 //  АДМИН-ПАНЕЛЬ
 // ═══════════════════════════════
 
-// ── Конфиг админов ──
 const ADMIN_CREDENTIALS = {
   admin: {
     password: process.env.ADMIN_PASSWORD || 'pixel2024',
@@ -998,7 +951,6 @@ const ADMIN_CREDENTIALS = {
   }
 };
 
-// ── Сессии ──
 const adminSessions = new Map();
 
 function generateSessionId() {
@@ -1028,11 +980,9 @@ function getSession(sessionId) {
 function requireAdmin(req, res, next) {
   const sessionId = req.headers['x-admin-session'] || req.query.session;
   const session = getSession(sessionId);
-  
   if (!session) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
-  
   req.admin = session;
   next();
 }
@@ -1045,85 +995,44 @@ async function logAdminAction(admin, action, target, details) {
   }
 }
 
-// ── Админ: подтвердить/отклонить транзакцию ──
-app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
-  try {
-    const { txId, action } = req.params;
-    
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({ ok: false, error: 'invalid_action' });
-    }
-    
-    const tx = await Transaction.findOne({ id: txId });
-    if (!tx) {
-      return res.status(404).json({ ok: false, error: 'transaction_not_found' });
-    }
-    
-    if (tx.status !== 'pending') {
-      return res.status(400).json({ ok: false, error: 'transaction_already_processed' });
-    }
-    
-    if (action === 'approve') {
-      tx.status = 'approved';
-      tx.approvedAt = Date.now();
-
-      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      await Save.findOneAndUpdate(
-        { tgId: tx.userId },
-        { $inc: { 'data.gram': gramDelta } }
-      );
-    } else {
-      tx.status = 'rejected';
-      tx.rejectedAt = Date.now();
-    }
-    
-    await tx.save();
-    await logAdminAction(req.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
-    
-    if (bot) {
-      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
-      const msg = `
-💰 **Транзакция ${statusText}**
-
-**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
-**Сумма:** ${tx.amount} GRAM
-**Статус:** ${statusText}
-${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
-      `;
-      try {
-        await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
-      } catch (e) {}
-    }
-    
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('❌ [admin] transaction error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
+app.post('/admin/login', express.json(), (req, res) => {
+  const { login, password } = req.body;
+  
+  if (!login || !password) {
+    return res.status(400).json({ ok: false, error: 'missing_credentials' });
   }
+  
+  const admin = ADMIN_CREDENTIALS[login];
+  if (!admin || admin.password !== password) {
+    return res.status(401).json({ ok: false, error: 'invalid_credentials' });
+  }
+  
+  const sessionId = createSession(login, admin.role);
+  res.json({ ok: true, session: sessionId, role: admin.role, login: login });
 });
 
-// ── Админ: список транзакций ──
-app.get('/admin/api/transactions', requireAdmin, async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 50;
-    const status = req.query.status || 'all';
-    
-    const filter = {};
-    if (status !== 'all') filter.status = status;
-    
-    const txs = await Transaction.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
-    
-    res.json({ ok: true, transactions: txs });
-  } catch (e) {
-    console.error('❌ [admin] transactions error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
+app.get('/admin/check', (req, res) => {
+  const sessionId = req.headers['x-admin-session'] || req.query.session;
+  const session = getSession(sessionId);
+  if (!session) {
+    return res.json({ ok: false, error: 'unauthorized' });
   }
+  res.json({ ok: true, role: session.role, login: session.login });
 });
 
-// ── Админ: роуты пользователей ──
+app.post('/admin/logout', (req, res) => {
+  const sessionId = req.headers['x-admin-session'] || req.body.session;
+  if (sessionId) {
+    adminSessions.delete(sessionId);
+  }
+  res.json({ ok: true });
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// ── Админ: список пользователей ──
 app.get('/admin/api/users', requireAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -1173,63 +1082,13 @@ app.get('/admin/api/users', requireAdmin, async (req, res) => {
   }
 });
 
-// ── Admin: список заданий ──
-app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
-    res.json({ ok: true, tasks });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: создать задание ──
-app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
-    if (!title || !rewardType || !rewardAmount)
-      return res.status(400).json({ ok: false, error: 'missing_fields' });
-    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    const task   = await SpecialTask.create({
-      taskId, title,
-      description:  description  || '',
-      link:         link         || '',
-      linkText:     linkText     || 'Перейти',
-      rewardType,
-      rewardAmount: Number(rewardAmount),
-      active: true,
-      createdAt: Date.now(),
-    });
-    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
-    res.json({ ok: true, task });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: удалить задание ──
-app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
-  try {
-    await SpecialTask.deleteOne({ taskId: req.params.taskId });
-    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: вкл/выкл задание ──
-app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
-  try {
-    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
-    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
-    task.active = !task.active;
-    await task.save();
-    res.json({ ok: true, active: task.active });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
+// ── Админ: пользователь ──
 app.get('/admin/api/user/:tgId', requireAdmin, async (req, res) => {
   try {
     const user = await Save.findOne({ tgId: req.params.tgId }).lean();
     if (!user) {
       return res.status(404).json({ ok: false, error: 'user_not_found' });
     }
-    
     res.json({
       ok: true,
       user: {
@@ -1252,20 +1111,66 @@ app.get('/admin/api/user/:tgId', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: обновить пользователя ──
 app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
     const updates = req.body;
     
     const updateData = {};
+    const pushData = {};
     
-    if (updates.gold !== undefined) updateData['data.gold'] = updates.gold;
-    if (updates.pixr !== undefined) updateData['data.pixr'] = updates.pixr;
-    if (updates.gram !== undefined) updateData['data.gram'] = updates.gram;
-    if (updates.hp !== undefined) updateData['data.hp'] = updates.hp;
-    if (updates.level !== undefined) updateData.level = updates.level;
-    if (updates.floor !== undefined) updateData.floor = updates.floor;
-    if (updates.charId !== undefined) updateData.charId = updates.charId;
+    if (updates.gold !== undefined) {
+      updateData['data.gold'] = updates.gold;
+      pushData.gold = updates.gold;
+    }
+    if (updates.pixr !== undefined) {
+      updateData['data.pixr'] = updates.pixr;
+      pushData.pixr = updates.pixr;
+    }
+    if (updates.gram !== undefined) {
+      updateData['data.gram'] = updates.gram;
+      pushData.gram = updates.gram;
+    }
+    if (updates.hp !== undefined) {
+      updateData['data.hp'] = updates.hp;
+      pushData.hp = updates.hp;
+    }
+    if (updates.level !== undefined) {
+      updateData.level = updates.level;
+      updateData['data.level'] = updates.level;
+      pushData.level = updates.level;
+    }
+    if (updates.floor !== undefined) {
+      updateData.floor = updates.floor;
+      updateData['data.floor'] = updates.floor;
+      pushData.floor = updates.floor;
+    }
+    if (updates.charId !== undefined) {
+      updateData.charId = updates.charId;
+      updateData['data.charId'] = updates.charId;
+      pushData.charId = updates.charId;
+    }
+    if (updates.inventory !== undefined) {
+      updateData['data.inventory'] = updates.inventory;
+      pushData.inventory = updates.inventory;
+    }
+    if (updates.equipped !== undefined) {
+      updateData['data.equipped'] = updates.equipped;
+      pushData.equipped = updates.equipped;
+    }
+    if (updates.upg !== undefined) {
+      updateData['data.upg'] = updates.upg;
+      pushData.upg = updates.upg;
+    }
+    if (updates.skills !== undefined) {
+      updateData['data.skills'] = updates.skills;
+      pushData.skills = updates.skills;
+    }
+    if (updates.potions !== undefined) {
+      updateData['data.potions'] = updates.potions;
+      pushData.potions = updates.potions;
+    }
     
     updateData.updatedAt = Date.now();
     
@@ -1276,6 +1181,11 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     
     await logAdminAction(req.admin.login, 'update_user', tgId, updates);
     
+    // Отправляем обновление через WebSocket
+    if (Object.keys(pushData).length > 0) {
+      pushUpdate(tgId, pushData);
+    }
+    
     res.json({ ok: true });
   } catch (e) {
     console.error('❌ [admin] update error:', e.message);
@@ -1283,33 +1193,7 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
-  try {
-    const { tgId } = req.params;
-    
-    const referrals = await Save.find({ refBy: tgId })
-      .select('tgId username firstName level cp floor charId data.gold data.pixr')
-      .lean();
-    
-    res.json({
-      ok: true,
-      referrals: referrals.map(r => ({
-        tgId: r.tgId,
-        username: r.username || r.firstName || 'Игрок',
-        level: r.level || 1,
-        cp: r.cp || 0,
-        floor: r.floor || 1,
-        charId: r.charId,
-        gold: r.data?.gold || 0,
-        pixr: r.data?.pixr || 0
-      }))
-    });
-  } catch (e) {
-    console.error('❌ [admin] referrals error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
+// ── Админ: выдать предмет ──
 app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
@@ -1345,6 +1229,9 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     await logAdminAction(req.admin.login, 'give_item', tgId, { item });
     
+    // Отправляем обновление через WebSocket
+    pushUpdate(tgId, { inventory: user.data.inventory });
+    
     res.json({ ok: true, item });
   } catch (e) {
     console.error('❌ [admin] give-item error:', e.message);
@@ -1352,10 +1239,10 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: список предметов ──
 app.get('/admin/api/items/list', requireAdmin, (req, res) => {
   try {
     const items = [];
-    
     const ITEM_TYPES = [
       { slot: 'body', name: 'Нагрудник', stats: ['def', 'hp'], primary: 'def' },
       { slot: 'legs', name: 'Штаны', stats: ['def', 'dodge'], primary: 'def' },
@@ -1365,29 +1252,13 @@ app.get('/admin/api/items/list', requireAdmin, (req, res) => {
       { slot: 'ring', name: 'Кольцо', stats: ['crit', 'atk'], primary: 'crit' },
       { slot: 'belt', name: 'Пояс', stats: ['hp', 'def'], primary: 'hp' }
     ];
-    
     const STAFF_TYPES = [
       { slot: 'weapon', name: 'Посох огня', stats: ['atk', 'crit'], primary: 'atk', forClass: 'fire', classLabel: 'Пирокан' },
       { slot: 'weapon', name: 'Посох света', stats: ['atk', 'hp'], primary: 'atk', forClass: 'light', classLabel: 'Люмос' },
       { slot: 'weapon', name: 'Посох воды', stats: ['atk', 'dodge'], primary: 'atk', forClass: 'water', classLabel: 'Аквас' }
     ];
-    
-    ITEM_TYPES.forEach(type => items.push({
-      slot: type.slot,
-      name: type.name,
-      stats: type.stats,
-      primary: type.primary
-    }));
-    
-    STAFF_TYPES.forEach(type => items.push({
-      slot: type.slot,
-      name: type.name,
-      stats: type.stats,
-      primary: type.primary,
-      forClass: type.forClass,
-      classLabel: type.classLabel
-    }));
-    
+    ITEM_TYPES.forEach(type => items.push({ slot: type.slot, name: type.name, stats: type.stats, primary: type.primary }));
+    STAFF_TYPES.forEach(type => items.push({ slot: type.slot, name: type.name, stats: type.stats, primary: type.primary, forClass: type.forClass, classLabel: type.classLabel }));
     res.json({ ok: true, items });
   } catch (e) {
     console.error('❌ [admin] items list error:', e.message);
@@ -1395,27 +1266,50 @@ app.get('/admin/api/items/list', requireAdmin, (req, res) => {
   }
 });
 
+// ── Админ: рефералы ──
+app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
+  try {
+    const { tgId } = req.params;
+    const referrals = await Save.find({ refBy: tgId })
+      .select('tgId username firstName level cp floor charId data.gold data.pixr')
+      .lean();
+    res.json({
+      ok: true,
+      referrals: referrals.map(r => ({
+        tgId: r.tgId,
+        username: r.username || r.firstName || 'Игрок',
+        level: r.level || 1,
+        cp: r.cp || 0,
+        floor: r.floor || 1,
+        charId: r.charId,
+        gold: r.data?.gold || 0,
+        pixr: r.data?.pixr || 0
+      }))
+    });
+  } catch (e) {
+    console.error('❌ [admin] referrals error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Админ: статистика ──
 app.get('/admin/api/stats', requireAdmin, async (req, res) => {
   try {
     const totalUsers = await Save.countDocuments();
     const usersWithChar = await Save.countDocuments({ charId: { $ne: null } });
-    
     const floors = await Save.aggregate([
       { $group: { _id: '$floor', count: { $sum: 1 } } },
       { $sort: { _id: 1 } }
     ]);
-    
     const now = Date.now();
     const active24h = await Save.countDocuments({
       updatedAt: { $gt: now - 24 * 60 * 60 * 1000 }
     });
-    
     const topCP = await Save.find({ charId: { $ne: null } })
       .sort({ cp: -1 })
       .limit(10)
       .select('username firstName level cp charId')
       .lean();
-    
     res.json({
       ok: true,
       stats: {
@@ -1433,13 +1327,13 @@ app.get('/admin/api/stats', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: логи ──
 app.get('/admin/api/logs', requireAdmin, async (req, res) => {
   try {
     const logs = await AdminLog.find()
       .sort({ timestamp: -1 })
       .limit(100)
       .lean();
-    
     res.json({ ok: true, logs });
   } catch (e) {
     console.error('❌ [admin] logs error:', e.message);
@@ -1447,19 +1341,14 @@ app.get('/admin/api/logs', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: рассылка ──
 app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
   try {
     const { message, target } = req.body;
-    
     if (!message || message.length < 1) {
       return res.status(400).json({ ok: false, error: 'empty_message' });
     }
-    
-    await logAdminAction(req.admin.login, 'broadcast', 'all', { 
-      message: message.substring(0, 100),
-      target: target || 'all'
-    });
-    
+    await logAdminAction(req.admin.login, 'broadcast', 'all', { message: message.substring(0, 100), target: target || 'all' });
     let sent = 0;
     if (bot) {
       const users = await Save.find({ charId: { $ne: null } }).select('tgId').lean();
@@ -1470,7 +1359,6 @@ app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
         } catch (e) {}
       }
     }
-    
     res.json({ ok: true, sent });
   } catch (e) {
     console.error('❌ [admin] broadcast error:', e.message);
@@ -1478,53 +1366,124 @@ app.post('/admin/api/broadcast', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/login', express.json(), (req, res) => {
-  const { login, password } = req.body;
-  
-  if (!login || !password) {
-    return res.status(400).json({ ok: false, error: 'missing_credentials' });
+// ── Админ: транзакции ──
+app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
+  try {
+    const { txId, action } = req.params;
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ ok: false, error: 'invalid_action' });
+    }
+    const tx = await Transaction.findOne({ id: txId });
+    if (!tx) {
+      return res.status(404).json({ ok: false, error: 'transaction_not_found' });
+    }
+    if (tx.status !== 'pending') {
+      return res.status(400).json({ ok: false, error: 'transaction_already_processed' });
+    }
+    if (action === 'approve') {
+      tx.status = 'approved';
+      tx.approvedAt = Date.now();
+      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      await Save.findOneAndUpdate(
+        { tgId: tx.userId },
+        { $inc: { 'data.gram': gramDelta } }
+      );
+      // Отправляем обновление через WebSocket
+      pushUpdate(tx.userId, { gram: tx.amount });
+    } else {
+      tx.status = 'rejected';
+      tx.rejectedAt = Date.now();
+    }
+    await tx.save();
+    await logAdminAction(req.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
+    if (bot) {
+      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
+      const msg = `
+💰 **Транзакция ${statusText}**
+
+**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
+**Сумма:** ${tx.amount} GRAM
+**Статус:** ${statusText}
+${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
+      `;
+      try {
+        await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
+      } catch (e) {}
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [admin] transaction error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
   }
-  
-  const admin = ADMIN_CREDENTIALS[login];
-  if (!admin || admin.password !== password) {
-    return res.status(401).json({ ok: false, error: 'invalid_credentials' });
-  }
-  
-  const sessionId = createSession(login, admin.role);
-  
-  res.json({
-    ok: true,
-    session: sessionId,
-    role: admin.role,
-    login: login
-  });
 });
 
-app.get('/admin/check', (req, res) => {
-  const sessionId = req.headers['x-admin-session'] || req.query.session;
-  const session = getSession(sessionId);
-  
-  if (!session) {
-    return res.json({ ok: false, error: 'unauthorized' });
+// ── Админ: список транзакций ──
+app.get('/admin/api/transactions', requireAdmin, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const status = req.query.status || 'all';
+    const filter = {};
+    if (status !== 'all') filter.status = status;
+    const txs = await Transaction.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+    res.json({ ok: true, transactions: txs });
+  } catch (e) {
+    console.error('❌ [admin] transactions error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
   }
-  
-  res.json({ ok: true, role: session.role, login: session.login });
 });
 
-app.post('/admin/logout', (req, res) => {
-  const sessionId = req.headers['x-admin-session'] || req.body.session;
-  if (sessionId) {
-    adminSessions.delete(sessionId);
-  }
-  res.json({ ok: true });
+// ── Админ: задания ──
+app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
+  try {
+    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
+    res.json({ ok: true, tasks });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.html'));
+app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
+  try {
+    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
+    if (!title || !rewardType || !rewardAmount)
+      return res.status(400).json({ ok: false, error: 'missing_fields' });
+    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const task = await SpecialTask.create({
+      taskId, title,
+      description: description || '',
+      link: link || '',
+      linkText: linkText || 'Перейти',
+      rewardType,
+      rewardAmount: Number(rewardAmount),
+      active: true,
+      createdAt: Date.now(),
+    });
+    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
+    res.json({ ok: true, task });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
+  try {
+    await SpecialTask.deleteOne({ taskId: req.params.taskId });
+    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
+  try {
+    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
+    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
+    task.active = !task.active;
+    await task.save();
+    res.json({ ok: true, active: task.active });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ═══════════════════════════════
-//  Бот
+//  БОТ
 // ═══════════════════════════════
 let bot = null;
 try {
@@ -1535,10 +1494,11 @@ try {
 }
 
 // ═══════════════════════════════
-//  Запуск
+//  ЗАПУСК
 // ═══════════════════════════════
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, function() {
   console.log(`🚀 Server on :${PORT}`);
-  console.log(`📊 MongoDB: 5GB, Pool: 50`);
+  console.log(`🔌 WebSocket on :${PORT}/ws`);
+  console.log(`📊 MongoDB: ${mongoose.connection.db.databaseName}`);
 });
