@@ -239,12 +239,6 @@ if (charId) {
   function applySnapshot(s) {
     if (!s || typeof s !== 'object') return false;
 
-    if (s.charId && typeof CHARS !== 'undefined' && CHARS[s.charId]) {
-      G_CHAR = CHARS[s.charId];
-      G.charId = s.charId;
-      if (typeof applyCharacterSprites === 'function') applyCharacterSprites(G_CHAR);
-    }
-
     if (s.inventory && Array.isArray(s.inventory)) {
       G.inventory = s.inventory.map(function(item) {
         var c = Object.assign({}, item);

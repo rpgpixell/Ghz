@@ -240,17 +240,18 @@ ws.send(JSON.stringify({
   }
 
   await Save.findOneAndUpdate(
-    { tgId: tgId },
-    {
-      $set: {
-        data: saveData,
-        level: saveData.level || 1,
-        floor: saveData.floor || 1,
-        updatedAt: Date.now()
-      }
-    },
-    { upsert: true }
-  );
+  { tgId: tgId },
+  {
+    $set: {
+      data: saveData,
+      level: saveData.level || 1,
+      floor: saveData.floor || 1,
+      charId: saveData.charId || null,  // ← ДОБАВИТЬ ЭТУ СТРОКУ
+      updatedAt: Date.now()
+    }
+  },
+  { upsert: true }
+);
 
   ws.send(JSON.stringify({
     type: 'saved',
