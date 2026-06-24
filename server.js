@@ -3,6 +3,7 @@
   server.js — Backend для PIXEL RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
   + Админ-панель + Транзакции (пополнение/вывод) + БИРЖА
+  Цена: 1 PIXR = 0.001 GRAM
   ══════════════════════════════════════════════════════
 */
 
@@ -127,9 +128,10 @@ const SpecialTask = mongoose.model('SpecialTask', SpecialTaskSchema);
 
 // ═══════════════════════════════
 //  МОДЕЛЬ РЫНКА (БИРЖА)
+//  Цена: 1 PIXR = 0.001 GRAM
 // ═══════════════════════════════
 const MarketSchema = new mongoose.Schema({
-  currentPrice:   { type: Number, default: 1000 },
+  currentPrice:   { type: Number, default: 0.001 },
   history:        { type: [Number], default: [] },
   totalBuyVolume: { type: Number, default: 0 },
   totalSellVolume:{ type: Number, default: 0 },
@@ -146,19 +148,18 @@ const Market = mongoose.model('Market', MarketSchema);
   try {
     const count = await Market.countDocuments();
     if (count === 0) {
-      // Создаем начальную историю из 100 точек с небольшим шумом
       const initialHistory = [];
       for (let i = 0; i < 100; i++) {
-        const noise = (Math.random() - 0.5) * 20;
-        initialHistory.push(Math.round(1000 + noise));
+        const noise = (Math.random() - 0.5) * 0.00005;
+        initialHistory.push(Math.max(0.0001, 0.001 + noise));
       }
       await Market.create({
-        currentPrice: 1000,
+        currentPrice: 0.001,
         history: initialHistory,
         totalBuyVolume: 0,
         totalSellVolume: 0,
       });
-      console.log('✅ [Market] Инициализирован: цена 1000 PIXR/GRAM');
+      console.log('✅ [Market] Инициализирован: 1 PIXR = 0.001 GRAM');
     }
   } catch (e) {
     console.error('❌ [Market] Ошибка инициализации:', e.message);
@@ -712,7 +713,7 @@ app.get('/api/market/price', async (req, res) => {
   try {
     const data = await Market.findOne().lean();
     if (!data) {
-      return res.json({ ok: true, price: 1000, history: [1000, 1000, 1000] });
+      return res.json({ ok: true, price: 0.001, history: [0.001, 0.001, 0.001] });
     }
     res.json({ 
       ok: true, 
@@ -727,7 +728,7 @@ app.get('/api/market/price', async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  БИРЖА — ОБМЕН (С РАСЧЕТОМ ЦЕНЫ)
+//  БИРЖА — ОБМЕН (1 PIXR = 0.001 GRAM)
 // ═══════════════════════════════
 app.post('/api/wallet/exchange', async (req, res) => {
   const tg = authUser(req, res);
@@ -739,17 +740,16 @@ app.post('/api/wallet/exchange', async (req, res) => {
   }
 
   const COMMISSION = 0.1; // 0.1 GRAM за сделку
-  const MIN_AMOUNT = 0.1; // Минимальная сумма для торговли
+  const MIN_AMOUNT = 1; // Минимальная сумма PIXR для торговли
 
   if (amount < MIN_AMOUNT) {
     return res.status(400).json({ 
       ok: false, 
-      error: `Минимальная сумма ${MIN_AMOUNT} GRAM` 
+      error: `Минимальная сумма ${MIN_AMOUNT} PIXR` 
     });
   }
 
   try {
-    // Загружаем рынок атомарно
     const market = await Market.findOne();
     if (!market) {
       return res.status(500).json({ ok: false, error: 'market_not_found' });
@@ -761,7 +761,6 @@ app.post('/api/wallet/exchange', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'user_not_found' });
     }
 
-    // Проверяем балансы
     const userPixr = user.data?.pixr || 0;
     const userGram = user.data?.gram || 0;
 
@@ -769,17 +768,17 @@ app.post('/api/wallet/exchange', async (req, res) => {
     let gramChange = 0;
     let newPrice = currentPrice;
 
-    // --- ПОКУПКА (Покупаем GRAM за PIXR) ---
+    // --- ПОКУПКА PIXR (тратишь GRAM, получаешь PIXR) ---
     if (type === 'buy') {
-      const neededPixr = Math.floor(amount * currentPrice);
-      if (userPixr < neededPixr) {
+      const neededGram = amount * currentPrice;
+      
+      if (userGram < neededGram) {
         return res.status(400).json({ 
           ok: false, 
-          error: `Недостаточно PIXR. Нужно ${neededPixr}, есть ${userPixr}` 
+          error: `Недостаточно GRAM. Нужно ${neededGram.toFixed(4)}, есть ${userGram.toFixed(4)}` 
         });
       }
 
-      // Комиссия в GRAM
       if (userGram < COMMISSION) {
         return res.status(400).json({ 
           ok: false, 
@@ -787,44 +786,39 @@ app.post('/api/wallet/exchange', async (req, res) => {
         });
       }
 
-      // Расчет изменения цены: покупка → цена растет
-      const volumePercent = amount * 0.001; // 1 GRAM = 0.1%
-      newPrice = Math.round(currentPrice * (1 + volumePercent));
+      // Покупаем PIXR → цена PIXR РАСТЕТ
+      const volumePercent = amount * 0.00001; // 1 PIXR = 0.001% изменения
+      newPrice = Math.max(0.0001, currentPrice * (1 + volumePercent));
+      
+      pixrChange = amount;
+      gramChange = -(neededGram + COMMISSION);
 
-      // Списываем PIXR, начисляем GRAM, списываем комиссию
-      pixrChange = -neededPixr;
-      gramChange = amount - COMMISSION;
-
-      // Обновляем статистику рынка
       market.totalBuyVolume = (market.totalBuyVolume || 0) + amount;
 
-    // --- ПРОДАЖА (Продаем GRAM за PIXR) ---
+    // --- ПРОДАЖА PIXR (тратишь PIXR, получаешь GRAM) ---
     } else if (type === 'sell') {
-      if (userGram < amount) {
+      if (userPixr < amount) {
         return res.status(400).json({ 
           ok: false, 
-          error: `Недостаточно GRAM. Есть ${userGram}, нужно ${amount}` 
+          error: `Недостаточно PIXR. Есть ${userPixr}, нужно ${amount}` 
         });
       }
 
-      // Комиссия в GRAM
-      if (amount < COMMISSION) {
+      if (userGram < COMMISSION) {
         return res.status(400).json({ 
           ok: false, 
-          error: `Сумма должна быть больше комиссии (${COMMISSION})` 
+          error: `Недостаточно GRAM для комиссии (${COMMISSION})` 
         });
       }
 
-      // Расчет изменения цены: продажа → цена падает
-      const volumePercent = amount * 0.001; // 1 GRAM = 0.1%
-      newPrice = Math.round(currentPrice * (1 - volumePercent));
+      // Продаем PIXR → цена PIXR ПАДАЕТ
+      const volumePercent = amount * 0.00001; // 1 PIXR = 0.001% изменения
+      newPrice = Math.max(0.0001, currentPrice * (1 - volumePercent));
+      
+      const earnedGram = amount * currentPrice;
+      pixrChange = -amount;
+      gramChange = earnedGram - COMMISSION;
 
-      // Списываем GRAM, начисляем PIXR, списываем комиссию
-      const earnedPixr = Math.floor(amount * currentPrice);
-      pixrChange = earnedPixr;
-      gramChange = -(amount);
-
-      // Обновляем статистику рынка
       market.totalSellVolume = (market.totalSellVolume || 0) + amount;
 
     } else {
@@ -832,15 +826,12 @@ app.post('/api/wallet/exchange', async (req, res) => {
     }
 
     // --- ПРИМЕНЯЕМ ИЗМЕНЕНИЯ ---
-
-    // 1. Обновляем цену и историю
     market.currentPrice = newPrice;
     market.history.push(newPrice);
     if (market.history.length > 100) market.history.shift();
     market.lastUpdated = Date.now();
     await market.save();
 
-    // 2. Обновляем баланс пользователя (атомарно)
     await Save.findOneAndUpdate(
       { tgId: tg.id },
       {
@@ -851,7 +842,6 @@ app.post('/api/wallet/exchange', async (req, res) => {
       }
     );
 
-    // 3. Логируем сделку
     await logAdminAction('market', type, tg.id, {
       amount,
       price: currentPrice,
@@ -861,14 +851,12 @@ app.post('/api/wallet/exchange', async (req, res) => {
       gramChange
     });
 
-    // 4. Получаем обновленные балансы
     const updatedUser = await Save.findOne({ tgId: tg.id });
     const newBalances = {
       pixr: updatedUser?.data?.pixr || 0,
       gram: updatedUser?.data?.gram || 0
     };
 
-    // Отправляем ответ
     res.json({
       ok: true,
       type: type,

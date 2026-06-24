@@ -1,11 +1,10 @@
 /*
   ══════════════════════════════════════════════════════
   ui.js — Интерфейс панелей и вкладок
-  Содержит: renderUpgrades, buyUpgrade, renderFloors,
-  openFloorLoot, goToFloor, renderRating, renderWallet,
-  switchTab, экран выбора персонажа (selectChar,
-  confirmChar, applyCharacter, startGame, анимации)
-  + БИРЖА PIXR/GRAM с графиком и комиссией
+  ВЕРСИЯ С БИРЖЕЙ PIXR/GRAM (торгуем PIXR)
+  + Пополнение/Вывод GRAM
+  + Живой график (обновление каждые 5 сек)
+  + Цена: 1 PIXR = 0.001 GRAM (БЕЗ УМНОЖЕНИЙ!)
   ══════════════════════════════════════════════════════
 */
 
@@ -14,9 +13,10 @@
 // ═══════════════════════════════
 var _upgTab = 'stats';
 var _walletTab = 'wallet'; // 'wallet' | 'stats'
-var _marketPrice = 1000;
+var _marketPrice = 0.001; // 1 PIXR = 0.001 GRAM
 var _marketHistory = [];
 var _friendsLoading = false;
+var _priceUpdateInterval = null;
 
 // ═══════════════════════════════
 //  ВКЛАДКА УЛУЧШЕНИЙ
@@ -66,12 +66,11 @@ function renderUpgrades() {
     ${coinSvg} <span>Золото: <span style="color:#f5c542;font-weight:bold">${G.gold}</span></span>
   </div>`;
 
-  // ── Характеристики ──
   if (_upgTab === 'stats') {
     body.innerHTML = header + tabBar + UPG_DEFS.map(u => {
       const lv = G.upg[u.id], maxLv = u.maxLv;
-      const cost    = lv < maxLv ? upgCost(u) : '-';
-      const pct     = (lv / maxLv * 100) + '%';
+      const cost = lv < maxLv ? upgCost(u) : '-';
+      const pct = (lv / maxLv * 100) + '%';
       const statVal = u.id === 'atkSpd'
         ? G.stats.atkSpd.toFixed(2) + 'x (' + getAtkCooldown().toFixed(1) + 's)'
         : G.stats[u.stat];
@@ -94,45 +93,44 @@ function renderUpgrades() {
     return;
   }
 
-  // ── Навыки ──
   if (!G_CHAR) {
     body.innerHTML = header + tabBar + '<div style="color:#445;text-align:center;padding:40px 0;font-size:12px;">Выбери персонажа для просмотра навыков</div>';
     return;
   }
-  var skills   = SKILLS_DEF[G_CHAR.id] || [];
+  var skills = SKILLS_DEF[G_CHAR.id] || [];
   var charCols = { fire: '#ff6600', light: '#ffd060', water: '#44aaff' };
-  var col      = charCols[G_CHAR.id] || '#aaa';
+  var col = charCols[G_CHAR.id] || '#aaa';
   var totalBooks = G.inventory.filter(function(i){ return i.isSkillBook; }).length;
-  var booksInfo  = '<div style="font-size:10px;color:#778;margin-bottom:10px;padding:6px 10px;background:rgba(167,139,250,0.06);border:1px solid #3a2a6a;border-radius:6px;display:flex;align-items:center;gap:6px;">' +
+  var booksInfo = '<div style="font-size:10px;color:#778;margin-bottom:10px;padding:6px 10px;background:rgba(167,139,250,0.06);border:1px solid #3a2a6a;border-radius:6px;display:flex;align-items:center;gap:6px;">' +
     '<span style="font-size:16px">📖</span><span>Книг в инвентаре: <strong style="color:#a78bfa">' + totalBooks + '</strong></span>' +
     '<span style="color:#445;font-size:9px;margin-left:auto">Шанс: ~1%</span></div>';
 
   var skillsHtml = skills.map(function(sk) {
-    var st      = getSkillState(sk.id);
-    var have    = countBooksInInv(sk.id);
-    var cost    = skillBookCost(st);
-    var isMax   = st.unlocked && st.level >= 5;
-    var canUse  = have >= cost && !isMax;
+    var st = getSkillState(sk.id);
+    var have = countBooksInInv(sk.id);
+    var cost = skillBookCost(st);
+    var isMax = st.unlocked && st.level >= 5;
+    var canUse = have >= cost && !isMax;
     var statusText = !st.unlocked ? '🔒 Заблокирован' : 'Lv.' + st.level + '/5';
-    var statusCol  = !st.unlocked ? '#554' : col;
-    var barPct     = st.unlocked ? (st.level / 5 * 100) : 0;
+    var statusCol = !st.unlocked ? '#554' : col;
+    var barPct = st.unlocked ? (st.level / 5 * 100) : 0;
     var nextAction;
-    if (isMax)             nextAction = 'МАКС';
+    if (isMax) nextAction = 'МАКС';
     else if (!st.unlocked) nextAction = 'Открыть (1 книга)';
-    else                   nextAction = 'Lv.' + st.level + '→' + (st.level+1) + ' (' + cost + ' книг)';
+    else nextAction = 'Lv.' + st.level + '→' + (st.level+1) + ' (' + cost + ' книг)';
     var btnStyle;
-    if (isMax)       btnStyle = 'border:1px solid #444;background:rgba(255,255,255,0.02);color:#555;cursor:not-allowed;opacity:0.5;';
+    if (isMax) btnStyle = 'border:1px solid #444;background:rgba(255,255,255,0.02);color:#555;cursor:not-allowed;opacity:0.5;';
     else if (canUse) btnStyle = 'border:1.5px solid ' + (st.unlocked ? col : '#a78bfa') + ';background:rgba(167,139,250,0.12);color:' + (st.unlocked ? col : '#a78bfa') + ';cursor:pointer;';
-    else             btnStyle = 'border:1px solid #333;background:rgba(255,255,255,0.02);color:#445;cursor:not-allowed;';
+    else btnStyle = 'border:1px solid #333;background:rgba(255,255,255,0.02);color:#445;cursor:not-allowed;';
     var bonusDesc = '';
-    if      (sk.id === 'fire_fireball' || sk.id === 'light_smite') bonusDesc = '+10% урон / ур.';
-    else if (sk.id === 'fire_curse')    bonusDesc = '+3% снижение защиты / ур.';
-    else if (sk.id === 'fire_haste')    bonusDesc = '+0.5с длительность / ур.';
-    else if (sk.id === 'light_shield')  bonusDesc = '+3% защита / ур.';
+    if (sk.id === 'fire_fireball' || sk.id === 'light_smite') bonusDesc = '+10% урон / ур.';
+    else if (sk.id === 'fire_curse') bonusDesc = '+3% снижение защиты / ур.';
+    else if (sk.id === 'fire_haste') bonusDesc = '+0.5с длительность / ур.';
+    else if (sk.id === 'light_shield') bonusDesc = '+3% защита / ур.';
     else if (sk.id === 'light_reflect') bonusDesc = '+1% отражение / ур.';
-    else if (sk.id === 'water_burst')   bonusDesc = '+1 выстрел / 2 ур.';
-    else if (sk.id === 'water_critup')  bonusDesc = '+3% крит / ур.';
-    else if (sk.id === 'water_freeze')  bonusDesc = '+0.4с заморозка / ур.';
+    else if (sk.id === 'water_burst') bonusDesc = '+1 выстрел / 2 ур.';
+    else if (sk.id === 'water_critup') bonusDesc = '+3% крит / ур.';
+    else if (sk.id === 'water_freeze') bonusDesc = '+0.4с заморозка / ур.';
     return '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + (st.unlocked ? col + '55' : '#2a2a3a') + ';overflow:hidden;background:rgba(255,255,255,0.02);">' +
       '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);">' +
       '<img src="' + sk.icon + '" style="width:44px;height:44px;object-fit:contain;image-rendering:pixelated;flex-shrink:0;" onerror="this.style.opacity=0.3">' +
@@ -157,9 +155,9 @@ function openFloorLoot(floorN) {
   var f = FLOORS[floorN - 1];
   if (!f) return;
   var rarityColors = { common:'#888', uncommon:'#2ecc71', rare:'#3498db', epic:'#9b59b6', legend:'#f5c542' };
-  var rarityNames  = { common:'Обычный', uncommon:'Необычный', rare:'Редкий', epic:'Эпический', legend:'Легендарный' };
-  var classColors  = { fire:'#ff7030', light:'#ffd040', water:'#40d0ff' };
-  var classLabels  = { fire:'Пирокан', light:'Люмос', water:'Аквас' };
+  var rarityNames = { common:'Обычный', uncommon:'Необычный', rare:'Редкий', epic:'Эпический', legend:'Легендарный' };
+  var classColors = { fire:'#ff7030', light:'#ffd040', water:'#40d0ff' };
+  var classLabels = { fire:'Пирокан', light:'Люмос', water:'Аквас' };
   var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">' +
     '<span style="font-size:28px">' + f.emoji + '</span>' +
     '<div><div style="font-size:15px;font-weight:bold;color:#f5c542;">Этаж ' + f.n + ': ' + f.name + '</div>' +
@@ -193,28 +191,28 @@ function openFloorLoot(floorN) {
 function closeFloorLootModal() { document.getElementById('floorLootModal').classList.remove('show'); }
 
 function renderFloors() {
-  const cp   = calcCP();
+  const cp = calcCP();
   const body = document.getElementById('floorsBody');
-  let html   = '';
+  let html = '';
   html += '<div style="font-size:11px;color:#778;margin-bottom:12px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;display:flex;justify-content:space-between;align-items:center;">';
   html += '<span>CP: <strong style="color:#fa0">' + cp + '</strong></span>';
   html += '<span style="color:#8af">Этаж: <strong style="color:#fff">' + G.floor + '</strong></span>';
   html += '<span style="color:#556;font-size:10px;">' + G.floor + '/' + FLOORS.length + '</span></div>';
 
   FLOORS.forEach(function(f) {
-    var unlocked  = cp >= f.cpReq;
+    var unlocked = cp >= f.cpReq;
     var isCurrent = G.floor === f.n;
-    var visited   = G.maxFloor >= f.n;
-    var locked    = !unlocked;
-    var avgXp   = Math.round(f.baseXp.reduce(function(a,b){return a+b;},0) / f.baseXp.length * f.xpMult);
-    var maxXp   = Math.round(Math.max.apply(null, f.baseXp) * f.xpMult);
+    var visited = G.maxFloor >= f.n;
+    var locked = !unlocked;
+    var avgXp = Math.round(f.baseXp.reduce(function(a,b){return a+b;},0) / f.baseXp.length * f.xpMult);
+    var maxXp = Math.round(Math.max.apply(null, f.baseXp) * f.xpMult);
     var avgGold = Math.round(f.baseGold.reduce(function(a,b){return a+b;},0) / f.baseGold.length * f.goldMult);
     var maxGold = Math.round(Math.max.apply(null, f.baseGold) * f.goldMult);
-    var cpLeft  = f.cpReq - cp;
+    var cpLeft = f.cpReq - cp;
     var borderColor = '#2a2a5a', extraStyle = '';
-    if (isCurrent)                { borderColor = '#f5c542'; extraStyle = 'box-shadow:0 0 14px rgba(245,197,66,0.22);'; }
+    if (isCurrent) { borderColor = '#f5c542'; extraStyle = 'box-shadow:0 0 14px rgba(245,197,66,0.22);'; }
     else if (visited && unlocked) { borderColor = '#2ecc71'; }
-    else if (locked)              { borderColor = '#2a2a3a'; extraStyle = 'opacity:0.6;'; }
+    else if (locked) { borderColor = '#2a2a3a'; extraStyle = 'opacity:0.6;'; }
 
     html += '<div style="margin-bottom:14px;border-radius:10px;border:1.5px solid ' + borderColor + ';' + extraStyle + 'overflow:hidden;">';
     html += '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border-bottom:1px solid #1a1a35;">';
@@ -241,8 +239,8 @@ function renderFloors() {
       html += '<div style="flex:1;padding:8px;font-size:11px;border-radius:6px;border:1.5px solid #f5c542;background:rgba(245,197,66,0.07);color:#f5c542;text-align:center;box-sizing:border-box;letter-spacing:1px;">&#10022; ТЕКУЩИЙ ЭТАЖ &#10022;</div>';
     } else if (unlocked) {
       var btnColor = visited ? '#2ecc71' : '#f5c542';
-      var btnBg    = visited ? 'rgba(46,204,113,0.1)' : 'rgba(245,197,66,0.1)';
-      var btnText  = visited ? '&#9654; ПЕРЕЙТИ' : '&#9654; ВОЙТИ ВПЕРВЫЕ';
+      var btnBg = visited ? 'rgba(46,204,113,0.1)' : 'rgba(245,197,66,0.1)';
+      var btnText = visited ? '&#9654; ПЕРЕЙТИ' : '&#9654; ВОЙТИ ВПЕРВЫЕ';
       html += '<button onclick="goToFloor(' + f.n + ')" style="flex:1;padding:9px;font-size:12px;font-family:Courier New,monospace;border-radius:6px;border:1.5px solid ' + btnColor + ';background:' + btnBg + ';color:' + btnColor + ';cursor:pointer;letter-spacing:1px;">' + btnText + '</button>';
     } else {
       html += '<div style="flex:1;padding:8px;font-size:11px;border-radius:6px;border:1px solid #333;background:rgba(255,255,255,0.02);color:#446;text-align:center;box-sizing:border-box;">&#128274; Нужно ' + f.cpReq + ' CP</div>';
@@ -254,7 +252,7 @@ function renderFloors() {
 
 function goToFloor(n) {
   const cp = calcCP();
-  const f  = FLOORS[n - 1];
+  const f = FLOORS[n - 1];
   if (cp < f.cpReq) { flashRed(); return; }
   G.floor = n;
   G.maxFloor = Math.max(G.maxFloor, n);
@@ -395,23 +393,25 @@ function renderRatingData(players, body) {
 //  SVG ИКОНКИ ДЛЯ СТАТИСТИКИ
 // ═══════════════════════════════
 function swordStatSvg(c) { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="7" fill="${c}"/><rect x="2" y="3" width="6" height="2" fill="${c}"/><rect x="4" y="7" width="2" height="1" fill="${c}" opacity="0.7"/><rect x="3" y="8" width="4" height="1" fill="${c}" opacity="0.7"/><rect x="4" y="9" width="2" height="1" fill="${c}" opacity="0.7"/></svg>`; }
-function shieldSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#3498db"/><rect x="0" y="2" width="2" height="4" fill="#3498db"/><rect x="8" y="2" width="2" height="4" fill="#3498db"/><rect x="2" y="0" width="2" height="3" fill="#5dade2"/><rect x="6" y="0" width="2" height="3" fill="#5dade2"/><rect x="2" y="6" width="3" height="2" fill="#3498db"/><rect x="5" y="6" width="3" height="2" fill="#3498db"/><rect x="4" y="8" width="2" height="2" fill="#2980b9"/></svg>`; }
-function heartSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="3" height="2" fill="#e74c3c"/><rect x="6" y="1" width="3" height="2" fill="#e74c3c"/><rect x="0" y="2" width="10" height="4" fill="#e74c3c"/><rect x="1" y="6" width="8" height="2" fill="#e74c3c"/><rect x="2" y="8" width="6" height="1" fill="#c0392b"/><rect x="3" y="9" width="4" height="1" fill="#c0392b"/></svg>`; }
-function windSvg()     { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="0" y="3" width="6" height="2" fill="#2ecc71"/><rect x="2" y="1" width="4" height="2" fill="#27ae60"/><rect x="0" y="5" width="8" height="2" fill="#2ecc71"/><rect x="2" y="7" width="6" height="2" fill="#27ae60"/><rect x="6" y="1" width="2" height="4" fill="#2ecc71"/><rect x="8" y="5" width="2" height="2" fill="#27ae60"/></svg>`; }
-function critSvg()     { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="3" fill="#f5c542"/><rect x="4" y="7" width="2" height="3" fill="#f5c542"/><rect x="0" y="4" width="3" height="2" fill="#f5c542"/><rect x="7" y="4" width="3" height="2" fill="#f5c542"/><rect x="1" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="1" y="7" width="2" height="2" fill="#f5c542"/><rect x="7" y="7" width="2" height="2" fill="#f5c542"/><rect x="3" y="3" width="4" height="4" fill="#fff8d0"/></svg>`; }
-function dodgeSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="3" y="0" width="2" height="3" fill="#9b59b6"/><rect x="7" y="0" width="2" height="3" fill="#9b59b6"/><rect x="0" y="3" width="3" height="2" fill="#9b59b6"/><rect x="7" y="3" width="3" height="2" fill="#9b59b6"/><rect x="0" y="6" width="3" height="2" fill="#9b59b6"/><rect x="7" y="6" width="3" height="2" fill="#9b59b6"/><rect x="3" y="7" width="2" height="3" fill="#9b59b6"/><rect x="7" y="7" width="2" height="3" fill="#9b59b6"/><rect x="4" y="3" width="2" height="2" fill="#c39bd3"/><rect x="3" y="4" width="4" height="2" fill="#c39bd3"/></svg>`; }
-function skullSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="1" width="6" height="6" fill="#aaa"/><rect x="0" y="3" width="2" height="4" fill="#aaa"/><rect x="8" y="3" width="2" height="4" fill="#aaa"/><rect x="2" y="7" width="6" height="2" fill="#aaa"/><rect x="3" y="9" width="2" height="1" fill="#888"/><rect x="6" y="9" width="2" height="1" fill="#888"/><rect x="2" y="3" width="2" height="2" fill="#0d0d1a"/><rect x="6" y="3" width="2" height="2" fill="#0d0d1a"/><rect x="4" y="6" width="2" height="1" fill="#0d0d1a"/></svg>`; }
-function cupSvg()      { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="1" width="6" height="4" fill="#f5c542"/><rect x="0" y="1" width="2" height="3" fill="#f5c542"/><rect x="8" y="1" width="2" height="3" fill="#f5c542"/><rect x="3" y="5" width="4" height="2" fill="#f5c542"/><rect x="4" y="7" width="2" height="1" fill="#c8a000"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/></svg>`; }
-function towerSvg()    { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="2" width="6" height="8" fill="#7ab8ff"/><rect x="2" y="1" width="2" height="3" fill="#7ab8ff"/><rect x="5" y="0" width="2" height="4" fill="#7ab8ff"/><rect x="8" y="1" width="2" height="3" fill="#7ab8ff"/><rect x="3" y="4" width="2" height="2" fill="#0d0d1a"/><rect x="6" y="4" width="2" height="2" fill="#0d0d1a"/><rect x="4" y="7" width="2" height="3" fill="#0d0d1a"/></svg>`; }
-function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="#ffaa00"/><rect x="3" y="3" width="2" height="2" fill="#ffaa00"/><rect x="5" y="1" width="2" height="2" fill="#ffaa00"/><rect x="7" y="3" width="2" height="2" fill="#ffaa00"/><rect x="3" y="5" width="4" height="2" fill="#ffcc44"/><rect x="2" y="7" width="6" height="2" fill="#ff8800"/></svg>`; }
+function shieldSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="0" width="6" height="2" fill="#3498db"/><rect x="0" y="2" width="2" height="4" fill="#3498db"/><rect x="8" y="2" width="2" height="4" fill="#3498db"/><rect x="2" y="0" width="2" height="3" fill="#5dade2"/><rect x="6" y="0" width="2" height="3" fill="#5dade2"/><rect x="2" y="6" width="3" height="2" fill="#3498db"/><rect x="5" y="6" width="3" height="2" fill="#3498db"/><rect x="4" y="8" width="2" height="2" fill="#2980b9"/></svg>`; }
+function heartSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="3" height="2" fill="#e74c3c"/><rect x="6" y="1" width="3" height="2" fill="#e74c3c"/><rect x="0" y="2" width="10" height="4" fill="#e74c3c"/><rect x="1" y="6" width="8" height="2" fill="#e74c3c"/><rect x="2" y="8" width="6" height="1" fill="#c0392b"/><rect x="3" y="9" width="4" height="1" fill="#c0392b"/></svg>`; }
+function windSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="0" y="3" width="6" height="2" fill="#2ecc71"/><rect x="2" y="1" width="4" height="2" fill="#27ae60"/><rect x="0" y="5" width="8" height="2" fill="#2ecc71"/><rect x="2" y="7" width="6" height="2" fill="#27ae60"/><rect x="6" y="1" width="2" height="4" fill="#2ecc71"/><rect x="8" y="5" width="2" height="2" fill="#27ae60"/></svg>`; }
+function critSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="4" y="0" width="2" height="3" fill="#f5c542"/><rect x="4" y="7" width="2" height="3" fill="#f5c542"/><rect x="0" y="4" width="3" height="2" fill="#f5c542"/><rect x="7" y="4" width="3" height="2" fill="#f5c542"/><rect x="1" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="1" y="7" width="2" height="2" fill="#f5c542"/><rect x="7" y="7" width="2" height="2" fill="#f5c542"/><rect x="3" y="3" width="4" height="4" fill="#fff8d0"/></svg>`; }
+function dodgeSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="3" y="0" width="2" height="3" fill="#9b59b6"/><rect x="7" y="0" width="2" height="3" fill="#9b59b6"/><rect x="0" y="3" width="3" height="2" fill="#9b59b6"/><rect x="7" y="3" width="3" height="2" fill="#9b59b6"/><rect x="0" y="6" width="3" height="2" fill="#9b59b6"/><rect x="7" y="6" width="3" height="2" fill="#9b59b6"/><rect x="3" y="7" width="2" height="3" fill="#9b59b6"/><rect x="7" y="7" width="2" height="3" fill="#9b59b6"/><rect x="4" y="3" width="2" height="2" fill="#c39bd3"/><rect x="3" y="4" width="4" height="2" fill="#c39bd3"/></svg>`; }
+function skullSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="1" width="6" height="6" fill="#aaa"/><rect x="0" y="3" width="2" height="4" fill="#aaa"/><rect x="8" y="3" width="2" height="4" fill="#aaa"/><rect x="2" y="7" width="6" height="2" fill="#aaa"/><rect x="3" y="9" width="2" height="1" fill="#888"/><rect x="6" y="9" width="2" height="1" fill="#888"/><rect x="2" y="3" width="2" height="2" fill="#0d0d1a"/><rect x="6" y="3" width="2" height="2" fill="#0d0d1a"/><rect x="4" y="6" width="2" height="1" fill="#0d0d1a"/></svg>`; }
+function cupSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="1" width="6" height="4" fill="#f5c542"/><rect x="0" y="1" width="2" height="3" fill="#f5c542"/><rect x="8" y="1" width="2" height="3" fill="#f5c542"/><rect x="3" y="5" width="4" height="2" fill="#f5c542"/><rect x="4" y="7" width="2" height="1" fill="#c8a000"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/></svg>`; }
+function towerSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="2" y="2" width="6" height="8" fill="#7ab8ff"/><rect x="2" y="1" width="2" height="3" fill="#7ab8ff"/><rect x="5" y="0" width="2" height="4" fill="#7ab8ff"/><rect x="8" y="1" width="2" height="3" fill="#7ab8ff"/><rect x="3" y="4" width="2" height="2" fill="#0d0d1a"/><rect x="6" y="4" width="2" height="2" fill="#0d0d1a"/><rect x="4" y="7" width="2" height="3" fill="#0d0d1a"/></svg>`; }
+function atkSpdSvg() { return `<svg width="20" height="20" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated"><rect x="1" y="1" width="2" height="2" fill="#ffaa00"/><rect x="3" y="3" width="2" height="2" fill="#ffaa00"/><rect x="5" y="1" width="2" height="2" fill="#ffaa00"/><rect x="7" y="3" width="2" height="2" fill="#ffaa00"/><rect x="3" y="5" width="4" height="2" fill="#ffcc44"/><rect x="2" y="7" width="6" height="2" fill="#ff8800"/></svg>`; }
 
 // ═══════════════════════════════
-//  ВКЛАДКА КОШЕЛЕК (С БИРЖЕЙ)
+//  ВКЛАДКА КОШЕЛЕК (С БИРЖЕЙ) — ЦЕНА 1 PIXR = 0.001 GRAM
 // ═══════════════════════════════
 function renderWallet() {
   const cp = calcCP();
   const pixr = G.pixr || 0;
-  const gram = (G.gram || 0).toFixed(3);
+  const gram = (G.gram || 0).toFixed(4);
+  const price = _marketPrice || 0.001;
+  // НЕ УМНОЖАЕМ НА 1000! Цена = 0.001
 
   const tabsHtml = `
     <div style="display:flex;gap:4px;margin-bottom:12px;">
@@ -442,12 +442,12 @@ function renderWallet() {
     <!-- Маркет-статус -->
     <div style="background:rgba(64,208,255,0.05);border:1px solid #2a4a6a;border-radius:12px;padding:12px;margin-bottom:12px;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:11px;color:#778;">PIXR / GRAM</span>
-        <span style="font-size:18px;font-weight:bold;color:#40d0ff;" id="marketPrice">${_marketPrice || '1000'}</span>
+        <span style="font-size:11px;color:#778;">1 PIXR = <span id="marketPriceLabel">${(price).toFixed(4)}</span> GRAM</span>
+        <span style="font-size:18px;font-weight:bold;color:#40d0ff;" id="marketPrice">${(price).toFixed(4)}</span>
       </div>
       <div style="display:flex;gap:12px;margin-top:6px;font-size:10px;color:#556;">
-        <span>📈 Объем покупок: <span id="buyVol">0</span></span>
-        <span>📉 Объем продаж: <span id="sellVol">0</span></span>
+        <span>📈 Объем покупок PIXR: <span id="buyVol">0</span></span>
+        <span>📉 Объем продаж PIXR: <span id="sellVol">0</span></span>
       </div>
     </div>
 
@@ -459,21 +459,21 @@ function renderWallet() {
     <!-- Форма обмена -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
       <div style="padding:10px;background:rgba(46,204,113,0.06);border:1px solid #1a4a3a;border-radius:8px;">
-        <div style="font-size:9px;color:#778;">ПОКУПКА GRAM</div>
-        <div style="font-size:11px;color:#2ecc71;margin:4px 0;">Цена: <span id="buyPrice">${_marketPrice || '1000'}</span> PIXR</div>
-        <input id="buyAmount" type="number" min="0.1" step="0.1" value="1" 
+        <div style="font-size:9px;color:#778;">КУПИТЬ PIXR</div>
+        <div style="font-size:11px;color:#2ecc71;margin:4px 0;">Цена: <span id="buyPrice">${(price).toFixed(4)}</span> GRAM</div>
+        <input id="buyAmount" type="number" min="1" step="1" value="1" 
           style="width:100%;padding:6px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:4px;color:#fff;font-size:13px;font-family:'Courier New',monospace;margin:4px 0;">
         <button onclick="submitExchange('buy')" style="width:100%;padding:8px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;font-family:'Courier New',monospace;">
-          Купить
+          Купить PIXR
         </button>
       </div>
       <div style="padding:10px;background:rgba(231,76,60,0.06);border:1px solid #4a1a1a;border-radius:8px;">
-        <div style="font-size:9px;color:#778;">ПРОДАЖА GRAM</div>
-        <div style="font-size:11px;color:#e74c3c;margin:4px 0;">Цена: <span id="sellPrice">${_marketPrice || '1000'}</span> PIXR</div>
-        <input id="sellAmount" type="number" min="0.1" step="0.1" value="1" 
+        <div style="font-size:9px;color:#778;">ПРОДАТЬ PIXR</div>
+        <div style="font-size:11px;color:#e74c3c;margin:4px 0;">Цена: <span id="sellPrice">${(price).toFixed(4)}</span> GRAM</div>
+        <input id="sellAmount" type="number" min="1" step="1" value="1" 
           style="width:100%;padding:6px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:4px;color:#fff;font-size:13px;font-family:'Courier New',monospace;margin:4px 0;">
         <button onclick="submitExchange('sell')" style="width:100%;padding:8px;background:linear-gradient(90deg,#5a2a2a,#8a3a3a);border:none;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;font-family:'Courier New',monospace;">
-          Продать
+          Продать PIXR
         </button>
       </div>
     </div>
@@ -490,13 +490,47 @@ function renderWallet() {
       </div>
     </div>
 
-    <div id="exchangeResult" style="font-size:11px;text-align:center;min-height:20px;color:#556;"></div>
+    <!-- Кнопки Пополнение/Вывод -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+      <button onclick="openDepositModal()" style="padding:10px;background:linear-gradient(90deg,#1a5a3a,#2a8a4a);border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+        📥 Пополнить GRAM
+      </button>
+      <button onclick="openWithdrawModal()" style="padding:10px;background:linear-gradient(90deg,#5a2a2a,#8a3a3a);border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+        📤 Вывести GRAM
+      </button>
+    </div>
+
+    <!-- Последние транзакции -->
+    <div id="txList" style="margin-top:4px;">
+      <div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:6px;">ИСТОРИЯ ТРАНЗАКЦИЙ</div>
+      <div style="color:#445;text-align:center;padding:20px 0;font-size:12px;">Загрузка...</div>
+    </div>
+
+    <div id="exchangeResult" style="font-size:11px;text-align:center;min-height:20px;color:#556;margin-top:8px;"></div>
   `;
 
   document.getElementById('walletBody').innerHTML = html;
   
-  // Загружаем рыночные данные
   loadMarketData();
+  startPriceUpdates();
+  loadTransactions();
+}
+
+// --- ЗАПУСК ЖИВОГО ОБНОВЛЕНИЯ ЦЕНЫ ---
+function startPriceUpdates() {
+  if (_priceUpdateInterval) clearInterval(_priceUpdateInterval);
+  _priceUpdateInterval = setInterval(function() {
+    if (_walletTab === 'wallet') {
+      loadMarketData();
+    }
+  }, 5000);
+}
+
+function stopPriceUpdates() {
+  if (_priceUpdateInterval) {
+    clearInterval(_priceUpdateInterval);
+    _priceUpdateInterval = null;
+  }
 }
 
 // --- ЗАГРУЗКА РЫНОЧНЫХ ДАННЫХ ---
@@ -507,18 +541,23 @@ function loadMarketData() {
     .then(r => r.json())
     .then(r => {
       if (r.ok) {
-        _marketPrice = r.price || 1000;
+        _marketPrice = r.price || 0.001;
         _marketHistory = r.history || [_marketPrice];
         
-        // Обновляем UI
+        // НЕ УМНОЖАЕМ НА 1000!
+        const displayPrice = _marketPrice;
+        
         const priceEl = document.getElementById('marketPrice');
-        if (priceEl) priceEl.textContent = _marketPrice;
+        if (priceEl) priceEl.textContent = (displayPrice).toFixed(4);
+        
+        const priceLabel = document.getElementById('marketPriceLabel');
+        if (priceLabel) priceLabel.textContent = (displayPrice).toFixed(4);
         
         const buyPrice = document.getElementById('buyPrice');
-        if (buyPrice) buyPrice.textContent = _marketPrice;
+        if (buyPrice) buyPrice.textContent = (displayPrice).toFixed(4);
         
         const sellPrice = document.getElementById('sellPrice');
-        if (sellPrice) sellPrice.textContent = _marketPrice;
+        if (sellPrice) sellPrice.textContent = (displayPrice).toFixed(4);
         
         const buyVol = document.getElementById('buyVol');
         if (buyVol) buyVol.textContent = r.buyVolume || 0;
@@ -526,7 +565,6 @@ function loadMarketData() {
         const sellVol = document.getElementById('sellVol');
         if (sellVol) sellVol.textContent = r.sellVolume || 0;
         
-        // Рисуем график
         drawChart(_marketHistory);
       }
     })
@@ -556,7 +594,6 @@ function drawChart(history) {
   const max = Math.max(...data) * 1.02;
   const range = max - min || 1;
   
-  // Сетка
   ctx.strokeStyle = 'rgba(42,42,90,0.3)';
   ctx.lineWidth = 0.5;
   for (let i = 0; i < 5; i++) {
@@ -567,7 +604,6 @@ function drawChart(history) {
     ctx.stroke();
   }
   
-  // Линия цены
   const firstPrice = data[0];
   const lastPrice = data[data.length - 1];
   const isGreen = lastPrice >= firstPrice;
@@ -585,7 +621,6 @@ function drawChart(history) {
   });
   ctx.stroke();
   
-  // Заливка под графиком
   const lastX = w;
   const lastY = h - ((lastPrice - min) / range) * h;
   ctx.lineTo(lastX, h);
@@ -594,17 +629,17 @@ function drawChart(history) {
   ctx.fillStyle = isGreen ? 'rgba(46,204,113,0.1)' : 'rgba(231,76,60,0.1)';
   ctx.fill();
   
-  // Текущая цена (последняя точка)
   ctx.fillStyle = lineColor;
   ctx.beginPath();
   ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
   ctx.fill();
   
-  // Надпись с ценой
+  // НЕ УМНОЖАЕМ!
   ctx.fillStyle = '#aaa';
   ctx.font = '9px Courier New';
   ctx.textAlign = 'right';
-  ctx.fillText(lastPrice, lastX - 6, lastY - 6);
+  const displayLast = (lastPrice).toFixed(4);
+  ctx.fillText(displayLast, lastX - 6, lastY - 6);
 }
 
 // --- ОБМЕН НА БИРЖЕ ---
@@ -618,12 +653,35 @@ function submitExchange(type) {
     return;
   }
   
-  if (amount < 0.1) {
-    result.innerHTML = '<span style="color:#e74c3c;">Минимальная сумма 0.1 GRAM</span>';
+  if (amount < 1) {
+    result.innerHTML = '<span style="color:#e74c3c;">Минимальная сумма 1 PIXR</span>';
     return;
   }
   
   result.innerHTML = '<span style="color:#f5c542;">⏳ Обработка...</span>';
+  
+  const price = _marketPrice || 0.001;
+  
+  if (type === 'buy') {
+    const neededGram = amount * price;
+    if (G.gram < neededGram) {
+      result.innerHTML = `<span style="color:#e74c3c;">❌ Недостаточно GRAM. Нужно ${neededGram.toFixed(4)} GRAM</span>`;
+      return;
+    }
+    if (G.gram < 0.1) {
+      result.innerHTML = `<span style="color:#e74c3c;">❌ Недостаточно GRAM для комиссии (0.1)</span>`;
+      return;
+    }
+  } else if (type === 'sell') {
+    if (G.pixr < amount) {
+      result.innerHTML = `<span style="color:#e74c3c;">❌ Недостаточно PIXR. Есть ${G.pixr}</span>`;
+      return;
+    }
+    if (G.gram < 0.1) {
+      result.innerHTML = `<span style="color:#e74c3c;">❌ Недостаточно GRAM для комиссии (0.1)</span>`;
+      return;
+    }
+  }
   
   fetch(window.GameSync._API + '/api/wallet/exchange', {
     method: 'POST',
@@ -637,22 +695,21 @@ function submitExchange(type) {
   .then(r => r.json())
   .then(r => {
     if (r.ok) {
-      // Обновляем глобальные балансы
       G.pixr = r.newBalances.pixr;
       G.gram = r.newBalances.gram;
       updateHUD();
       
-      // Обновляем UI балансов
       document.getElementById('walletPixr').textContent = r.newBalances.pixr;
-      document.getElementById('walletGram').textContent = r.newBalances.gram.toFixed(3);
+      document.getElementById('walletGram').textContent = r.newBalances.gram.toFixed(4);
       
-      // Обновляем цену
       _marketPrice = r.newPrice;
       _marketHistory = r.history || [_marketPrice];
       
-      document.getElementById('marketPrice').textContent = _marketPrice;
-      document.getElementById('buyPrice').textContent = _marketPrice;
-      document.getElementById('sellPrice').textContent = _marketPrice;
+      // НЕ УМНОЖАЕМ!
+      document.getElementById('marketPrice').textContent = (_marketPrice).toFixed(4);
+      document.getElementById('marketPriceLabel').textContent = (_marketPrice).toFixed(4);
+      document.getElementById('buyPrice').textContent = (_marketPrice).toFixed(4);
+      document.getElementById('sellPrice').textContent = (_marketPrice).toFixed(4);
       
       document.getElementById('buyVol').textContent = r.buyVolume || 0;
       document.getElementById('sellVol').textContent = r.sellVolume || 0;
@@ -663,22 +720,25 @@ function submitExchange(type) {
       const changeStr = (change > 0 ? '+' : '') + change.toFixed(2) + '%';
       const changeColor = change > 0 ? '#2ecc71' : change < 0 ? '#e74c3c' : '#556';
       
+      const actionText = type === 'buy' ? 'Куплено' : 'Продано';
+      
+      // НЕ УМНОЖАЕМ!
       result.innerHTML = `
-        <span style="color:#2ecc71;">✅ ${type === 'buy' ? 'Куплено' : 'Продано'} ${amount} GRAM</span><br>
+        <span style="color:#2ecc71;">✅ ${actionText} ${amount} PIXR</span><br>
         <span style="font-size:10px;color:#556;">
-          Цена: ${r.price} → ${r.newPrice} PIXR 
+          Цена: ${(r.price).toFixed(4)} → ${(r.newPrice).toFixed(4)} GRAM 
           <span style="color:${changeColor};">(${changeStr})</span>
           · Комиссия: ${r.commission} GRAM
         </span>
       `;
       
-      // Обнуляем поле
       amountInput.value = '';
       
-      // Сохраняем прогресс
       if (window.GameSync && window.GameSync.touch) {
         window.GameSync.touch();
       }
+      
+      loadTransactions();
     } else {
       result.innerHTML = `<span style="color:#e74c3c;">❌ ${r.error || 'Ошибка'}</span>`;
     }
@@ -786,6 +846,11 @@ function loadTransactions() {
 
 function switchWalletTab(tab) {
   _walletTab = tab;
+  if (tab !== 'wallet') {
+    stopPriceUpdates();
+  } else {
+    startPriceUpdates();
+  }
   renderWallet();
 }
 
@@ -804,16 +869,16 @@ function createDepositModal() {
     <div id="depositModal" class="wallet-modal hidden" onclick="closeWalletModal(event)">
       <div class="wallet-modal-content" onclick="event.stopPropagation()">
         <div class="wallet-modal-header">
-          <span class="wallet-modal-title"><svg width="14" height="14" viewBox="0 0 12 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;margin-right:4px"><rect x="1" y="3" width="10" height="6" fill="#2a8a4a"/><rect x="2" y="4" width="8" height="4" fill="#3aaa5a"/><rect x="0" y="5" width="2" height="2" fill="#2a8a4a"/><rect x="10" y="5" width="2" height="2" fill="#2a8a4a"/><rect x="4" y="0" width="4" height="3" fill="#f5c542"/><rect x="3" y="1" width="6" height="2" fill="#ffd700"/></svg>Пополнение <img src="images/gram.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></span>
+          <span class="wallet-modal-title">📥 Пополнение GRAM</span>
           <button class="wallet-modal-close" onclick="closeWalletModal()">✕</button>
         </div>
         <div class="wallet-modal-body">
           <div class="wallet-info">
-            <div style="font-size:12px;color:#778;margin-bottom:12px;">Минимальная сумма: <b style="color:#40d0ff;">1 <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:12px;">Минимальная сумма: <b style="color:#40d0ff;">1 GRAM</b></div>
           </div>
 
           <div style="margin-bottom:12px;">
-            <label style="font-size:11px;color:#778;">Сумма (<img src="images/gram.png" style="width:11px;height:11px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">)</label>
+            <label style="font-size:11px;color:#778;">Сумма (GRAM)</label>
             <input id="depositAmount" type="number" min="1" value="1"
               style="width:100%;padding:10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:8px;color:#fff;font-size:16px;font-family:'Courier New',monospace;margin-top:4px;">
           </div>
@@ -858,7 +923,7 @@ function createDepositModal() {
 }
 
 function _copyDepositField(fieldId, btnId) {
-  var el  = document.getElementById(fieldId);
+  var el = document.getElementById(fieldId);
   var btn = document.getElementById(btnId);
   if (!el || !btn) return;
   var text = el.textContent.trim();
@@ -901,24 +966,24 @@ function openWithdrawModal() {
 }
 
 function createWithdrawModal() {
-  const gram = (G.gram || 0).toFixed(3);
+  const gram = (G.gram || 0).toFixed(4);
   const maxWithdraw = Math.floor(G.gram || 0);
   
   const html = `
     <div id="withdrawModal" class="wallet-modal hidden" onclick="closeWalletModal(event)">
       <div class="wallet-modal-content" onclick="event.stopPropagation()">
         <div class="wallet-modal-header">
-          <span class="wallet-modal-title"><svg width="14" height="14" viewBox="0 0 12 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;margin-right:4px"><rect x="1" y="1" width="10" height="6" fill="#8a3a3a"/><rect x="2" y="2" width="8" height="4" fill="#aa4a4a"/><rect x="0" y="3" width="2" height="2" fill="#8a3a3a"/><rect x="10" y="3" width="2" height="2" fill="#8a3a3a"/><rect x="4" y="7" width="4" height="3" fill="#f5c542"/><rect x="3" y="7" width="6" height="2" fill="#ffd700"/></svg>Вывод <img src="images/gram.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></span>
+          <span class="wallet-modal-title">📤 Вывод GRAM</span>
           <button class="wallet-modal-close" onclick="closeWalletModal()">✕</button>
         </div>
         <div class="wallet-modal-body">
           <div class="wallet-info">
-            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
-            <div style="font-size:12px;color:#778;margin-bottom:12px;">Доступно: <b style="color:#40d0ff;">${gram} <img src="images/gram.png" style="width:12px;height:12px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"></b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:4px;">Минимальная сумма: <b style="color:#40d0ff;">1 GRAM</b></div>
+            <div style="font-size:12px;color:#778;margin-bottom:12px;">Доступно: <b style="color:#40d0ff;">${gram} GRAM</b></div>
           </div>
           
           <div style="margin-bottom:12px;">
-            <label style="font-size:11px;color:#778;">Сумма (<img src="images/gram.png" style="width:11px;height:11px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">)</label>
+            <label style="font-size:11px;color:#778;">Сумма (GRAM)</label>
             <input id="withdrawAmount" type="number" min="1" max="${maxWithdraw}" value="1" 
               style="width:100%;padding:10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:8px;color:#fff;font-size:16px;font-family:'Courier New',monospace;margin-top:4px;">
           </div>
@@ -1035,33 +1100,33 @@ function switchTab(tab) {
     const btn = document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1));
     if (btn) btn.classList.toggle('active', t === tab);
   });
-  document.getElementById('panelInv').classList.toggle('visible',      tab === 'inv');
+  document.getElementById('panelInv').classList.toggle('visible', tab === 'inv');
   document.getElementById('panelUpgrades').classList.toggle('visible', tab === 'upgrades');
-  document.getElementById('panelFloors').classList.toggle('visible',   tab === 'floors');
-  document.getElementById('panelRating').classList.toggle('visible',   tab === 'rating');
-  document.getElementById('panelWallet').classList.toggle('visible',   tab === 'wallet');
-  document.getElementById('panelFriends').classList.toggle('visible',  tab === 'friends');
+  document.getElementById('panelFloors').classList.toggle('visible', tab === 'floors');
+  document.getElementById('panelRating').classList.toggle('visible', tab === 'rating');
+  document.getElementById('panelWallet').classList.toggle('visible', tab === 'wallet');
+  document.getElementById('panelFriends').classList.toggle('visible', tab === 'friends');
   var bossPanel = document.getElementById('panelBoss');
   if (bossPanel) bossPanel.classList.toggle('visible', tab === 'boss');
   var hudEl = document.getElementById('skillsHud');
   if (hudEl) hudEl.classList.toggle('visible', tab === 'game' && !!G_CHAR);
   var isGame = tab === 'game' && !!G_CHAR;
-  var bpBtn   = document.getElementById('bpHudBtn');
+  var bpBtn = document.getElementById('bpHudBtn');
   var premBtn = document.querySelector('.prem-hud-btn');
   var taskBtn = document.getElementById('taskHudBtn');
   var bossBtn = document.getElementById('bossHudBtn');
-  if (bpBtn)   bpBtn.style.display   = isGame ? 'flex' : 'none';
+  if (bpBtn) bpBtn.style.display = isGame ? 'flex' : 'none';
   if (premBtn) premBtn.style.display = isGame ? 'flex' : 'none';
   if (taskBtn) taskBtn.style.display = isGame ? 'flex' : 'none';
   if (bossBtn) bossBtn.style.display = isGame ? 'flex' : 'none';
 
-  if (tab === 'inv')      { _invSelectMode = false; _invSelected = {}; renderInventory(); }
+  if (tab === 'inv') { _invSelectMode = false; _invSelected = {}; renderInventory(); }
   if (tab === 'upgrades') renderUpgrades();
-  if (tab === 'floors')   renderFloors();
-  if (tab === 'rating')   renderRating();
-  if (tab === 'wallet')   renderWallet();
-  if (tab === 'friends')  renderFriends();
-  if (tab === 'boss')     renderBossTab();
+  if (tab === 'floors') renderFloors();
+  if (tab === 'rating') renderRating();
+  if (tab === 'wallet') renderWallet();
+  if (tab === 'friends') renderFriends();
+  if (tab === 'boss') renderBossTab();
 }
 
 // ═══════════════════════════════
@@ -1082,7 +1147,7 @@ function renderFriends() {
   _friendsLoading = true;
   body.innerHTML = '<div style="text-align:center;padding:40px 0;color:#445;font-size:12px;">Загрузка...</div>';
 
-  var _flTimeout = setTimeout(function () {
+  var _flTimeout = setTimeout(function() {
     if (_friendsLoading) {
       _friendsLoading = false;
       body.innerHTML = '<div style="color:#f44;text-align:center;padding:30px 0;font-size:12px;">Нет соединения</div>';
@@ -1111,7 +1176,7 @@ function renderFriends() {
 function renderFriendsData(r, body) {
   var coinSvg = '<svg width="14" height="14" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
   var charColors = { fire: '#ff6030', light: '#ffd040', water: '#40d0ff' };
-  var charNames  = { fire: 'Пирокан', light: 'Люмос', water: 'Аквас' };
+  var charNames = { fire: 'Пирокан', light: 'Люмос', water: 'Аквас' };
 
   var linkHtml =
     '<div style="margin-bottom:14px;padding:12px;background:rgba(245,197,66,0.06);border:1.5px solid #3a3a1a;border-radius:10px;">' +
@@ -1151,7 +1216,7 @@ function renderFriendsData(r, body) {
     friendsHtml = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:8px;">ДРУЗЬЯ (' + r.friends.length + ')</div>';
     r.friends.forEach(function(f) {
       var col = charColors[f.charId] || '#aaa';
-      var cls = charNames[f.charId]  || 'Неизвестный';
+      var cls = charNames[f.charId] || 'Неизвестный';
       var nextLv = f.nextMilestone;
       var toNext = nextLv - f.level;
       var progressPct = toNext > 0 ? Math.min(100, ((5 - toNext) / 5 * 100)) : 100;
@@ -1184,7 +1249,6 @@ function renderFriendsData(r, body) {
 }
 
 function friendsCopyLink(link) {
-  var copied = false;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(link).then(function() {
       showFriendsToast('Ссылка скопирована!');
@@ -1193,6 +1257,7 @@ function friendsCopyLink(link) {
     friendsCopyFallback(link);
   }
 }
+
 function friendsCopyFallback(link) {
   try {
     var ta = document.createElement('textarea');
@@ -1203,6 +1268,7 @@ function friendsCopyFallback(link) {
     showFriendsToast('Ссылка скопирована!');
   } catch(e) { showFriendsToast('Скопируй вручную'); }
 }
+
 function friendsShare(link) {
   var text = 'Играю в Pixel Runner RPG! Заходи по моей ссылке — получишь бонус!';
   var shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
@@ -1211,6 +1277,7 @@ function friendsShare(link) {
   }
   window.open(shareUrl, '_blank');
 }
+
 function friendsClaim(btn) {
   if (!window.GameSync) return;
   btn.disabled = true;
@@ -1238,6 +1305,7 @@ function friendsClaim(btn) {
     btn.textContent = 'Забрать';
   });
 }
+
 function showFriendsToast(msg) {
   var el = document.getElementById('floorUnlock');
   var sub = document.getElementById('fuText');
@@ -1251,11 +1319,11 @@ function showFriendsToast(msg) {
 // ═══════════════════════════════
 //  ЭКРАН ВЫБОРА ПЕРСОНАЖА
 // ═══════════════════════════════
-let _csSelected      = null;
+let _csSelected = null;
 let _csParticleTimer = null;
-let _csSpriteTimers  = {};
-let _csIdleImgs      = {};
-let G_CHAR           = null;
+let _csSpriteTimers = {};
+let _csIdleImgs = {};
+let G_CHAR = null;
 
 function selectChar(id) {
   _csSelected = id;
@@ -1279,15 +1347,15 @@ function confirmChar() {
 }
 
 function applyCharacterSprites(ch) {
-  spriteRun.src  = ch.runSrc;
-  spriteAtk.src  = ch.atkSrc;
+  spriteRun.src = ch.runSrc;
+  spriteAtk.src = ch.atkSrc;
   spriteIdle.src = ch.idleSrc;
-  window.RUN_FRAMES_CUR  = ch.runFrames;
-  window.RUN_FW_CUR      = ch.runFW;
-  window.ATK_FRAMES_CUR  = ch.atkFrames;
-  window.ATK_FW_CUR      = ch.atkFW;
+  window.RUN_FRAMES_CUR = ch.runFrames;
+  window.RUN_FW_CUR = ch.runFW;
+  window.ATK_FRAMES_CUR = ch.atkFrames;
+  window.ATK_FW_CUR = ch.atkFW;
   window.IDLE_FRAMES_CUR = ch.idleFrames;
-  window.IDLE_FW_CUR     = ch.idleFW;
+  window.IDLE_FW_CUR = ch.idleFW;
 }
 
 function applyCharacter(ch) {
@@ -1299,9 +1367,9 @@ function applyCharacter(ch) {
 }
 
 function startGame() {
-  resize(); 
-  updateHUD(); 
-  initSkillsHud(); 
+  resize();
+  updateHUD();
+  initSkillsHud();
   updatePotionHud();
   updateAvatarOnStart();
   switchTab('game');
@@ -1377,7 +1445,7 @@ function updateAvatarOnStart() {
   function tryLoad() {
     attempts++;
     var tgId = window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : null;
-    var api  = window.GameSync && window.GameSync._API;
+    var api = window.GameSync && window.GameSync._API;
     var hasPhotoUrl = false;
     try {
       var unsafe = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe;
@@ -1395,7 +1463,7 @@ function updateAvatarOnStart() {
 
 function initCharSelectSprites() {
   ['fire','light','water'].forEach(function(id) {
-    var ch  = CHARS[id];
+    var ch = CHARS[id];
     var img = new Image();
     _csIdleImgs[id] = img;
     img.src = ch.idleSrc;
@@ -1418,10 +1486,10 @@ function initCharSelectSprites() {
 
 function initCsParticles() {
   var cv = document.getElementById('csParticles');
-  cv.width  = window.innerWidth;
+  cv.width = window.innerWidth;
   cv.height = window.innerHeight;
   var ctx2 = cv.getContext('2d');
-  var pts  = [];
+  var pts = [];
   for (var i = 0; i < 60; i++) {
     pts.push({
       x: Math.random() * cv.width, y: Math.random() * cv.height,
@@ -1455,10 +1523,10 @@ window.addEventListener('resize', resize);
 //  ЗАДАНИЯ
 // ═══════════════════════════════
 var DAILY_MILESTONES = [
-  { id: 0, minutes: 10, rewardType: 'potions', amount: 50,   icon: '<svg width="18" height="18" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>', label: '50 зелий' },
-  { id: 1, minutes: 20, rewardType: 'gold',    amount: 1000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '1000 золота' },
-  { id: 2, minutes: 30, rewardType: 'pixr',    amount: 5,    icon: '<img src="images/pixr.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">', label: '5 PIXR' },
-  { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '2000 золота' },
+  { id: 0, minutes: 10, rewardType: 'potions', amount: 50, icon: '<svg width="18" height="18" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>', label: '50 зелий' },
+  { id: 1, minutes: 20, rewardType: 'gold', amount: 1000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '1000 золота' },
+  { id: 2, minutes: 30, rewardType: 'pixr', amount: 5, icon: '<img src="images/pixr.png" style="width:18px;height:18px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">', label: '5 PIXR' },
+  { id: 3, minutes: 60, rewardType: 'gold', amount: 2000, icon: '<svg width="18" height="18" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>', label: '2000 золота' },
 ];
 
 var _specialTaskTimers = {};
@@ -1467,6 +1535,7 @@ function openTaskModal() {
   document.getElementById('taskModal').classList.remove('hidden');
   renderTaskModal();
 }
+
 function closeTaskModal() {
   document.getElementById('taskModal').classList.add('hidden');
 }
@@ -1479,15 +1548,15 @@ function renderTaskModal() {
   if (!G.dailyTasks || G.dailyTasks.date !== today) {
     G.dailyTasks = { date: today, seconds: 0, claimed: [] };
   }
-  var mins    = Math.floor((G.dailyTasks.seconds || 0) / 60);
+  var mins = Math.floor((G.dailyTasks.seconds || 0) / 60);
   var claimed = G.dailyTasks.claimed || [];
 
   var html = '<div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:10px;">ЕЖЕДНЕВНЫЕ (сброс в полночь)</div>';
 
   DAILY_MILESTONES.forEach(function(m) {
-    var done  = claimed.indexOf(m.id) !== -1;
+    var done = claimed.indexOf(m.id) !== -1;
     var avail = !done && mins >= m.minutes;
-    var pct   = Math.min(100, Math.floor((mins / m.minutes) * 100));
+    var pct = Math.min(100, Math.floor((mins / m.minutes) * 100));
     html +=
       '<div class="task-row' + (done ? ' task-done' : avail ? ' task-avail' : '') + '">' +
         '<div class="task-row-left">' +
@@ -1543,17 +1612,17 @@ function _buildSpecialHtml(tasks, claimed) {
   if (!tasks || !tasks.length) {
     return head + '<div style="text-align:center;padding:16px;color:#445;font-size:11px;">Нет активных заданий</div>';
   }
-  var _svgCoin  = '<svg width="16" height="16" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
-  var _imgPixr  = '<img src="images/pixr.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
-  var _imgGram  = '<img src="images/gram.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
-  var _svgPotion= '<svg width="16" height="16" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>';
-  var _svgGift  = '<svg width="16" height="16" viewBox="0 0 12 12" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="1" y="4" width="10" height="7" fill="#9b59b6"/><rect x="2" y="5" width="8" height="5" fill="#c080ff"/><rect x="0" y="3" width="12" height="3" fill="#7d3c98"/><rect x="5" y="0" width="2" height="4" fill="#f5c542"/><rect x="3" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="5" y="3" width="2" height="8" fill="#f5c542"/></svg>';
+  var _svgCoin = '<svg width="16" height="16" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>';
+  var _imgPixr = '<img src="images/pixr.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
+  var _imgGram = '<img src="images/gram.png" style="width:16px;height:16px;object-fit:contain;image-rendering:pixelated;vertical-align:middle">';
+  var _svgPotion = '<svg width="16" height="16" viewBox="0 0 12 14" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="4" y="0" width="4" height="2" fill="#aaa"/><rect x="3" y="1" width="6" height="2" fill="#ccc"/><rect x="2" y="3" width="8" height="1" fill="#e74c3c"/><rect x="1" y="4" width="10" height="7" fill="#e74c3c"/><rect x="2" y="11" width="8" height="2" fill="#c0392b"/><rect x="3" y="13" width="6" height="1" fill="#c0392b"/><rect x="2" y="5" width="4" height="4" fill="#ff8888"/><rect x="3" y="4" width="2" height="2" fill="#ffbbbb"/></svg>';
+  var _svgGift = '<svg width="16" height="16" viewBox="0 0 12 12" fill="none" style="image-rendering:pixelated;vertical-align:middle"><rect x="1" y="4" width="10" height="7" fill="#9b59b6"/><rect x="2" y="5" width="8" height="5" fill="#c080ff"/><rect x="0" y="3" width="12" height="3" fill="#7d3c98"/><rect x="5" y="0" width="2" height="4" fill="#f5c542"/><rect x="3" y="1" width="2" height="2" fill="#f5c542"/><rect x="7" y="1" width="2" height="2" fill="#f5c542"/><rect x="5" y="3" width="2" height="8" fill="#f5c542"/></svg>';
   var icons = { gold: _svgCoin, pixr: _imgPixr, potions: _svgPotion, gram: _imgGram };
-  var html  = head;
+  var html = head;
   tasks.forEach(function(task) {
-    var done  = !!(claimed[task.taskId]);
+    var done = !!(claimed[task.taskId]);
     var timer = _specialTaskTimers[task.taskId];
-    var ic    = icons[task.rewardType] || _svgGift;
+    var ic = icons[task.rewardType] || _svgGift;
     var action;
     if (done) {
       action = '<span class="task-done-lbl">✓</span>';
@@ -1622,10 +1691,10 @@ function claimDailyTask(milestoneId) {
   .then(function(r) {
     if (!r.ok) { _taskToast('Ошибка: ' + (r.error || '?')); return; }
     var rw = r.reward;
-    if (rw.type === 'gold')    G.gold    = (G.gold    || 0) + rw.amount;
+    if (rw.type === 'gold') G.gold = (G.gold || 0) + rw.amount;
     if (rw.type === 'potions') G.potions = (G.potions || 0) + rw.amount;
-    if (rw.type === 'pixr')    G.pixr    = (G.pixr    || 0) + rw.amount;
-    if (rw.type === 'gram')    G.gram    = (G.gram    || 0) + rw.amount;
+    if (rw.type === 'pixr') G.pixr = (G.pixr || 0) + rw.amount;
+    if (rw.type === 'gram') G.gram = (G.gram || 0) + rw.amount;
     if (!G.dailyTasks) G.dailyTasks = { date: new Date().toISOString().slice(0,10), seconds:0, claimed:[] };
     if (G.dailyTasks.claimed.indexOf(milestoneId) === -1) G.dailyTasks.claimed.push(milestoneId);
     updateHUD();
@@ -1646,10 +1715,10 @@ function claimSpecialTask(taskId) {
   .then(function(r) {
     if (!r.ok) { _taskToast('Ошибка: ' + (r.error || '?')); return; }
     var rw = r.reward;
-    if (rw.type === 'gold')    G.gold    = (G.gold    || 0) + rw.amount;
+    if (rw.type === 'gold') G.gold = (G.gold || 0) + rw.amount;
     if (rw.type === 'potions') G.potions = (G.potions || 0) + rw.amount;
-    if (rw.type === 'pixr')    G.pixr    = (G.pixr    || 0) + rw.amount;
-    if (rw.type === 'gram')    G.gram    = (G.gram    || 0) + rw.amount;
+    if (rw.type === 'pixr') G.pixr = (G.pixr || 0) + rw.amount;
+    if (rw.type === 'gram') G.gram = (G.gram || 0) + rw.amount;
     if (!G.specialTasksClaimed) G.specialTasksClaimed = {};
     G.specialTasksClaimed[taskId] = Date.now();
     delete _specialTaskTimers[taskId];
@@ -1676,11 +1745,11 @@ function _taskToast(msg) {
 function renderBossTab() {
   var body = document.getElementById('bossBody');
   if (!body) return;
-  var cp       = calcCP();
-  var boss     = G.boss || { floor: 1, lastFightTime: 0 };
+  var cp = calcCP();
+  var boss = G.boss || { floor: 1, lastFightTime: 0 };
   var canFight = typeof bossCanFight === 'function' ? bossCanFight() : true;
-  var nextIn   = typeof bossNextFightIn === 'function' ? bossNextFightIn() : null;
-  var html     = '';
+  var nextIn = typeof bossNextFightIn === 'function' ? bossNextFightIn() : null;
+  var html = '';
 
   html += '<div style="font-size:11px;color:#778;margin-bottom:12px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;display:flex;justify-content:space-between;align-items:center;">';
   html += '<span>CP: <strong style="color:#fa0">' + cp + '</strong></span>';
@@ -1693,17 +1762,17 @@ function renderBossTab() {
 
   BOSS_DEFS.forEach(function(b) {
     var isUnlocked = cp >= b.cpReq;
-    var isCurrent  = boss.floor === b.id;
-    var isPast     = boss.floor > b.id;
-    var pixr  = Math.floor(Math.pow(2, b.id - 1));
-    var gold  = Math.floor(1000 * Math.pow(2, b.id - 1));
+    var isCurrent = boss.floor === b.id;
+    var isPast = boss.floor > b.id;
+    var pixr = Math.floor(Math.pow(2, b.id - 1));
+    var gold = Math.floor(1000 * Math.pow(2, b.id - 1));
     var rarNames = ['Обычный','Необычный','Редкий','Эпический','Легендарный'];
-    var rarName  = rarNames[Math.min(b.id - 1, 4)];
+    var rarName = rarNames[Math.min(b.id - 1, 4)];
 
     var borderColor = '#2a2a5a', extraStyle = '';
     if (isCurrent && isUnlocked) { borderColor = '#e74c3c'; extraStyle = 'box-shadow:0 0 12px rgba(231,76,60,0.2);'; }
-    else if (isPast)             { borderColor = '#2a4a3a'; }
-    else if (!isUnlocked)        { extraStyle = 'opacity:0.5;'; }
+    else if (isPast) { borderColor = '#2a4a3a'; }
+    else if (!isUnlocked) { extraStyle = 'opacity:0.5;'; }
 
     html += '<div style="margin-bottom:12px;border-radius:10px;border:1.5px solid ' + borderColor + ';' + extraStyle + 'overflow:hidden;">';
     html += '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border-bottom:1px solid #1a1a35;">';
@@ -1738,3 +1807,8 @@ function callBoss(bossId) {
     setTimeout(function() { spawnBoss(bossId); }, 100);
   }
 }
+
+// --- ОЧИСТКА ИНТЕРВАЛА ПРИ ЗАКРЫТИИ СТРАНИЦЫ ---
+window.addEventListener('beforeunload', function() {
+  stopPriceUpdates();
+});
