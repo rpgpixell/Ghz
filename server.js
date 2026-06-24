@@ -1499,6 +1499,9 @@ app.get('/admin', (req, res) => {
 // ═══════════════════════════════
 //  ПОКУПКА УЛУЧШЕНИЙ (атомарно)
 // ═══════════════════════════════
+// ═══════════════════════════════
+//  ПОКУПКА УЛУЧШЕНИЙ (атомарно)
+// ═══════════════════════════════
 app.post('/api/upgrade', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -1529,6 +1532,15 @@ app.post('/api/upgrade', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'max_level' });
     }
     
+    // 🔥 Создаём объект для $inc (с динамическими ключами)
+    const incObj = {
+      'data.gold': -cost,
+    };
+    incObj['data.upg.' + upgId] = 1;
+    if (stat && bonus) {
+      incObj['data.baseStats.' + stat] = bonus;
+    }
+    
     // Атомарно списываем золото и увеличиваем уровень
     const result = await Save.findOneAndUpdate(
       { 
@@ -1536,11 +1548,7 @@ app.post('/api/upgrade', async (req, res) => {
         'data.gold': { $gte: cost }
       },
       {
-        $inc: {
-          'data.gold': -cost,
-          'data.upg.' + upgId: 1,
-          'data.baseStats.' + stat: bonus
-        },
+        $inc: incObj,
         $set: { updatedAt: Date.now() }
       },
       { new: true }
