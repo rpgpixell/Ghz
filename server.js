@@ -226,38 +226,37 @@ wss.on('connection', function(ws, req) {
           break;
 
         case 'save':
-          if (!authenticated || !tgId) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
-            return;
-          }
+  if (!authenticated || !tgId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
 
-          var saveData = msg.data;
-          if (!saveData || typeof saveData !== 'object') {
-            ws.send(JSON.stringify({ type: 'error', message: 'Invalid data' }));
-            return;
-          }
+  var saveData = msg.data;
+  if (!saveData || typeof saveData !== 'object') {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid data' }));
+    return;
+  }
 
-          await Save.findOneAndUpdate(
-            { tgId: tgId },
-            {
-              $set: {
-                data: saveData,
-                level: saveData.level || 1,
-                cp: saveData.cp || 0,
-                floor: saveData.floor || 1,
-                updatedAt: Date.now()
-              }
-            },
-            { upsert: true }
-          );
+  await Save.findOneAndUpdate(
+    { tgId: tgId },
+    {
+      $set: {
+        data: saveData,
+        level: saveData.level || 1,
+        floor: saveData.floor || 1,
+        updatedAt: Date.now()
+      }
+    },
+    { upsert: true }
+  );
 
-          ws.send(JSON.stringify({
-            type: 'saved',
-            timestamp: Date.now()
-          }));
+  ws.send(JSON.stringify({
+    type: 'saved',
+    timestamp: Date.now()
+  }));
 
-          console.log('💾 Сохранено:', tgId, Object.keys(saveData).length, 'полей');
-          break;
+  console.log('💾 Сохранено:', tgId, Object.keys(saveData).length, 'полей');
+  break;
 
         default:
           console.log('📨 Неизвестный тип сообщения:', msg.type);
@@ -424,21 +423,20 @@ app.post('/api/save', async (req, res) => {
     }
 
     await Save.findOneAndUpdate(
-      { tgId: tg.id },
-      {
-        $set: {
-          username: tg.username, 
-          firstName: tg.firstName,
-          charId: data.charId || null, 
-          data: data,
-          level: Number(data.level) || 1,
-          cp: Number(data.cp) || 0,
-          floor: Number(data.floor) || 1,
-          updatedAt: Date.now()
-        }
-      },
-      { upsert: true }
-    );
+  { tgId: tg.id },
+  {
+    $set: {
+      username: tg.username, 
+      firstName: tg.firstName,
+      charId: data.charId || null, 
+      data: data,
+      level: Number(data.level) || 1,
+      floor: Number(data.floor) || 1,
+      updatedAt: Date.now()
+    }
+  },
+  { upsert: true }
+);
 
     res.json({ ok: true, updatedAt: Date.now() });
   } catch (e) {
