@@ -109,7 +109,8 @@ const AdminLogSchema = new mongoose.Schema({
   timestamp: { type: Number, default: Date.now }
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
-// ── Специальные задания (создаются через админку) ──
+
+// ── Специальные задания ──
 const SpecialTaskSchema = new mongoose.Schema({
   taskId:       { type: String, required: true, unique: true },
   title:        { type: String, required: true },
@@ -262,7 +263,6 @@ app.post('/api/load', async (req, res) => {
       });
       console.log(`🆕 [load] Новый пользователь: ${tg.id}`);
 
-      // Уведомляем админа
       if (bot && process.env.ADMIN_TG_ID) {
         try {
           let inviterName = '— (органика)';
@@ -338,11 +338,10 @@ app.post('/api/save', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'user_mismatch' });
     }
 
-    // 🔥 ЗАГРУЖАЕМ ТЕКУЩИЕ ДАННЫЕ ИЗ БД
     const existing = await Save.findOne({ tgId: tg.id }).lean();
     const existingData = existing?.data || {};
     
-    // 🔥 ЗАЩИТА БАЛАНСА
+    // ЗАЩИТА БАЛАНСА
     const protectedFields = ['gold', 'gram', 'pixr'];
     protectedFields.forEach(field => {
       if (existingData[field] !== undefined) {
@@ -353,27 +352,19 @@ app.post('/api/save', async (req, res) => {
       }
     });
     
-    // 🔥 ЗАЩИТА ИНВЕНТАРЯ — ОБЪЕДИНЕНИЕ
+    // ЗАЩИТА ИНВЕНТАРЯ
     if (existingData.inventory && existingData.inventory.length > 0) {
       const serverItems = existingData.inventory || [];
       const clientItems = data.inventory || [];
       
-      // Создаём карту по ID
       const itemMap = new Map();
-      
-      // Сначала все серверные предметы
-      serverItems.forEach(item => {
-        itemMap.set(String(item.id), item);
-      });
-      
-      // Потом клиентские (если их нет)
+      serverItems.forEach(item => itemMap.set(String(item.id), item));
       clientItems.forEach(item => {
         if (!itemMap.has(String(item.id))) {
           itemMap.set(String(item.id), item);
         }
       });
       
-      // Превращаем обратно в массив
       data.inventory = Array.from(itemMap.values());
       
       if (data.inventory.length !== clientItems.length) {
@@ -570,8 +561,6 @@ app.post('/api/ref/claim', async (req, res) => {
   }
 });
 
-
-
 // ═══════════════════════════════
 //  ЗАДАНИЯ
 // ═══════════════════════════════
@@ -583,7 +572,6 @@ const DAILY_MILESTONES = [
   { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000 },
 ];
 
-// ── Получить задания + состояние пользователя ──
 app.post('/api/tasks', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -605,7 +593,6 @@ app.post('/api/tasks', async (req, res) => {
   }
 });
 
-// ── Забрать ежедневную награду ──
 app.post('/api/tasks/daily/claim', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -636,7 +623,6 @@ app.post('/api/tasks/daily/claim', async (req, res) => {
   }
 });
 
-// ── Забрать специальное задание ──
 app.post('/api/tasks/special/claim', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -666,18 +652,14 @@ app.post('/api/tasks/special/claim', async (req, res) => {
 
 // ═══════════════════════════════
 //  АВАТАРКА ПОЛЬЗОВАТЕЛЯ
-//  GET /api/avatar/:tgId
-//  Проксирует фото профиля через Bot API.
-//  Кешируется в памяти на 1 час (URL не меняется часто).
 // ═══════════════════════════════
-const _avatarCache = new Map(); // tgId -> { url, ts }
-const AVATAR_CACHE_TTL = 3600 * 1000; // 1 час
+const _avatarCache = new Map();
+const AVATAR_CACHE_TTL = 3600 * 1000;
 
 app.get('/api/avatar/:tgId', async (req, res) => {
   const tgId = req.params.tgId;
   if (!tgId || !/^\d+$/.test(tgId)) return res.status(400).json({ ok: false });
 
-  // Кеш
   const cached = _avatarCache.get(tgId);
   if (cached && Date.now() - cached.ts < AVATAR_CACHE_TTL) {
     return res.redirect(302, cached.url);
@@ -687,7 +669,6 @@ app.get('/api/avatar/:tgId', async (req, res) => {
   if (!token) return res.status(503).json({ ok: false, error: 'no_token' });
 
   try {
-    // 1. Получаем список фото профиля
     const photosRes = await fetch(
       `https://api.telegram.org/bot${token}/getUserProfilePhotos?user_id=${tgId}&limit=1`
     );
@@ -697,11 +678,9 @@ app.get('/api/avatar/:tgId', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'no_photo' });
     }
 
-    // Берём самый большой размер первой фотографии
     const sizes = photosData.result.photos[0];
     const fileId = sizes[sizes.length - 1].file_id;
 
-    // 2. Получаем file_path
     const fileRes = await fetch(
       `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`
     );
@@ -725,7 +704,6 @@ app.get('/api/avatar/:tgId', async (req, res) => {
 //  ТРАНЗАКЦИИ (Пополнение/Вывод)
 // ═══════════════════════════════
 
-// ── Создание пополнения ──
 app.post('/api/wallet/deposit', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -755,7 +733,6 @@ app.post('/api/wallet/deposit', async (req, res) => {
       createdAt: Date.now()
     });
     
-    // Уведомляем админа в боте
     if (bot) {
       const adminMsg = `
 💰 **НОВАЯ ТРАНЗАКЦИЯ**
@@ -805,7 +782,6 @@ app.post('/api/wallet/deposit', async (req, res) => {
   }
 });
 
-// ── Запрос на вывод ──
 app.post('/api/wallet/withdraw', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -890,8 +866,7 @@ app.post('/api/wallet/withdraw', async (req, res) => {
   }
 });
 
-// ── Получение транзакций пользователя ──
-app.post('/api/wallet/transactions', async (req, res) => {  // ← GET → POST
+app.post('/api/wallet/transactions', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
   
@@ -908,7 +883,6 @@ app.post('/api/wallet/transactions', async (req, res) => {  // ← GET → POST
   }
 });
 
-// ── ОБМЕН PIXR → GRAM ──
 app.post('/api/wallet/exchange', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -925,8 +899,6 @@ app.post('/api/wallet/exchange', async (req, res) => {
   try {
     const gramEarned = amount / 1000;
 
-    // Атомарно списываем PIXR и начисляем GRAM через $inc
-    // Условие 'data.pixr': { $gte: amount } гарантирует атомарную проверку баланса
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.pixr': { $gte: amount } },
       {
@@ -954,11 +926,8 @@ app.post('/api/wallet/exchange', async (req, res) => {
   }
 });
 
-
 // ═══════════════════════════════
 //  БОТ: подтверждение/отклонение транзакций
-//  POST /bot/transaction/:txId/:action
-//  Защищён BOT_TOKEN в заголовке x-bot-secret
 // ═══════════════════════════════
 app.post('/bot/transaction/:txId/:action', async (req, res) => {
   const secret = req.headers['x-bot-secret'];
@@ -992,7 +961,6 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
     await tx.save();
     await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
 
-    // Уведомляем пользователя
     if (bot) {
       const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
       const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}`;
@@ -1087,11 +1055,14 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       tx.status = 'approved';
       tx.approvedAt = Date.now();
 
-      // Атомарно начисляем/списываем GRAM через $inc — не перезаписываем весь data
+      // Атомарно начисляем/списываем GRAM через $inc
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
       await Save.findOneAndUpdate(
         { tgId: tx.userId },
-        { $inc: { 'data.gram': gramDelta } }
+        { 
+          $inc: { 'data.gram': gramDelta },
+          $set: { updatedAt: Date.now() }
+        }
       );
     } else {
       tx.status = 'rejected';
@@ -1194,7 +1165,6 @@ app.get('/admin/api/users', requireAdmin, async (req, res) => {
   }
 });
 
-
 // ── Admin: список заданий ──
 app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
   try {
@@ -1274,6 +1244,7 @@ app.get('/admin/api/user/:tgId', requireAdmin, async (req, res) => {
   }
 });
 
+// ── 🔥 ИСПРАВЛЕНО: Обновление пользователя ──
 app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
@@ -1281,20 +1252,34 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     
     const updateData = {};
     
+    // Баланс
     if (updates.gold !== undefined) updateData['data.gold'] = updates.gold;
     if (updates.pixr !== undefined) updateData['data.pixr'] = updates.pixr;
     if (updates.gram !== undefined) updateData['data.gram'] = updates.gram;
-    if (updates.hp !== undefined) updateData['data.hp'] = updates.hp;
+    
+    // Основные поля
     if (updates.level !== undefined) updateData.level = updates.level;
     if (updates.floor !== undefined) updateData.floor = updates.floor;
     if (updates.charId !== undefined) updateData.charId = updates.charId;
+    if (updates.hp !== undefined) updateData['data.hp'] = updates.hp;
+    
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ ok: false, error: 'no_fields' });
+    }
     
     updateData.updatedAt = Date.now();
     
-    await Save.updateOne(
+    const result = await Save.findOneAndUpdate(
       { tgId: tgId },
-      { $set: updateData }
+      { $set: updateData },
+      { new: true }
     );
+    
+    if (!result) {
+      return res.status(404).json({ ok: false, error: 'user_not_found' });
+    }
+    
+    console.log(`✅ [admin] Обновлён пользователь ${tgId}:`, updates);
     
     await logAdminAction(req.admin.login, 'update_user', tgId, updates);
     
@@ -1305,84 +1290,7 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
   }
 });
 
-
-// ── Admin: список заданий ──
-app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
-    res.json({ ok: true, tasks });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: создать задание ──
-app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
-    if (!title || !rewardType || !rewardAmount)
-      return res.status(400).json({ ok: false, error: 'missing_fields' });
-    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    const task   = await SpecialTask.create({
-      taskId, title,
-      description:  description  || '',
-      link:         link         || '',
-      linkText:     linkText     || 'Перейти',
-      rewardType,
-      rewardAmount: Number(rewardAmount),
-      active: true,
-      createdAt: Date.now(),
-    });
-    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
-    res.json({ ok: true, task });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: удалить задание ──
-app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
-  try {
-    await SpecialTask.deleteOne({ taskId: req.params.taskId });
-    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: вкл/выкл задание ──
-app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
-  try {
-    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
-    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
-    task.active = !task.active;
-    await task.save();
-    res.json({ ok: true, active: task.active });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
-  try {
-    const { tgId } = req.params;
-    
-    const referrals = await Save.find({ refBy: tgId })
-      .select('tgId username firstName level cp floor charId data.gold data.pixr')
-      .lean();
-    
-    res.json({
-      ok: true,
-      referrals: referrals.map(r => ({
-        tgId: r.tgId,
-        username: r.username || r.firstName || 'Игрок',
-        level: r.level || 1,
-        cp: r.cp || 0,
-        floor: r.floor || 1,
-        charId: r.charId,
-        gold: r.data?.gold || 0,
-        pixr: r.data?.pixr || 0
-      }))
-    });
-  } catch (e) {
-    console.error('❌ [admin] referrals error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
+// ── 🔥 ИСПРАВЛЕНО: Выдача предмета ──
 app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
@@ -1405,14 +1313,13 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     if (forClass) item.forClass = forClass;
     
-    // 🔥 Используем $push для атомарного добавления в массив
     const result = await Save.findOneAndUpdate(
       { tgId: tgId },
       { 
         $push: { 'data.inventory': item },
         $set: { updatedAt: Date.now() }
       },
-      { new: true }  // ← возвращаем обновлённый документ
+      { new: true }
     );
     
     if (!result) {
