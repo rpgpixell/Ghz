@@ -4,6 +4,7 @@
   Express + MongoDB (Mongoose) + Telegram WebApp auth
   + Админ-панель + Транзакции (пополнение/вывод)
   + Long Polling для уведомлений клиентов
+  + Telegram Bot (встроенный)
   ══════════════════════════════════════════════════════
 */
 
@@ -12,6 +13,9 @@ const express  = require('express');
 const mongoose = require('mongoose');
 const crypto   = require('crypto');
 const path     = require('path');
+
+// ── Telegram Bot ──
+const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
@@ -111,7 +115,7 @@ const AdminLogSchema = new mongoose.Schema({
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
 
-// ── Специальные задания (создаются через админку) ──
+// ── Специальные задания ──
 const SpecialTaskSchema = new mongoose.Schema({
   taskId:       { type: String, required: true, unique: true },
   title:        { type: String, required: true },
@@ -238,10 +242,8 @@ function setLeaderboardCache(data) {
 //  LONG POLLING — уведомления клиентов
 // ═══════════════════════════════
 
-// Хранилище уведомлений для клиентов
-const pendingNotifications = new Map(); // tgId -> [ { event, data, timestamp } ]
+const pendingNotifications = new Map();
 
-// ── Long Polling эндпоинт ──
 app.post('/api/poll', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -283,7 +285,6 @@ app.post('/api/poll', async (req, res) => {
   });
 });
 
-// ── Функция отправки уведомления клиенту ──
 function notifyClient(tgId, eventType, data) {
   if (!tgId) return false;
 
@@ -302,7 +303,6 @@ function notifyClient(tgId, eventType, data) {
   return true;
 }
 
-// ── Функция принудительного обновления клиента ──
 function forceReloadClient(tgId) {
   return notifyClient(tgId, 'reload', { reason: 'data_updated' });
 }
@@ -314,7 +314,6 @@ app.get('/', (req, res) => {
   res.json({ ok: true, service: 'pixel-rpg', db: mongoose.connection.readyState === 1 });
 });
 
-// ── Загрузка ──
 app.post('/api/load', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
@@ -389,7 +388,6 @@ app.post('/api/load', async (req, res) => {
   }
 });
 
-// ── Сохранение (с защитой от перезаписи) ──
 app.post('/api/save', async (req, res) => {
   const startTime = Date.now();
   
@@ -414,7 +412,6 @@ app.post('/api/save', async (req, res) => {
 
     data.tgId = tg.id;
     
-    // 🔥 ЗАЩИТА ОТ ПЕРЕЗАПИСИ
     const currentDoc = await Save.findOne({ tgId: tg.id }).lean();
     if (currentDoc && currentDoc.data && currentDoc.data.updatedAt) {
       const clientUpdatedAt = data.updatedAt || 0;
@@ -465,7 +462,6 @@ app.post('/api/save', async (req, res) => {
   }
 });
 
-// ── Выбор персонажа ──
 app.post('/api/character', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
@@ -507,7 +503,6 @@ app.post('/api/character', async (req, res) => {
   }
 });
 
-// ── Лидерборд ──
 app.get('/api/leaderboard', async (req, res) => {
   if (!req.query.tgId) return res.status(401).json({ ok: false, error: 'missing_id' });
   if (rateLimit('lb_' + req.query.tgId, 5, 60000)) {
@@ -534,7 +529,6 @@ app.get('/api/leaderboard', async (req, res) => {
   }
 });
 
-// ── Рефералка ──
 app.post('/api/ref/friends', async (req, res) => {
   const tg = authUser(req, res); 
   if (!tg) return;
@@ -613,8 +607,6 @@ app.post('/api/ref/claim', async (req, res) => {
     _claiming.delete(tg.id);
   }
 });
-
-
 
 // ═══════════════════════════════
 //  ЗАДАНИЯ
@@ -706,7 +698,7 @@ app.post('/api/tasks/special/claim', async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  АВАТАРКА ПОЛЬЗОВАТЕЛЯ
+//  АВАТАРКА
 // ═══════════════════════════════
 const _avatarCache = new Map();
 const AVATAR_CACHE_TTL = 3600 * 1000;
@@ -756,7 +748,7 @@ app.get('/api/avatar/:tgId', async (req, res) => {
 });
 
 // ═══════════════════════════════
-//  ТРАНЗАКЦИИ (Пополнение/Вывод)
+//  ТРАНЗАКЦИИ
 // ═══════════════════════════════
 
 app.post('/api/wallet/deposit', async (req, res) => {
@@ -981,74 +973,290 @@ app.post('/api/wallet/exchange', async (req, res) => {
   }
 });
 
-
 // ═══════════════════════════════
-//  БОТ: подтверждение/отклонение транзакций
+//  БОТ: ВСТРОЕННЫЙ
 // ═══════════════════════════════
-app.post('/bot/transaction/:txId/:action', async (req, res) => {
-  const secret = req.headers['x-bot-secret'];
-  if (!secret || secret !== process.env.BOT_TOKEN) {
-    return res.status(401).json({ ok: false, error: 'unauthorized' });
-  }
 
-  const { txId, action } = req.params;
-  if (!['approve', 'reject'].includes(action)) {
-    return res.status(400).json({ ok: false, error: 'invalid_action' });
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const WEBAPP_URL = process.env.WEBAPP_URL || 'https://your-domain.railway.app';
+const API_URL = process.env.API_URL || 'https://ghz-production.up.railway.app';
+
+let bot = null;
+
+function initBot() {
+  if (!BOT_TOKEN) {
+    console.error('❌ [bot] BOT_TOKEN не задан!');
+    return null;
   }
 
   try {
-    const tx = await Transaction.findOne({ id: txId });
-    if (!tx) return res.status(404).json({ ok: false, error: 'not_found' });
-    if (tx.status !== 'pending') return res.status(400).json({ ok: false, error: 'already_processed' });
+    bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-    if (action === 'approve') {
-      tx.status = 'approved';
-      tx.approvedAt = Date.now();
-      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      
-      console.log(`💰 [bot] Начисление ${gramDelta} GRAM пользователю ${tx.userId} (tx: ${txId})`);
-      
-      const newUpdatedAt = Date.now();
-      
-      const result = await Save.findOneAndUpdate(
-        { tgId: tx.userId },
-        { 
-          $inc: { 'data.gram': gramDelta },
-          $set: { 
-            'data.updatedAt': newUpdatedAt,
-            updatedAt: newUpdatedAt 
-          }
-        },
-        { new: true }
-      );
-      
-      console.log(`💰 [bot] Новый баланс пользователя ${tx.userId}: ${result?.data?.gram || 0} GRAM`);
-      
-      // 🔥 Уведомляем клиента об изменении баланса
-      notifyClient(tx.userId, 'reload', { 
-        reason: 'balance_updated',
-        gram: result?.data?.gram || 0
+    const webhookUrl = (process.env.WEBHOOK_URL || API_URL) + '/webhook/' + BOT_TOKEN;
+    
+    bot.setWebHook(webhookUrl)
+      .then(() => {
+        console.log('✅ [bot] Webhook установлен: ' + webhookUrl.replace(BOT_TOKEN, '<TOKEN>'));
+      })
+      .catch((err) => {
+        console.error('❌ [bot] Ошибка установки webhook:', err.message);
       });
-    } else {
-      tx.status = 'rejected';
-      tx.rejectedAt = Date.now();
-    }
 
-    await tx.save();
-    await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
+    // ── Webhook маршрут ──
+    app.post('/webhook/' + BOT_TOKEN, (req, res) => {
+      try {
+        bot.processUpdate(req.body);
+      } catch (e) {
+        console.error('❌ [bot] processUpdate error:', e.message);
+      }
+      res.sendStatus(200);
+    });
 
-    if (bot) {
-      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
-      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}\n\n🔄 *Для обновления баланса перезапустите игру или нажмите "Обновить" в кошельке.*`;
-      try { await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' }); } catch (e) {}
-    }
+    // ── /start ──
+    bot.onText(/\/start(?:\s+(.+))?/, (msg, match) => {
+      try {
+        const chatId = msg.chat.id;
+        const userId = msg.from.id;
+        const username = msg.from.username || msg.from.first_name || 'Игрок';
+        const startParam = (match && match[1]) ? match[1].trim() : null;
 
-    res.json({ ok: true });
+        console.log('📨 [bot] /start от ' + username + ' (' + userId + '), param: ' + (startParam || 'none'));
+
+        let webappUrl = WEBAPP_URL;
+        if (startParam) {
+          webappUrl = webappUrl + '?startapp=' + startParam;
+        }
+
+        const hour = new Date().getHours();
+        let greeting = 'Добрый день';
+        if (hour < 12) greeting = '🌅 Доброе утро';
+        else if (hour < 18) greeting = '☀️ Добрый день';
+        else if (hour < 22) greeting = '🌇 Добрый вечер';
+        else greeting = '🌙 Доброй ночи';
+
+        const message =
+          greeting + ', *' + username + '*! 👋\n\n' +
+          '🔥 **PIXEL RPG** — эпическая RPG!\n\n' +
+          '━━━━━━━━━━━━━━━━━━━\n' +
+          '🎮 **В игре тебя ждут:**\n' +
+          '  ✦ 10 этажей с монстрами\n' +
+          '  ✦ 3 класса персонажей\n' +
+          '  ✦ Улучшения и навыки\n' +
+          '  ✦ Редкие предметы\n' +
+          '  ✦ Боевой пропуск\n' +
+          '  ✦ Реферальная система\n\n' +
+          '━━━━━━━━━━━━━━━━━━━\n' +
+          '👤 **Твой ID:** `' + userId + '`\n' +
+          (startParam ? '🔗 **Пригласил:** `' + startParam + '`\n' : '') +
+          '\nНажми на кнопку ниже, чтобы начать!';
+
+        bot.sendMessage(chatId, message, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🎮 ИГРАТЬ', web_app: { url: webappUrl } }],
+              [
+                { text: '👥 Пригласить друзей', callback_data: 'ref' },
+                { text: '📊 Статистика', callback_data: 'profile' }
+              ]
+            ]
+          }
+        });
+      } catch (e) {
+        console.error('❌ [bot] Ошибка в /start:', e.message);
+      }
+    });
+
+    // ── /help ──
+    bot.onText(/\/help/, (msg) => {
+      bot.sendMessage(msg.chat.id,
+        '📖 **Команды:**\n\n' +
+        '/start — Начать игру\n' +
+        '/help — Справка\n' +
+        '/ref — Реферальная ссылка\n' +
+        '/profile — Мой профиль',
+        { parse_mode: 'Markdown' }
+      );
+    });
+
+    // ── /ref ──
+    bot.onText(/\/ref/, (msg) => {
+      const userId = msg.from.id;
+      const refLink = 'https://t.me/' + BOT_USERNAME + '?startapp=' + userId;
+      bot.sendMessage(msg.chat.id,
+        '👥 **Твоя реферальная ссылка:**\n\n' +
+        '`' + refLink + '`',
+        { parse_mode: 'Markdown' }
+      );
+    });
+
+    // ── /profile ──
+    bot.onText(/\/profile/, (msg) => {
+      const userId = msg.from.id;
+      getPlayerProfile(userId).then((profile) => {
+        bot.sendMessage(msg.chat.id,
+          '📊 **Твой профиль:**\n\n' +
+          '👤 Имя: ' + profile.username + '\n' +
+          '🎯 Уровень: ' + profile.level + '\n' +
+          '⚔️ CP: ' + profile.cp + '\n' +
+          '🏰 Этаж: ' + profile.floor + '\n' +
+          '👾 Убийств: ' + profile.killCount + '\n' +
+          '🪙 Золото: ' + profile.gold + '\n' +
+          '💎 PIXR: ' + profile.pixr + '\n' +
+          '⭐ GRAM: ' + profile.gram,
+          { parse_mode: 'Markdown' }
+        );
+      });
+    });
+
+    // ═══════════════════════════════
+    //  ОБРАБОТКА ТРАНЗАКЦИЙ
+    // ═══════════════════════════════
+    bot.on('callback_query', (query) => {
+      try {
+        const chatId = query.message.chat.id;
+        const userId = query.from.id;
+        const data = query.data;
+
+        console.log('📨 [bot] Callback: ' + data + ' от ' + userId);
+
+        bot.answerCallbackQuery(query.id).catch(() => {});
+
+        if (data === 'ref') {
+          const refLink = 'https://t.me/' + BOT_USERNAME + '?startapp=' + userId;
+          bot.sendMessage(chatId,
+            '👥 **Твоя реферальная ссылка:**\n\n' +
+            '`' + refLink + '`',
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+
+        if (data === 'profile') {
+          getPlayerProfile(userId).then((profile) => {
+            bot.sendMessage(chatId,
+              '📊 **Твой профиль:**\n\n' +
+              '👤 Имя: ' + profile.username + '\n' +
+              '🎯 Уровень: ' + profile.level + '\n' +
+              '⚔️ CP: ' + profile.cp + '\n' +
+              '🏰 Этаж: ' + profile.floor + '\n' +
+              '👾 Убийств: ' + profile.killCount + '\n' +
+              '🪙 Золото: ' + profile.gold + '\n' +
+              '💎 PIXR: ' + profile.pixr + '\n' +
+              '⭐ GRAM: ' + profile.gram,
+              { parse_mode: 'Markdown' }
+            );
+          });
+          return;
+        }
+
+        if (data.startsWith('approve_') || data.startsWith('reject_')) {
+          const action = data.startsWith('approve_') ? 'approve' : 'reject';
+          const txId = data.replace(/^(approve|reject)_/, '');
+          const msgId = query.message.message_id;
+
+          console.log('💳 [bot] Обработка транзакции: ' + txId + ' -> ' + action);
+
+          bot.editMessageReplyMarkup(
+            { inline_keyboard: [[{ text: '⏳ Обработка...', callback_data: 'noop' }]] },
+            { chat_id: chatId, message_id: msgId }
+          ).catch(() => {});
+
+          const _fetch = typeof fetch !== 'undefined' ? fetch : require('node-fetch');
+
+          _fetch(API_URL + '/bot/transaction/' + txId + '/' + action, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-bot-secret': BOT_TOKEN
+            },
+            body: JSON.stringify({})
+          })
+          .then(r => r.json())
+          .then((result) => {
+            if (result.ok) {
+              const doneText = action === 'approve' ? '✅ Подтверждено' : '❌ Отклонено';
+              bot.editMessageReplyMarkup(
+                { inline_keyboard: [[{ text: doneText, callback_data: 'done_' + txId }]] },
+                { chat_id: chatId, message_id: msgId }
+              ).catch(() => {});
+              bot.answerCallbackQuery(query.id, { text: doneText }).catch(() => {});
+            } else {
+              const already = result.error === 'already_processed';
+              bot.editMessageReplyMarkup(
+                already
+                  ? { inline_keyboard: [[{ text: '⚠️ Уже обработана', callback_data: 'done_' + txId }]] }
+                  : { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: 'approve_' + txId }, { text: '❌ Отклонить', callback_data: 'reject_' + txId }]] },
+                { chat_id: chatId, message_id: msgId }
+              ).catch(() => {});
+              bot.answerCallbackQuery(query.id, {
+                text: already ? '⚠️ Транзакция уже обработана' : '❌ Ошибка: ' + (result.error || 'unknown'),
+                show_alert: true
+              }).catch(() => {});
+            }
+          })
+          .catch((err) => {
+            console.error('❌ [bot] Ошибка обработки транзакции:', err.message);
+            bot.editMessageReplyMarkup(
+              { inline_keyboard: [[{ text: '✅ Подтвердить', callback_data: 'approve_' + txId }, { text: '❌ Отклонить', callback_data: 'reject_' + txId }]] },
+              { chat_id: chatId, message_id: msgId }
+            ).catch(() => {});
+            bot.answerCallbackQuery(query.id, { text: '❌ Ошибка сервера' }).catch(() => {});
+          });
+          return;
+        }
+
+        if (data.startsWith('done_') || data === 'noop') {
+          bot.answerCallbackQuery(query.id, { text: 'Транзакция уже обработана' }).catch(() => {});
+          return;
+        }
+      } catch (e) {
+        console.error('❌ [bot] Callback error:', e.message);
+      }
+    });
+
+    console.log('✅ [bot] Все обработчики зарегистрированы');
+    return bot;
+
   } catch (e) {
-    console.error('❌ [bot-tx] error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
+    console.error('❌ [bot] Ошибка:', e.message);
+    return null;
   }
-});
+}
+
+// ── Получение профиля ──
+function getPlayerProfile(userId) {
+  try {
+    return Save.findOne({ tgId: String(userId) }).lean()
+      .then((doc) => {
+        if (!doc) {
+          return { username: 'Новичок', level: 1, cp: 0, floor: 1, killCount: 0, gold: 0, pixr: 0, gram: 0 };
+        }
+        const data = doc.data || {};
+        return {
+          username:  doc.firstName || doc.username || 'Игрок',
+          level:     doc.level     || 1,
+          cp:        doc.cp        || 0,
+          floor:     doc.floor     || 1,
+          killCount: data.killCount || 0,
+          gold:      data.gold     || 0,
+          pixr:      data.pixr     || 0,
+          gram:      data.gram     || 0
+        };
+      })
+      .catch((e) => {
+        console.error('❌ [bot] getPlayerProfile error:', e.message);
+        return { username: 'Ошибка', level: 0, cp: 0, floor: 0, killCount: 0, gold: 0, pixr: 0, gram: 0 };
+      });
+  } catch (e) {
+    console.error('❌ [bot] getPlayerProfile error:', e.message);
+    return Promise.resolve({ username: 'Ошибка', level: 0, cp: 0, floor: 0, killCount: 0, gold: 0, pixr: 0, gram: 0 });
+  }
+}
+
+// ── Инициализация бота ──
+// Запускаем бота сразу при старте сервера
+initBot();
 
 // ═══════════════════════════════
 //  АДМИН-ПАНЕЛЬ
@@ -1289,7 +1497,6 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     
     await logAdminAction(req.admin.login, 'update_user', tgId, updates);
     
-    // 🔥 Уведомляем клиента
     notifyClient(tgId, 'reload', { reason: 'user_updated' });
     
     res.json({ 
@@ -1378,7 +1585,6 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     await logAdminAction(req.admin.login, 'give_item', tgId, { item });
     
-    // 🔥 Уведомляем клиента
     notifyClient(tgId, 'reload', { reason: 'item_given' });
     
     res.json({ ok: true, item });
@@ -1430,7 +1636,6 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       
       console.log(`💰 [admin] Новый баланс: ${result?.data?.gram || 0} GRAM`);
       
-      // 🔥 Уведомляем клиента
       notifyClient(tx.userId, 'reload', { 
         reason: 'balance_updated',
         gram: result?.data?.gram || 0
@@ -1640,17 +1845,6 @@ app.get('/admin', (req, res) => {
 
 
 // ═══════════════════════════════
-//  Бот
-// ═══════════════════════════════
-let bot = null;
-try {
-  const { initBot } = require('./bot');
-  bot = initBot(app);
-} catch (e) {
-  console.warn('⚠️ Бот не инициализирован:', e.message);
-}
-
-// ═══════════════════════════════
 //  ПОКУПКА УЛУЧШЕНИЙ (атомарно)
 // ═══════════════════════════════
 app.post('/api/upgrade', async (req, res) => {
@@ -1720,6 +1914,75 @@ app.post('/api/upgrade', async (req, res) => {
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
+
+
+// ═══════════════════════════════
+//  БОТ: внутренний роут для транзакций
+// ═══════════════════════════════
+app.post('/bot/transaction/:txId/:action', async (req, res) => {
+  const secret = req.headers['x-bot-secret'];
+  if (!secret || secret !== BOT_TOKEN) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
+  const { txId, action } = req.params;
+  if (!['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ ok: false, error: 'invalid_action' });
+  }
+
+  try {
+    const tx = await Transaction.findOne({ id: txId });
+    if (!tx) return res.status(404).json({ ok: false, error: 'not_found' });
+    if (tx.status !== 'pending') return res.status(400).json({ ok: false, error: 'already_processed' });
+
+    if (action === 'approve') {
+      tx.status = 'approved';
+      tx.approvedAt = Date.now();
+      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      
+      console.log(`💰 [bot] Начисление ${gramDelta} GRAM пользователю ${tx.userId} (tx: ${txId})`);
+      
+      const newUpdatedAt = Date.now();
+      
+      const result = await Save.findOneAndUpdate(
+        { tgId: tx.userId },
+        { 
+          $inc: { 'data.gram': gramDelta },
+          $set: { 
+            'data.updatedAt': newUpdatedAt,
+            updatedAt: newUpdatedAt 
+          }
+        },
+        { new: true }
+      );
+      
+      console.log(`💰 [bot] Новый баланс пользователя ${tx.userId}: ${result?.data?.gram || 0} GRAM`);
+      
+      notifyClient(tx.userId, 'reload', { 
+        reason: 'balance_updated',
+        gram: result?.data?.gram || 0
+      });
+    } else {
+      tx.status = 'rejected';
+      tx.rejectedAt = Date.now();
+    }
+
+    await tx.save();
+    await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
+
+    if (bot) {
+      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
+      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}\n\n🔄 *Для обновления баланса перезапустите игру или нажмите "Обновить" в кошельке.*`;
+      try { await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' }); } catch (e) {}
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [bot-tx] error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 
 // ═══════════════════════════════
 //  Запуск
