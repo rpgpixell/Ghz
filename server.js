@@ -3,6 +3,7 @@
   server.js — Backend для PIXEL RPG
   Express + MongoDB (Mongoose) + Telegram WebApp auth
   + Админ-панель + Транзакции (пополнение/вывод)
+  + Long Polling для уведомлений клиентов
   ══════════════════════════════════════════════════════
 */
 
@@ -234,6 +235,79 @@ function setLeaderboardCache(data) {
 }
 
 // ═══════════════════════════════
+//  LONG POLLING — уведомления клиентов
+// ═══════════════════════════════
+
+// Хранилище уведомлений для клиентов
+const pendingNotifications = new Map(); // tgId -> [ { event, data, timestamp } ]
+
+// ── Long Polling эндпоинт ──
+app.post('/api/poll', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+
+  const { lastEventId } = req.body || {};
+  const tgId = tg.id;
+
+  const TIMEOUT = 30000;
+  let timeoutId = null;
+
+  const sendResponse = (notifications) => {
+    if (timeoutId) clearTimeout(timeoutId);
+    res.json({
+      ok: true,
+      notifications: notifications || [],
+      timestamp: Date.now()
+    });
+  };
+
+  const checkNotifications = () => {
+    const notifs = pendingNotifications.get(tgId) || [];
+    
+    if (notifs.length > 0) {
+      pendingNotifications.set(tgId, []);
+      sendResponse(notifs);
+      return true;
+    }
+    return false;
+  };
+
+  if (checkNotifications()) return;
+
+  timeoutId = setTimeout(() => {
+    sendResponse([]);
+  }, TIMEOUT);
+
+  req.on('close', () => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+});
+
+// ── Функция отправки уведомления клиенту ──
+function notifyClient(tgId, eventType, data) {
+  if (!tgId) return false;
+
+  const notification = {
+    event: eventType,
+    data: data || {},
+    timestamp: Date.now()
+  };
+
+  if (!pendingNotifications.has(tgId)) {
+    pendingNotifications.set(tgId, []);
+  }
+  pendingNotifications.get(tgId).push(notification);
+
+  console.log(`📨 [Poll] Уведомление поставлено в очередь для ${tgId}: ${eventType}`);
+  return true;
+}
+
+// ── Функция принудительного обновления клиента ──
+function forceReloadClient(tgId) {
+  return notifyClient(tgId, 'reload', { reason: 'data_updated' });
+}
+
+// ═══════════════════════════════
 //  ОСНОВНЫЕ РОУТЫ
 // ═══════════════════════════════
 app.get('/', (req, res) => {
@@ -263,7 +337,6 @@ app.post('/api/load', async (req, res) => {
       });
       console.log(`🆕 [load] Новый пользователь: ${tg.id}`);
 
-      // Уведомляем админа
       if (bot && process.env.ADMIN_TG_ID) {
         try {
           let inviterName = '— (органика)';
@@ -316,7 +389,7 @@ app.post('/api/load', async (req, res) => {
   }
 });
 
-// ── Сохранение ──
+// ── Сохранение (с защитой от перезаписи) ──
 app.post('/api/save', async (req, res) => {
   const startTime = Date.now();
   
@@ -340,6 +413,19 @@ app.post('/api/save', async (req, res) => {
     }
 
     data.tgId = tg.id;
+    
+    // 🔥 ЗАЩИТА ОТ ПЕРЕЗАПИСИ
+    const currentDoc = await Save.findOne({ tgId: tg.id }).lean();
+    if (currentDoc && currentDoc.data && currentDoc.data.updatedAt) {
+      const clientUpdatedAt = data.updatedAt || 0;
+      const serverUpdatedAt = currentDoc.data.updatedAt || 0;
+      
+      if (serverUpdatedAt > clientUpdatedAt) {
+        console.log(`⚠️ [save] Игнорируем устаревшие данные для ${tg.id} (сервер: ${serverUpdatedAt}, клиент: ${clientUpdatedAt})`);
+        return res.json({ ok: true, updatedAt: serverUpdatedAt, ignored: true });
+      }
+    }
+
     data.updatedAt = Date.now();
 
     await Save.findOneAndUpdate(
@@ -541,7 +627,6 @@ const DAILY_MILESTONES = [
   { id: 3, minutes: 60, rewardType: 'gold',    amount: 2000 },
 ];
 
-// ── Получить задания + состояние пользователя ──
 app.post('/api/tasks', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -563,7 +648,6 @@ app.post('/api/tasks', async (req, res) => {
   }
 });
 
-// ── Забрать ежедневную награду ──
 app.post('/api/tasks/daily/claim', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -594,7 +678,6 @@ app.post('/api/tasks/daily/claim', async (req, res) => {
   }
 });
 
-// ── Забрать специальное задание ──
 app.post('/api/tasks/special/claim', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -624,18 +707,14 @@ app.post('/api/tasks/special/claim', async (req, res) => {
 
 // ═══════════════════════════════
 //  АВАТАРКА ПОЛЬЗОВАТЕЛЯ
-//  GET /api/avatar/:tgId
-//  Проксирует фото профиля через Bot API.
-//  Кешируется в памяти на 1 час (URL не меняется часто).
 // ═══════════════════════════════
-const _avatarCache = new Map(); // tgId -> { url, ts }
-const AVATAR_CACHE_TTL = 3600 * 1000; // 1 час
+const _avatarCache = new Map();
+const AVATAR_CACHE_TTL = 3600 * 1000;
 
 app.get('/api/avatar/:tgId', async (req, res) => {
   const tgId = req.params.tgId;
   if (!tgId || !/^\d+$/.test(tgId)) return res.status(400).json({ ok: false });
 
-  // Кеш
   const cached = _avatarCache.get(tgId);
   if (cached && Date.now() - cached.ts < AVATAR_CACHE_TTL) {
     return res.redirect(302, cached.url);
@@ -645,7 +724,6 @@ app.get('/api/avatar/:tgId', async (req, res) => {
   if (!token) return res.status(503).json({ ok: false, error: 'no_token' });
 
   try {
-    // 1. Получаем список фото профиля
     const photosRes = await fetch(
       `https://api.telegram.org/bot${token}/getUserProfilePhotos?user_id=${tgId}&limit=1`
     );
@@ -655,11 +733,9 @@ app.get('/api/avatar/:tgId', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'no_photo' });
     }
 
-    // Берём самый большой размер первой фотографии
     const sizes = photosData.result.photos[0];
     const fileId = sizes[sizes.length - 1].file_id;
 
-    // 2. Получаем file_path
     const fileRes = await fetch(
       `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`
     );
@@ -683,7 +759,6 @@ app.get('/api/avatar/:tgId', async (req, res) => {
 //  ТРАНЗАКЦИИ (Пополнение/Вывод)
 // ═══════════════════════════════
 
-// ── Создание пополнения ──
 app.post('/api/wallet/deposit', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -713,7 +788,6 @@ app.post('/api/wallet/deposit', async (req, res) => {
       createdAt: Date.now()
     });
     
-    // Уведомляем админа в боте
     if (bot) {
       const adminMsg = `
 💰 **НОВАЯ ТРАНЗАКЦИЯ**
@@ -763,7 +837,6 @@ app.post('/api/wallet/deposit', async (req, res) => {
   }
 });
 
-// ── Запрос на вывод ──
 app.post('/api/wallet/withdraw', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -848,7 +921,6 @@ app.post('/api/wallet/withdraw', async (req, res) => {
   }
 });
 
-// ── Получение транзакций пользователя ──
 app.post('/api/wallet/transactions', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -866,7 +938,6 @@ app.post('/api/wallet/transactions', async (req, res) => {
   }
 });
 
-// ── ОБМЕН PIXR → GRAM ──
 app.post('/api/wallet/exchange', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
@@ -913,13 +984,6 @@ app.post('/api/wallet/exchange', async (req, res) => {
 
 // ═══════════════════════════════
 //  БОТ: подтверждение/отклонение транзакций
-//  POST /bot/transaction/:txId/:action
-//  Защищён BOT_TOKEN в заголовке x-bot-secret
-// ═══════════════════════════════
-// ═══════════════════════════════
-//  БОТ: подтверждение/отклонение транзакций
-//  POST /bot/transaction/:txId/:action
-//  Защищён BOT_TOKEN в заголовке x-bot-secret
 // ═══════════════════════════════
 app.post('/bot/transaction/:txId/:action', async (req, res) => {
   const secret = req.headers['x-bot-secret'];
@@ -944,17 +1008,27 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
       
       console.log(`💰 [bot] Начисление ${gramDelta} GRAM пользователю ${tx.userId} (tx: ${txId})`);
       
-      // 🔥 ИСПРАВЛЕНИЕ: добавляем updatedAt и new: true
+      const newUpdatedAt = Date.now();
+      
       const result = await Save.findOneAndUpdate(
         { tgId: tx.userId },
         { 
           $inc: { 'data.gram': gramDelta },
-          $set: { updatedAt: Date.now() }
+          $set: { 
+            'data.updatedAt': newUpdatedAt,
+            updatedAt: newUpdatedAt 
+          }
         },
         { new: true }
       );
       
       console.log(`💰 [bot] Новый баланс пользователя ${tx.userId}: ${result?.data?.gram || 0} GRAM`);
+      
+      // 🔥 Уведомляем клиента об изменении баланса
+      notifyClient(tx.userId, 'reload', { 
+        reason: 'balance_updated',
+        gram: result?.data?.gram || 0
+      });
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -963,10 +1037,9 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
     await tx.save();
     await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
 
-    // Уведомляем пользователя
     if (bot) {
       const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
-      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}\n\n🔄 *Для обновления баланса перезапустите игру!*`;
+      const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}\n\n🔄 *Для обновления баланса перезапустите игру или нажмите "Обновить" в кошельке.*`;
       try { await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' }); } catch (e) {}
     }
 
@@ -976,6 +1049,7 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
 // ═══════════════════════════════
 //  АДМИН-ПАНЕЛЬ
 // ═══════════════════════════════
@@ -1215,6 +1289,9 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     
     await logAdminAction(req.admin.login, 'update_user', tgId, updates);
     
+    // 🔥 Уведомляем клиента
+    notifyClient(tgId, 'reload', { reason: 'user_updated' });
+    
     res.json({ 
       ok: true, 
       user: {
@@ -1301,6 +1378,9 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     await logAdminAction(req.admin.login, 'give_item', tgId, { item });
     
+    // 🔥 Уведомляем клиента
+    notifyClient(tgId, 'reload', { reason: 'item_given' });
+    
     res.json({ ok: true, item });
   } catch (e) {
     console.error('❌ [admin] give-item error:', e.message);
@@ -1334,16 +1414,27 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       
       console.log(`💰 [admin] Начисление ${gramDelta} GRAM пользователю ${tx.userId}`);
       
+      const newUpdatedAt = Date.now();
+      
       const result = await Save.findOneAndUpdate(
         { tgId: tx.userId },
         { 
           $inc: { 'data.gram': gramDelta },
-          $set: { updatedAt: Date.now() }
+          $set: { 
+            'data.updatedAt': newUpdatedAt,
+            updatedAt: newUpdatedAt 
+          }
         },
         { new: true }
       );
       
       console.log(`💰 [admin] Новый баланс: ${result?.data?.gram || 0} GRAM`);
+      
+      // 🔥 Уведомляем клиента
+      notifyClient(tx.userId, 'reload', { 
+        reason: 'balance_updated',
+        gram: result?.data?.gram || 0
+      });
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -1362,7 +1453,7 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
 **Статус:** ${statusText}
 ${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
 
-🔄 Для обновления баланса перезапустите игру или нажмите "Обновить" в кошельке.
+🔄 *Для обновления баланса перезапустите игру или нажмите "Обновить" в кошельке.*
       `;
       try {
         await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
