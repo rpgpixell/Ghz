@@ -496,26 +496,47 @@
       lastEventId = response.timestamp || Date.now();
 
       if (response.ok && response.notifications && response.notifications.length > 0) {
-        console.log('📨 [Poll] Получено ' + response.notifications.length + ' уведомлений');
-        
-        response.notifications.forEach(function(notification) {
-          if (notification.event === 'reload') {
-            console.log('🔄 [Poll] Команда на обновление данных!');
-            
-            if (typeof window.forceReload === 'function') {
-              window.forceReload().then(function(success) {
-                if (success) {
-                  console.log('✅ [Poll] Данные обновлены успешно');
-                  if (typeof renderWallet === 'function') renderWallet();
-                  if (typeof updateHUD === 'function') updateHUD();
-                }
-              });
-            } else {
-              location.reload();
-            }
+  console.log('📨 [Poll] Получено ' + response.notifications.length + ' уведомлений');
+  
+  response.notifications.forEach(function(notification) {
+    if (notification.event === 'reload') {
+      console.log('🔄 [Poll] Команда на обновление данных!');
+      
+      // 🔥 МГНОВЕННОЕ ОБНОВЛЕНИЕ из данных уведомления
+      if (notification.data) {
+        if (notification.data.gram !== undefined) {
+          G.gram = notification.data.gram;
+          console.log('🔥 [Poll] Мгновенно обновлен GRAM:', G.gram);
+        }
+        if (notification.data.gold !== undefined) {
+          G.gold = notification.data.gold;
+        }
+        if (notification.data.pixr !== undefined) {
+          G.pixr = notification.data.pixr;
+        }
+        if (notification.data.inventory) {
+          console.log('🔥 [Poll] Обновление инвентаря...');
+        }
+        // Обновляем HUD сразу
+        if (typeof updateHUD === 'function') updateHUD();
+        if (typeof renderWallet === 'function') renderWallet();
+      }
+      
+      // Все равно вызываем forceReload для полной синхронизации
+      if (typeof window.forceReload === 'function') {
+        window.forceReload().then(function(success) {
+          if (success) {
+            console.log('✅ [Poll] Данные обновлены успешно');
+            if (typeof renderWallet === 'function') renderWallet();
+            if (typeof updateHUD === 'function') updateHUD();
           }
         });
+      } else {
+        location.reload();
       }
+    }
+  });
+}
 
       if (SYNC.started && SYNC.online) {
         pollTimer = setTimeout(doPoll, 3000);
