@@ -725,12 +725,15 @@ G.equipped = {
   console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
 }
 
-  function boot() {
+  // ═══════════════════════════════
+//  БУТ — с задержкой
+// ═══════════════════════════════
+
+function boot() {
   lsInitStars();
   lsSetStatus('Подключение', 10);
   initTelegram();
 
-  // ✅ ДОБАВИТЬ СЮДА ПОСЛЕ initTelegram()
   var tgId = getTgId();
   if (tgId) {
     try {
@@ -744,63 +747,109 @@ G.equipped = {
     lsHide();
   }, 8000);
 
-    function _bootFinalize() {
-      clearTimeout(_emergencyTimer);
-      try {
-        SYNC.booted = true;
-        startSyncLoops();
-        if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
-          serverSaveBatch();
-        }
-      } catch (e) {
-        console.error('❌ [boot] finalize error:', e.message);
+  function _bootFinalize() {
+    clearTimeout(_emergencyTimer);
+    try {
+      SYNC.booted = true;
+      startSyncLoops();
+      if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
+        serverSaveBatch();
       }
-      lsHide();
+    } catch (e) {
+      console.error('❌ [boot] finalize error:', e.message);
+    }
+    lsHide();
+  }
+
+  lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
+
+  serverLoad().then(function (r) {
+    if (!r || !r.ok) {
+      console.warn('⚠️ [serverLoad] ответ не ok:', r);
+      _showNoServerError();
+      _bootFinalize();
+      return;
     }
 
-    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 60);
+    var server = r.save;
+    var currentTgId = getTgId();
 
-    serverLoad().then(function (r) {
-      if (!r || !r.ok) {
-        console.warn('⚠️ [serverLoad] ответ не ok:', r);
-        _showNoServerError();
-        _bootFinalize();
-        return;
-      }
-
-      var server = r.save;
-      var currentTgId = getTgId();
-
-      if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
-        console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
-        _showNoServerError();
-        _bootFinalize();
-        return;
-      }
-
-      if (server && server.data && server.data.charId &&
-          typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
-        SYNC.serverConfirmed = true;
-        lsSetStatus('Применение данных', 85);
-        if (!SYNC.started) {
-          bootFromSnapshot(server.data);
-        } else {
-          hotApply(server.data);
-        }
-      } else if (!server || !server.data) {
-        if (SYNC.started) {
-          SYNC.started = false;
-          SYNC.serverConfirmed = false;
-          resetToCharSelect();
-        }
-      }
-    }).catch(function (err) {
-      console.error('❌ [boot] serverLoad ошибка:', err.message);
+    if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
+      console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
       _showNoServerError();
-    }).then(function () {
       _bootFinalize();
-    });
+      return;
+    }
+
+    if (server && server.data && server.data.charId &&
+        typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
+      
+      SYNC.serverConfirmed = true;
+      lsSetStatus('Применение данных', 85);
+      
+      if (!SYNC.started) {
+        console.log('⏳ [boot] Применяем данные...');
+        bootFromSnapshot(server.data);
+        
+        // ✅ Ждём 500мс после применения данных
+        setTimeout(function() {
+          console.log('✅ [boot] Данные применены, запускаем игру');
+          _bootFinalize();
+        }, 500);
+        
+      } else {
+        hotApply(server.data);
+        setTimeout(function() {
+          _bootFinalize();
+        }, 300);
+      }
+    } else if (!server || !server.data) {
+      if (SYNC.started) {
+        SYNC.started = false;
+        SYNC.serverConfirmed = false;
+        resetToCharSelect();
+      }
+      _bootFinalize();
+    } else {
+      console.log('⏳ [boot] Персонаж не выбран, показываем экран выбора');
+      _bootFinalize();
+    }
+  }).catch(function (err) {
+    console.error('❌ [boot] serverLoad ошибка:', err.message);
+    _showNoServerError();
+    _bootFinalize();
+  });
+}
+
+// ═══════════════════════════════
+//  СТАРТ ИЗ СНАПШОТА — с задержкой
+// ═══════════════════════════════
+
+function bootFromSnapshot(snap) {
+  if (SYNC.started) return;
+  
+  var data = snap.data || snap;
+  if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+    data = data.data;
   }
+  
+  console.log('📦 [bootFromSnapshot] Применяем снапшот:', Object.keys(data));
+  
+  if (!applySnapshot(data)) {
+    console.warn('⚠️ [bootFromSnapshot] Не удалось применить данные');
+    return;
+  }
+  
+  hideCharSelect();
+  SYNC.started = true;
+  
+  // ✅ Запускаем игру с задержкой 300мс
+  setTimeout(function() {
+    console.log('🚀 [bootFromSnapshot] Запуск игры...');
+    if (typeof startGame === 'function') startGame();
+    startPolling();
+  }, 300);
+}
 
   function _showNoServerError() {
     var statusEl = document.getElementById('lsStatus');

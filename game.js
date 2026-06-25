@@ -53,33 +53,147 @@ function getAtkCooldown()      { return Math.max(0.5, BASE_ATK_COOLDOWN / effect
 // ═══════════════════════════════
 function monsterTemplate() {
   const f = G.floor;
-  const floor1 = [
-    { name: 'Гоблин',       emoji: '👺', hp: 30  + f*15, atk: 5  + f*2, xp: 15,  gold: 8,   color: '#3a3', sk: 'goblin'    },
-    { name: 'Гриб',         emoji: '🍄', hp: 25  + f*10, atk: 3  + f*1, xp: 10,  gold: 5,   color: '#a63', sk: 'mushroom'  },
-    { name: 'Скелет',       emoji: '💀', hp: 45  + f*20, atk: 8  + f*3, xp: 25,  gold: 12,  color: '#aab', sk: 'skeleton'  },
-  ];
-  const floor2 = [
-    { name: 'Ледяной голем', emoji: '🧊', hp: 130 + f*30, atk: 20 + f*5, xp: 40,  gold: 20,  color: '#4af', sk: 'icegolem'   },
-    { name: 'Голем земли',   emoji: '🪨', hp: 150 + f*35, atk: 22 + f*5, xp: 45,  gold: 22,  color: '#963', sk: 'earthgolem' },
-  ];
-  const floor3 = [
-    { name: 'Орк-демон', emoji: '😈', hp: 220 + f*40, atk: 36 + f*8, xp: 70,  gold: 40,  color: '#f44', sk: 'orcdemon' },
-    { name: 'Орк-демон', emoji: '🦅', hp: 180 + f*35, atk: 30 + f*7, xp: 60,  gold: 35,  color: '#fa4', sk: 'orcdemon' },
-  ];
-  const floor4 = [
-    { name: 'Зомби воин',  emoji: '🧟', hp: 380 + f*55, atk: 50 + f*11, xp: 110, gold: 60,  color: '#5a3', sk: 'zwarrior' },
-    { name: 'Зомби палач', emoji: '🧟', hp: 420 + f*60, atk: 55 + f*12, xp: 120, gold: 65,  color: '#383', sk: 'zexec'    },
-    { name: 'Зомби',       emoji: '🧟', hp: 350 + f*50, atk: 45 + f*10, xp: 100, gold: 55,  color: '#4a2', sk: 'zombie'   },
-  ];
-  const floor5 = [
-    { name: 'Тень', emoji: '👻', hp: 600 + f*70, atk: 72 + f*14, xp: 180, gold: 100, color: '#a4f', sk: null },
-  ];
-  if (f >= 5) {
-    const all = [floor1, floor2, floor3, floor4].flat().concat(floor5);
-    return { ...all[Math.floor(Math.random() * all.length)] };
+  
+  // ── МНОЖИТЕЛЬ СИЛЫ ──
+  // 1-й этаж: ×1.0 (без изменений)
+  // 2-й и выше: ×2.0
+  const powerMult = f === 1 ? 1.0 : 2.0;
+  
+  // Функция для применения множителя к HP и ATK
+  function scaleMonster(hp, atk) {
+    return {
+      hp: Math.floor(hp * powerMult),
+      atk: Math.floor(atk * powerMult),
+    };
   }
-  const pools = [floor1, floor2, floor3, floor4, floor5];
-  const pool = pools[f - 1];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 1 — Тёмный лес (×1.0 — без изменений)
+  // ═══════════════════════════════════════════════════════
+  const floor1 = [
+    { name: 'Гоблин',       emoji: '👺', hp: 30  + f*15, atk: 5  + f*2,  xp: 15,  gold: 8,   color: '#3a3', sk: 'goblin'    },
+    { name: 'Гриб',         emoji: '🍄', hp: 25  + f*10, atk: 3  + f*1,  xp: 10,  gold: 5,   color: '#a63', sk: 'mushroom'  },
+    { name: 'Скелет',       emoji: '💀', hp: 45  + f*20, atk: 8  + f*3,  xp: 25,  gold: 12,  color: '#aab', sk: 'skeleton'  },
+    { name: 'Гоблин',       emoji: '🐺', hp: 35  + f*12, atk: 6  + f*2,  xp: 18,  gold: 10,  color: '#888', sk: 'goblin'    },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 2 — Ледяные пещеры (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor2 = [
+    { name: 'Ледяной голем',  emoji: '🧊', ...scaleMonster(130 + f*30, 20 + f*5),  xp: 40,  gold: 20,  color: '#4af', sk: 'icegolem'   },
+    { name: 'Голем земли',    emoji: '🪨', ...scaleMonster(150 + f*35, 22 + f*5),  xp: 45,  gold: 22,  color: '#963', sk: 'earthgolem' },
+    { name: 'Голем льда',     emoji: '🐉', ...scaleMonster(120 + f*28, 18 + f*4),  xp: 35,  gold: 18,  color: '#8cf', sk: 'icegolem'   },
+    { name: 'Снежный голем',  emoji: '🧝', ...scaleMonster(100 + f*25, 15 + f*4),  xp: 30,  gold: 15,  color: '#aaf', sk: 'skeleton'  },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 3 — Марс (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor3 = [
+    { name: 'Орк-демон',      emoji: '😈', ...scaleMonster(220 + f*40, 36 + f*8),  xp: 70,  gold: 40,  color: '#f44', sk: 'orcdemon'  },
+    { name: 'Марсианин',      emoji: '👾', ...scaleMonster(200 + f*38, 32 + f*7),  xp: 65,  gold: 38,  color: '#a84', sk: 'orcdemon'  },
+    { name: 'Голем марса',    emoji: '🐛', ...scaleMonster(250 + f*45, 40 + f*9),  xp: 80,  gold: 45,  color: '#ca8', sk: 'earthgolem' },
+    { name: 'Сильный голем',  emoji: '🪨', ...scaleMonster(180 + f*35, 28 + f*6),  xp: 55,  gold: 32,  color: '#c44', sk: 'earthgolem' },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 4 — Земля мёртвых (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor4 = [
+    { name: 'Зомби воин',     emoji: '🧟', ...scaleMonster(380 + f*55, 50 + f*11), xp: 110, gold: 60,  color: '#5a3', sk: 'zwarrior' },
+    { name: 'Зомби палач',    emoji: '🧟', ...scaleMonster(420 + f*60, 55 + f*12), xp: 120, gold: 65,  color: '#383', sk: 'zexec'    },
+    { name: 'Зомби',          emoji: '🧟', ...scaleMonster(350 + f*50, 45 + f*10), xp: 100, gold: 55,  color: '#4a2', sk: 'zombie'   },
+    { name: 'Зомби скаут',    emoji: '👼', ...scaleMonster(450 + f*65, 60 + f*13), xp: 130, gold: 70,  color: '#66a', sk: 'zexec'    },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 5 — Бездна (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor5 = [
+    { name: 'Демон-воин',     emoji: '👹', ...scaleMonster(500 + f*60, 60 + f*12), xp: 150, gold: 80,  color: '#c44', sk: 'orcdemon'  },
+    { name: 'Ледяной великан', emoji: '🧊', ...scaleMonster(600 + f*70, 55 + f*10), xp: 160, gold: 85,  color: '#6af', sk: 'icegolem'  },
+    { name: 'Костяной рыцарь', emoji: '⚔️', ...scaleMonster(550 + f*65, 70 + f*14), xp: 170, gold: 90,  color: '#bbc', sk: 'skeleton'  },
+    { name: 'Зомбиноид',     emoji: '🧙', ...scaleMonster(480 + f*58, 65 + f*13), xp: 155, gold: 82,  color: '#a4f', sk: 'zombie'    },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 6 — Призрачный замок (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor6 = [
+    { name: 'Кость',          emoji: '👻', ...scaleMonster(500 + f*50, 70 + f*12), xp: 180, gold: 95,  color: '#88d', sk: 'skeleton'  },
+    { name: 'Банши',          emoji: '🧝', ...scaleMonster(550 + f*55, 75 + f*13), xp: 190, gold: 100, color: '#a8d', sk: 'zombie'    },
+    { name: 'Рыцарь-мертвец', emoji: '⚔️', ...scaleMonster(600 + f*60, 80 + f*14), xp: 200, gold: 105, color: '#88a', sk: 'zexec'     },
+    { name: 'Призрачный зомби', emoji: '🧙', ...scaleMonster(520 + f*52, 85 + f*15), xp: 210, gold: 110, color: '#99e', sk: 'zombie'    },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 7 — Кристальные шахты (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor7 = [
+    { name: 'Голем',          emoji: '🪨', ...scaleMonster(700 + f*70, 90 + f*15), xp: 250, gold: 130, color: '#a85', sk: 'earthgolem' },
+    { name: 'Гоблин',         emoji: '🐞', ...scaleMonster(650 + f*65, 85 + f*14), xp: 240, gold: 125, color: '#5af', sk: 'goblin'    },
+    { name: 'Горный дух',     emoji: '👻', ...scaleMonster(750 + f*75, 95 + f*16), xp: 260, gold: 135, color: '#8af', sk: 'icegolem'  },
+    { name: 'Кристальный голем', emoji: '🐉', ...scaleMonster(800 + f*80, 100 + f*17), xp: 270, gold: 140, color: '#4cf', sk: 'icegolem' },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 8 — Пустыня Забытых (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor8 = [
+    { name: 'Мумия',          emoji: '🧟', ...scaleMonster(850 + f*85, 110 + f*18), xp: 300, gold: 160, color: '#ca8', sk: 'zombie'    },
+    { name: 'Трольь',         emoji: '🦂', ...scaleMonster(800 + f*80, 105 + f*17), xp: 290, gold: 155, color: '#a84', sk: 'goblin'    },
+    { name: 'Хранитель пустыни', emoji: '🪨', ...scaleMonster(900 + f*90, 120 + f*19), xp: 320, gold: 170, color: '#ca8', sk: 'earthgolem' },
+    { name: 'Фараон',         emoji: '👑', ...scaleMonster(950 + f*95, 125 + f*20), xp: 330, gold: 175, color: '#f5c542', sk: 'zexec' },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 9 — Морские глубины (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor9 = [
+    { name: 'Камень',         emoji: '🐙', ...scaleMonster(1000 + f*100, 140 + f*22), xp: 380, gold: 200, color: '#a8c', sk: 'icegolem'  },
+    { name: 'Мертвец',        emoji: '🦑', ...scaleMonster(1200 + f*110, 160 + f*24), xp: 420, gold: 220, color: '#68a', sk: 'zexec'     },
+    { name: 'Морской дьявол', emoji: '👹', ...scaleMonster(1100 + f*105, 150 + f*23), xp: 400, gold: 210, color: '#c44', sk: 'orcdemon'  },
+    { name: 'Водяной голем',  emoji: '💧', ...scaleMonster(1050 + f*102, 145 + f*22), xp: 390, gold: 205, color: '#4af', sk: 'icegolem'  },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ЭТАЖ 10 — Небесная Цитадель (×2.0)
+  // ═══════════════════════════════════════════════════════
+  const floor10 = [
+    { name: 'Небесный страж', emoji: '⚔️', ...scaleMonster(1500 + f*120, 200 + f*25), xp: 600, gold: 350, color: '#ffd700', sk: 'zexec'  },
+    { name: 'Архангел',       emoji: '👼', ...scaleMonster(1800 + f*130, 220 + f*28), xp: 700, gold: 400, color: '#ffd700', sk: 'zwarrior' },
+    { name: 'Потусторонний',  emoji: '🧙', ...scaleMonster(1600 + f*125, 210 + f*26), xp: 650, gold: 380, color: '#ffd700', sk: 'zombie'   },
+    { name: 'Голем неба',     emoji: '🐉', ...scaleMonster(2000 + f*140, 250 + f*30), xp: 800, gold: 450, color: '#ffd700', sk: 'icegolem' },
+  ];
+  
+  // ═══════════════════════════════════════════════════════
+  //  ВЫБОР ПУЛА ПО ЭТАЖУ
+  // ═══════════════════════════════════════════════════════
+  let pool;
+  
+  if (f === 1) {
+    pool = floor1;
+  } else if (f === 2) {
+    pool = floor2;
+  } else if (f === 3) {
+    pool = floor3;
+  } else if (f === 4) {
+    pool = floor4;
+  } else if (f === 5) {
+    pool = floor5;
+  } else if (f === 6) {
+    pool = floor6;
+  } else if (f === 7) {
+    pool = floor7;
+  } else if (f === 8) {
+    pool = floor8;
+  } else if (f === 9) {
+    pool = floor9;
+  } else {
+    pool = floor10;
+  }
+  
   return { ...pool[Math.floor(Math.random() * pool.length)] };
 }
 
@@ -326,30 +440,41 @@ function update(dt) {
     return p.life > 0;
   });
 
-  // ── Смерть монстров — награда ──
-  monsters = monsters.filter(m => {
-    if (m.hp <= 0) {
-      if (m._attackTimeout) clearTimeout(m._attackTimeout);
-      spawnParticles(m.worldX, m.y, m.color, 12);
-      if (m.isBoss) {
-        _onBossKilled(m);
-      } else {
-        gainXP(Math.floor(m.xp * premMult('xp')));
-        G.gold += Math.floor(m.gold * premMult('gold'));
-        G.killCount++;
-        tryDropItem(G.floor);
-        var pixrChance = 0.3 * Math.pow(1.5, G.floor - 1) * premMult('pixr');
-        if (Math.random() * 100 < pixrChance) {
-          G.pixr = (G.pixr || 0) + 1;
-          showDmgPop('+1 PIXR', m.worldX - player.worldX + W * 0.5, GROUND * 0.4, '#ff44cc');
-        }
-        updateHUD();
-        checkFloorUnlock();
+// ── Смерть монстров — награда ──
+monsters = monsters.filter(m => {
+  if (m.hp <= 0) {
+    if (m._attackTimeout) clearTimeout(m._attackTimeout);
+    spawnParticles(m.worldX, m.y, m.color, 12);
+    if (m.isBoss) {
+      _onBossKilled(m);
+    } else {
+      // ✅ Получаем множители ТЕКУЩЕГО этажа
+      const floorCfg = FLOORS[Math.min(G.floor - 1, FLOORS.length - 1)];
+      const xpMult = floorCfg.xpMult || 1.0;
+      const goldMult = floorCfg.goldMult || 1.0;
+      
+      // ✅ Применяем множители к награде
+      const finalXp = Math.floor(m.xp * premMult('xp') * xpMult);
+      const finalGold = Math.floor(m.gold * premMult('gold') * goldMult);
+      
+      gainXP(finalXp);
+      G.gold += finalGold;
+      G.killCount++;
+      tryDropItem(G.floor);
+      
+      // PIXR шанс зависит от этажа
+      var pixrChance = 0.3 * Math.pow(1.5, G.floor - 1) * premMult('pixr');
+      if (Math.random() * 100 < pixrChance) {
+        G.pixr = (G.pixr || 0) + 1;
+        showDmgPop('+1 PIXR', m.worldX - player.worldX + W * 0.5, GROUND * 0.4, '#ff44cc');
       }
-      return false;
+      updateHUD();
+      checkFloorUnlock();
     }
-    return true;
-  });
+    return false;
+  }
+  return true;
+});
 
   // Удаляем монстров далеко позади
   monsters = monsters.filter(m => m.worldX > player.worldX - W * 0.6);
