@@ -107,8 +107,7 @@ function renderUpgrades() {
     var statusText = !st.unlocked ? '🔒 Заблокирован' : 'Lv.' + st.level + '/5';
     var statusCol  = !st.unlocked ? '#554' : col;
     var barPct     = st.unlocked ? (st.level / 5 * 100) : 0;
-   
- var nextAction;
+    var nextAction;
     if (isMax)             nextAction = 'МАКС';
     else if (!st.unlocked) nextAction = 'Открыть (1 книга)';
     else                   nextAction = 'Lv.' + st.level + '→' + (st.level+1) + ' (' + cost + ' книг)';
