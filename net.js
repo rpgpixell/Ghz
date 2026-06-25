@@ -283,7 +283,17 @@
       if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
     });
 
-    G.equipped = { weapon: null, armor: null, ring: null, boots: null, helmet: null };
+    // ✅ ПРАВИЛЬНО (полный набор слотов)
+G.equipped = { 
+  weapon: null, 
+  body: null, 
+  legs: null, 
+  gloves: null, 
+  belt: null, 
+  ring: null, 
+  boots: null, 
+  helmet: null 
+};
     var eq = d.equipped || {};
     EQUIP_SLOTS.forEach(function (slot) {
       var id = eq[slot];
@@ -686,37 +696,53 @@
   // ═══════════════════════════════
 
   function initTelegram() {
-    if (window.Telegram && window.Telegram.WebApp) {
-      try { window.Telegram.WebApp.ready(); } catch (e) {}
-      try { window.Telegram.WebApp.expand(); } catch (e) {}
-      try { window.Telegram.WebApp.disableVerticalSwipes && window.Telegram.WebApp.disableVerticalSwipes(); } catch (e) {}
-      TG_INIT = window.Telegram.WebApp.initData || '';
-      try {
-        START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
-      } catch (e) { START_PARAM = ''; }
-    }
-    if (!START_PARAM) {
-      try {
-        var urlRef = new URLSearchParams(window.location.search).get('ref') || '';
-        if (urlRef) START_PARAM = urlRef;
-      } catch (e) {}
-    }
-    SYNC.online = !!TG_INIT;
-    
-    var tgId = getTgId();
-    if (tgId) SYNC.currentTgId = tgId;
-    console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
+  if (window.Telegram && window.Telegram.WebApp) {
+    try { window.Telegram.WebApp.ready(); } catch (e) {}
+    try { window.Telegram.WebApp.expand(); } catch (e) {}
+    try { window.Telegram.WebApp.disableVerticalSwipes && window.Telegram.WebApp.disableVerticalSwipes(); } catch (e) {}
+    TG_INIT = window.Telegram.WebApp.initData || '';
+    try {
+      START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
+    } catch (e) { START_PARAM = ''; }
   }
+  if (!START_PARAM) {
+    try {
+      var urlRef = new URLSearchParams(window.location.search).get('ref') || '';
+      if (urlRef) START_PARAM = urlRef;
+    } catch (e) {}
+  }
+  SYNC.online = !!TG_INIT;
+  
+  var tgId = getTgId();
+  if (tgId) {
+    SYNC.currentTgId = tgId;
+    // ✅ ДОБАВИТЬ ЭТО
+    try {
+      localStorage.setItem('pixel_tgId', tgId);
+      console.log('💾 [initTelegram] Сохранён tgId:', tgId);
+    } catch (e) {}
+  }
+  console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
+}
 
   function boot() {
-    lsInitStars();
-    lsSetStatus('Подключение', 10);
-    initTelegram();
+  lsInitStars();
+  lsSetStatus('Подключение', 10);
+  initTelegram();
 
-    var _emergencyTimer = setTimeout(function () {
-      console.warn('⚠️ [boot] emergency hide');
-      lsHide();
-    }, 8000);
+  // ✅ ДОБАВИТЬ СЮДА ПОСЛЕ initTelegram()
+  var tgId = getTgId();
+  if (tgId) {
+    try {
+      localStorage.setItem('pixel_tgId', tgId);
+      console.log('💾 [boot] Сохранён tgId:', tgId);
+    } catch (e) {}
+  }
+
+  var _emergencyTimer = setTimeout(function () {
+    console.warn('⚠️ [boot] emergency hide');
+    lsHide();
+  }, 8000);
 
     function _bootFinalize() {
       clearTimeout(_emergencyTimer);
