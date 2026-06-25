@@ -1022,67 +1022,6 @@ async function logAdminAction(admin, action, target, details) {
   }
 }
 
-// ── Админ: подтвердить/отклонить транзакцию ──
-app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
-  try {
-    const { txId, action } = req.params;
-    
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({ ok: false, error: 'invalid_action' });
-    }
-    
-    const tx = await Transaction.findOne({ id: txId });
-    if (!tx) {
-      return res.status(404).json({ ok: false, error: 'transaction_not_found' });
-    }
-    
-    if (tx.status !== 'pending') {
-      return res.status(400).json({ ok: false, error: 'transaction_already_processed' });
-    }
-    
-    if (action === 'approve') {
-      tx.status = 'approved';
-      tx.approvedAt = Date.now();
-      
-      // 🔥 Начисляем/списываем GRAM через $inc
-      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      await Save.findOneAndUpdate(
-        { tgId: tx.userId },
-        { 
-          $inc: { 'data.gram': gramDelta },
-          $set: { updatedAt: Date.now() }
-        }
-      );
-    } else {
-      tx.status = 'rejected';
-      tx.rejectedAt = Date.now();
-    }
-    
-    await tx.save();
-    await logAdminAction(req.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
-    
-    if (bot) {
-      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
-      const msg = `
-💰 **Транзакция ${statusText}**
-
-**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
-**Сумма:** ${tx.amount} GRAM
-**Статус:** ${statusText}
-${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
-      `;
-      try {
-        await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
-      } catch (e) {}
-    }
-    
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('❌ [admin] transaction error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
 // ── Админ: список транзакций ──
 app.get('/admin/api/transactions', requireAdmin, async (req, res) => {
   try {
@@ -1350,6 +1289,7 @@ app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: выдача предмета ──
 app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
   try {
     const { tgId } = req.params;
@@ -1372,27 +1312,92 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     if (forClass) item.forClass = forClass;
     
-    // 🔥 Используем $push для атомарного добавления в массив
+    // 🔥 ИСПРАВЛЕНИЕ: используем правильный путь к инвентарю
+    // В клиенте G.inventory — массив на корневом уровне
+    // В MongoDB он хранится в data.inventory
     const result = await Save.findOneAndUpdate(
       { tgId: tgId },
       { 
         $push: { 'data.inventory': item },
         $set: { updatedAt: Date.now() }
       },
-      { new: true }  // ← возвращаем обновлённый документ
+      { new: true }
     );
     
     if (!result) {
       return res.status(404).json({ ok: false, error: 'user_not_found' });
     }
     
-    console.log(`✅ [admin] Предмет выдан ${tgId}: ${name}, теперь ${result.data?.inventory?.length || 0} предметов`);
+    console.log(`✅ [admin] Предмет выдан ${tgId}: ${name}`);
     
     await logAdminAction(req.admin.login, 'give_item', tgId, { item });
     
     res.json({ ok: true, item });
   } catch (e) {
     console.error('❌ [admin] give-item error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Админ: подтверждение транзакции ──
+app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) => {
+  try {
+    const { txId, action } = req.params;
+    
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ ok: false, error: 'invalid_action' });
+    }
+    
+    const tx = await Transaction.findOne({ id: txId });
+    if (!tx) {
+      return res.status(404).json({ ok: false, error: 'transaction_not_found' });
+    }
+    
+    if (tx.status !== 'pending') {
+      return res.status(400).json({ ok: false, error: 'transaction_already_processed' });
+    }
+    
+    if (action === 'approve') {
+      tx.status = 'approved';
+      tx.approvedAt = Date.now();
+      
+      // 🔥 ИСПРАВЛЕНИЕ: используем правильный путь к gram
+      // В клиенте G.gram — на корневом уровне
+      // В MongoDB он хранится в data.gram
+      const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      await Save.findOneAndUpdate(
+        { tgId: tx.userId },
+        { 
+          $inc: { 'data.gram': gramDelta },
+          $set: { updatedAt: Date.now() }
+        }
+      );
+    } else {
+      tx.status = 'rejected';
+      tx.rejectedAt = Date.now();
+    }
+    
+    await tx.save();
+    await logAdminAction(req.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
+    
+    if (bot) {
+      const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
+      const msg = `
+💰 **Транзакция ${statusText}**
+
+**Тип:** ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}
+**Сумма:** ${tx.amount} GRAM
+**Статус:** ${statusText}
+${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
+      `;
+      try {
+        await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
+      } catch (e) {}
+    }
+    
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [admin] transaction error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -1579,6 +1584,79 @@ try {
 } catch (e) {
   console.warn('⚠️ Бот не инициализирован:', e.message);
 }
+
+// ═══════════════════════════════
+//  ПОКУПКА УЛУЧШЕНИЙ (атомарно)
+// ═══════════════════════════════
+app.post('/api/upgrade', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  
+  const { upgId, cost, stat, bonus } = req.body;
+  if (!upgId || !cost) {
+    return res.status(400).json({ ok: false, error: 'missing_fields' });
+  }
+  
+  try {
+    const user = await Save.findOne({ tgId: tg.id });
+    if (!user) {
+      return res.status(404).json({ ok: false, error: 'user_not_found' });
+    }
+    
+    if (!user.data) user.data = {};
+    if (!user.data.upg) user.data.upg = {};
+    if (!user.data.baseStats) user.data.baseStats = {};
+    
+    const currentGold = user.data.gold || 0;
+    if (currentGold < cost) {
+      return res.status(400).json({ ok: false, error: 'not_enough_gold' });
+    }
+    
+    const currentLv = user.data.upg[upgId] || 0;
+    const maxLv = 60;
+    if (currentLv >= maxLv) {
+      return res.status(400).json({ ok: false, error: 'max_level' });
+    }
+    
+    // 🔥 Создаём объект для $inc (с динамическими ключами)
+    const incObj = {
+      'data.gold': -cost,
+    };
+    incObj['data.upg.' + upgId] = 1;
+    if (stat && bonus) {
+      incObj['data.baseStats.' + stat] = bonus;
+    }
+    
+    // Атомарно списываем золото и увеличиваем уровень
+    const result = await Save.findOneAndUpdate(
+      { 
+        tgId: tg.id,
+        'data.gold': { $gte: cost }
+      },
+      {
+        $inc: incObj,
+        $set: { updatedAt: Date.now() }
+      },
+      { new: true }
+    );
+    
+    if (!result) {
+      return res.status(400).json({ ok: false, error: 'not_enough_gold' });
+    }
+    
+    console.log(`✅ [upgrade] ${tg.id} купил ${upgId}, осталось ${result.data.gold}`);
+    
+    res.json({
+      ok: true,
+      gold: result.data.gold || 0,
+      upgLevel: (result.data.upg && result.data.upg[upgId]) || 1,
+      baseStats: result.data.baseStats || {}
+    });
+  } catch (e) {
+    console.error('❌ [upgrade] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
 
 // ═══════════════════════════════
 //  Запуск
