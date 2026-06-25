@@ -1230,7 +1230,8 @@ function startGame() {
   updateAvatarOnStart();
   switchTab('game');
   spawnMonster(player.worldX + W * 0.65);
-  requestAnimationFrame(function(ts) { lastTime = ts; loop(ts); });
+  // ✅ startLoop защищает от двойного запуска loop
+  requestAnimationFrame(typeof startLoop === 'function' ? startLoop : function(ts) { lastTime = ts; loop(ts); });
 }
 
 // ═══════════════════════════════

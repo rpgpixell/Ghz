@@ -624,8 +624,17 @@ G.equipped = {
     if (!applySnapshot(data)) return;
     hideCharSelect();
     SYNC.started = true;
-    if (typeof startGame === 'function') startGame();
-    
+    // ✅ Запускаем игру только если loop ещё не запущен
+    if (typeof startGame === 'function') {
+      if (typeof window._loopRunning === 'undefined' || !window._loopRunning) {
+        startGame();
+      } else {
+        // Loop уже идёт — только обновляем HUD
+        if (typeof updateHUD === 'function') updateHUD();
+        if (typeof initSkillsHud === 'function') initSkillsHud();
+        if (typeof updatePotionHud === 'function') updatePotionHud();
+      }
+    }
     setTimeout(startPolling, 2000);
   }
 
@@ -642,6 +651,7 @@ G.equipped = {
   // ═══════════════════════════════
 
   function startSyncLoops() {
+    if (SYNC.booted) return; // ✅ защита от дублирования слушателей
     SYNC.batchTimer = setInterval(serverSaveBatch, 10000);
 
     document.addEventListener('visibilitychange', function () {
@@ -715,11 +725,6 @@ G.equipped = {
   var tgId = getTgId();
   if (tgId) {
     SYNC.currentTgId = tgId;
-    // ✅ ДОБАВИТЬ ЭТО
-    try {
-      localStorage.setItem('pixel_tgId', tgId);
-      console.log('💾 [initTelegram] Сохранён tgId:', tgId);
-    } catch (e) {}
   }
   console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
 }

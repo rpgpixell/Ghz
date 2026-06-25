@@ -729,12 +729,22 @@ function flashRed() {
 // ═══════════════════════════════
 //  ГЛАВНЫЙ ИГРОВОЙ ЦИКЛ
 // ═══════════════════════════════
+var _loopRunning = false;
+
 function loop(ts) {
   const dt = Math.min((ts - lastTime) / 1000, 0.1);
   lastTime = ts;
   update(dt);
   render();
   requestAnimationFrame(loop);
+}
+
+// ✅ Безопасный старт loop — защита от двойного запуска
+function startLoop(ts) {
+  if (_loopRunning) return;
+  _loopRunning = true;
+  lastTime = ts;
+  loop(ts);
 }
 
 // ═══════════════════════════════

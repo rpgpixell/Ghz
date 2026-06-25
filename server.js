@@ -270,6 +270,17 @@ app.post('/api/poll', async (req, res) => {
   });
 });
 
+
+// ✅ Очистка старых уведомлений (утечка памяти)
+setInterval(() => {
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  pendingNotifications.forEach((notifs, tgId) => {
+    const fresh = notifs.filter(n => n.timestamp > cutoff);
+    if (fresh.length === 0) pendingNotifications.delete(tgId);
+    else if (fresh.length !== notifs.length) pendingNotifications.set(tgId, fresh);
+  });
+}, 5 * 60 * 1000);
+
 function notifyClient(tgId, eventType, data) {
   if (!tgId) return false;
 
@@ -832,15 +843,18 @@ app.post('/api/wallet/withdraw', async (req, res) => {
   }
   
   try {
-    const user = await Save.findOne({ tgId: tg.id });
-    const balance = user?.data?.gram || 0;
-    
-    if (balance < amount) {
+    // ✅ Атомарно резервируем баланс — защита от двойного вывода
+    const reserved = await Save.findOneAndUpdate(
+      { tgId: tg.id, 'data.gram': { $gte: amount } },
+      { $inc: { 'data.gram': -amount } },
+      { new: false }
+    );
+    if (!reserved) {
       return res.status(400).json({ ok: false, error: 'Недостаточно GRAM на балансе' });
     }
-    
+
     const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    
+
     const tx = await Transaction.create({
       id: txId,
       userId: tg.id,
@@ -894,6 +908,10 @@ app.post('/api/wallet/withdraw', async (req, res) => {
     });
   } catch (e) {
     console.error('❌ [wallet] withdraw error:', e.message);
+    // ✅ Возвращаем зарезервированный баланс при ошибке
+    try {
+      await Save.updateOne({ tgId: tg.id }, { $inc: { 'data.gram': amount } });
+    } catch (_) {}
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
@@ -1255,7 +1273,7 @@ const ADMIN_CREDENTIALS = {
 const adminSessions = new Map();
 
 function generateSessionId() {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  return require('crypto').randomBytes(24).toString('hex'); // ✅ криптостойкий
 }
 
 function createSession(login, role) {
@@ -1289,6 +1307,13 @@ function requireAdmin(req, res, next) {
   req.admin = session;
   next();
 }
+
+
+// ✅ Очистка протухших сессий (утечка памяти)
+setInterval(() => {
+  const now = Date.now();
+  adminSessions.forEach((s, k) => { if (s.expires < now) adminSessions.delete(k); });
+}, 60 * 60 * 1000);
 
 async function logAdminAction(admin, action, target, details) {
   try {
@@ -1584,18 +1609,20 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       return res.status(400).json({ ok: false, error: 'invalid_action' });
     }
     
-    const tx = await Transaction.findOne({ id: txId });
+    // ✅ Атомарно — защита от двойного одобрения
+    const tx = await Transaction.findOneAndUpdate(
+      { id: txId, status: 'pending' },
+      { $set: { status: action === 'approve' ? 'approved' : 'rejected',
+                [action === 'approve' ? 'approvedAt' : 'rejectedAt']: Date.now() } },
+      { new: false }
+    );
     if (!tx) {
-      return res.status(404).json({ ok: false, error: 'transaction_not_found' });
-    }
-    
-    if (tx.status !== 'pending') {
+      const existing = await Transaction.findOne({ id: txId }).lean();
+      if (!existing) return res.status(404).json({ ok: false, error: 'transaction_not_found' });
       return res.status(400).json({ ok: false, error: 'transaction_already_processed' });
     }
-    
+
     if (action === 'approve') {
-      tx.status = 'approved';
-      tx.approvedAt = Date.now();
       
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
       
@@ -1621,12 +1648,8 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
         reason: 'balance_updated',
         gram: result?.data?.gram || 0
       });
-    } else {
-      tx.status = 'rejected';
-      tx.rejectedAt = Date.now();
     }
     
-    await tx.save();
     await logAdminAction(req.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
     
     if (bot) {
@@ -1912,13 +1935,20 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
   }
 
   try {
-    const tx = await Transaction.findOne({ id: txId });
-    if (!tx) return res.status(404).json({ ok: false, error: 'not_found' });
-    if (tx.status !== 'pending') return res.status(400).json({ ok: false, error: 'already_processed' });
+    // ✅ Атомарно меняем статус — защита от двойного одобрения
+    const tx = await Transaction.findOneAndUpdate(
+      { id: txId, status: 'pending' },
+      { $set: { status: action === 'approve' ? 'approved' : 'rejected',
+                [action === 'approve' ? 'approvedAt' : 'rejectedAt']: Date.now() } },
+      { new: false }
+    );
+    if (!tx) {
+      const existing = await Transaction.findOne({ id: txId }).lean();
+      if (!existing) return res.status(404).json({ ok: false, error: 'not_found' });
+      return res.status(400).json({ ok: false, error: 'already_processed' });
+    }
 
     if (action === 'approve') {
-      tx.status = 'approved';
-      tx.approvedAt = Date.now();
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
       
       console.log(`💰 [bot] Начисление ${gramDelta} GRAM пользователю ${tx.userId} (tx: ${txId})`);
@@ -1943,12 +1973,8 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
         reason: 'balance_updated',
         gram: result?.data?.gram || 0
       });
-    } else {
-      tx.status = 'rejected';
-      tx.rejectedAt = Date.now();
     }
 
-    await tx.save();
     await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
 
     if (bot) {
