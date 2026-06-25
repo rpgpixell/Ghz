@@ -270,14 +270,35 @@ function showRefineResult(success, item, maxed, cost, bonus) {
 }
 
 // ═══════════════════════════════
-//  КНИГИ НАВЫКОВ
+//  КНИГИ НАВЫКОВ — НОВАЯ СИСТЕМА
 // ═══════════════════════════════
 
-// Стоимость использования: unlock=1, затем N*30+1 книг
+// ✅ НОВАЯ СТОИМОСТЬ КНИГ
 function skillBookCost(st) {
-  if (!st.unlocked)     return 1;
-  if (st.level === 0)   return 1;
-  return st.level * 30 + 1;
+  // Открытие навыка
+  if (!st.unlocked) return 1;
+  
+  // Прогрессивная шкала: 5, 10, 20, 40, 100
+  var costs = {
+    0: 5,   // Lv.0 → Lv.1
+    1: 10,  // Lv.1 → Lv.2
+    2: 20,  // Lv.2 → Lv.3
+    3: 40,  // Lv.3 → Lv.4
+    4: 100, // Lv.4 → Lv.5 (MAX)
+  };
+  
+  // Если навык уже на максимуме (Lv.5)
+  if (st.level >= 5) return Infinity;
+  
+  return costs[st.level] || 999;
+}
+
+// Получить стоимость для отображения (строка)
+function skillBookCostDisplay(st) {
+  if (!st.unlocked) return '1';
+  if (st.level >= 5) return 'MAX';
+  var costs = { 0: 5, 1: 10, 2: 20, 3: 40, 4: 100 };
+  return String(costs[st.level] || '?');
 }
 
 function countBooksInInv(skillId) {
@@ -292,6 +313,7 @@ function removeBooksFromInv(skillId, count) {
   });
 }
 
+// ✅ ОБНОВЛЁННАЯ ФУНКЦИЯ ИСПОЛЬЗОВАНИЯ КНИГИ
 function useSkillBook(skillId) {
   var skClass = null;
   Object.keys(SKILLS_DEF).forEach(function(cls) {
@@ -303,12 +325,31 @@ function useSkillBook(skillId) {
   }
   var st    = getSkillState(skillId);
   var isMax = st.unlocked && st.level >= 5;
-  if (isMax) return;
+  if (isMax) {
+    showDmgPop('✨ Уже максимум!', PLAYER_SCREEN_X, player.y - 30, '#a78bfa');
+    return;
+  }
+  
   var cost = skillBookCost(st);
+  if (cost === Infinity) return;
+  
   var have = countBooksInInv(skillId);
-  if (have < cost) return;
+  if (have < cost) {
+    showDmgPop('📖 Нужно ' + cost + ' книг', PLAYER_SCREEN_X, player.y - 30, '#f5c542');
+    return;
+  }
+  
   removeBooksFromInv(skillId, cost);
-  if (!st.unlocked) { st.unlocked = true; } else { st.level++; }
+  
+  if (!st.unlocked) {
+    st.unlocked = true;
+    st.level = 0;
+    showDmgPop('✨ Навык открыт!', PLAYER_SCREEN_X, player.y - 30, '#a78bfa');
+  } else {
+    st.level++;
+    showDmgPop('⬆ Навык Lv.' + st.level + '!', PLAYER_SCREEN_X, player.y - 30, '#a78bfa');
+  }
+  
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
@@ -392,11 +433,15 @@ function openItemModal(itemId) {
     var sk_cls = item.forClass;
     var isWrongClass = sk_cls && G_CHAR && sk_cls !== G_CHAR.id;
     var sk_st  = getSkillState(sk_id);
+    
+    // ✅ НОВАЯ СТОИМОСТЬ
     var sk_cost = skillBookCost(sk_st);
+    var sk_costDisplay = skillBookCostDisplay(sk_st);
     var sk_have = countBooksInInv(sk_id);
     var sk_isMax = sk_st.unlocked && sk_st.level >= 5;
     var sk_action = !sk_st.unlocked ? 'Открыть навык' : 'Улучшить навык Lv.' + sk_st.level + '→' + (sk_st.level + 1);
     var sk_canUse = sk_have >= sk_cost && !sk_isMax && !isWrongClass;
+    
     var charCols2 = { fire: '#ff6600', light: '#ffd060', water: '#44aaff' };
     var skCol = sk_cls ? (charCols2[sk_cls] || '#a78bfa') : '#a78bfa';
     var classRow = '';
@@ -410,7 +455,7 @@ function openItemModal(itemId) {
       classRow +
       '<div class="modal-stat-row"><span style="color:#aaa">Статус</span><span style="color:' + (sk_st.unlocked ? skCol : '#778') + '">' + (!sk_st.unlocked ? '🔒 Заблокирован' : 'Lv.' + sk_st.level + '/5') + '</span></div>' +
       '<div class="modal-stat-row"><span style="color:#aaa">Книг в инвентаре</span><span>📖 ' + sk_have + '</span></div>' +
-      '<div class="modal-stat-row"><span style="color:#aaa">Нужно книг</span><span style="color:' + (sk_canUse ? '#2ecc71' : '#e74c3c') + ';">' + sk_cost + '</span></div>' +
+      '<div class="modal-stat-row"><span style="color:#aaa">Нужно книг</span><span style="color:' + (sk_canUse ? '#2ecc71' : '#e74c3c') + ';">' + sk_costDisplay + '</span></div>' +
       (isWrongClass ? '<div style="color:#e74c3c;font-size:11px;text-align:center;margin-top:6px;">🔒 Только для ' + item.classLabel + '</div>' : '') +
       (sk_isMax ? '<div style="color:#a78bfa;font-size:11px;text-align:center;margin-top:6px;">✨ НАВЫК НА МАКСИМУМЕ</div>' : '') +
       '</div>';
@@ -564,13 +609,25 @@ function renderInventory() {
         var have    = countBooksInInv(item.bookSkillId);
         var bkst    = getSkillState(item.bookSkillId);
         var bkcost  = skillBookCost(bkst);
+        var bkcostDisplay = skillBookCostDisplay(bkst);
         var isWrong = item.forClass && G_CHAR && item.forClass !== G_CHAR.id;
+        var isMax   = bkst.unlocked && bkst.level >= 5;
         var classCol = isWrong ? '#554' : '#a78bfa';
+        
+        var needText = '';
+        if (isMax) {
+          needText = '✨ MAX';
+        } else if (!bkst.unlocked) {
+          needText = '🔓 1';
+        } else {
+          needText = have + '/' + bkcostDisplay;
+        }
+        
         gridHtml += '<div class="inv-slot rarity-epic' + selModeClass + selClass + '" onclick="' + clickHandler + '">' +
           checkmark +
           '<div style="font-size:10px;line-height:1;margin-bottom:1px;">📖</div>' +
           '<div style="line-height:1"><img src="' + (item.bookSkillIcon || '') + '" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;" onerror="this.remove()"></div>' +
-          '<div style="font-size:7px;color:' + classCol + ';margin-top:2px;">' + (isWrong ? '🔒' : have + '/' + bkcost) + '</div>' +
+          '<div style="font-size:7px;color:' + classCol + ';margin-top:2px;">' + (isWrong ? '🔒' : needText) + '</div>' +
           '<div class="inv-rarity-dot" style="background:#9b59b6"></div></div>';
       } else {
         gridHtml += '<div class="inv-slot rarity-' + item.rarity + (item._equipped ? ' equipped' : '') + selModeClass + selClass + '" onclick="' + clickHandler + '">' +
