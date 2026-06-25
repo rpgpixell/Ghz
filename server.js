@@ -109,6 +109,7 @@ const AdminLogSchema = new mongoose.Schema({
   timestamp: { type: Number, default: Date.now }
 });
 const AdminLog = mongoose.model('AdminLog', AdminLogSchema);
+
 // ── Специальные задания (создаются через админку) ──
 const SpecialTaskSchema = new mongoose.Schema({
   taskId:       { type: String, required: true, unique: true },
@@ -848,7 +849,7 @@ app.post('/api/wallet/withdraw', async (req, res) => {
 });
 
 // ── Получение транзакций пользователя ──
-app.post('/api/wallet/transactions', async (req, res) => {  // ← GET → POST
+app.post('/api/wallet/transactions', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
   
@@ -882,8 +883,6 @@ app.post('/api/wallet/exchange', async (req, res) => {
   try {
     const gramEarned = amount / 1000;
 
-    // Атомарно списываем PIXR и начисляем GRAM через $inc
-    // Условие 'data.pixr': { $gte: amount } гарантирует атомарную проверку баланса
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.pixr': { $gte: amount } },
       {
@@ -949,7 +948,6 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
     await tx.save();
     await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
 
-    // Уведомляем пользователя
     if (bot) {
       const statusText = action === 'approve' ? '✅ Подтверждена' : '❌ Отклонена';
       const msg = `💰 *Транзакция ${statusText}*\n\n*Тип:* ${tx.type === 'deposit' ? 'Пополнение' : 'Вывод'}\n*Сумма:* ${tx.amount} GRAM\n${action === 'approve' ? '✅ Баланс обновлён!' : '❌ Средства не зачислены.'}`;
@@ -1093,7 +1091,6 @@ app.get('/admin/api/users', requireAdmin, async (req, res) => {
   }
 });
 
-
 // ── Admin: список заданий ──
 app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
   try {
@@ -1203,7 +1200,6 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     
     await logAdminAction(req.admin.login, 'update_user', tgId, updates);
     
-    // 🔥 ИЗМЕНЕНИЕ: возвращаем полные данные пользователя
     res.json({ 
       ok: true, 
       user: {
@@ -1221,57 +1217,6 @@ app.post('/admin/api/user/:tgId/update', requireAdmin, async (req, res) => {
     console.error('❌ [admin] update error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
-});
-
-
-// ── Admin: список заданий ──
-app.get('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const tasks = await SpecialTask.find().sort({ createdAt: -1 }).lean();
-    res.json({ ok: true, tasks });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: создать задание ──
-app.post('/admin/api/tasks', requireAdmin, async (req, res) => {
-  try {
-    const { title, description, link, linkText, rewardType, rewardAmount } = req.body;
-    if (!title || !rewardType || !rewardAmount)
-      return res.status(400).json({ ok: false, error: 'missing_fields' });
-    const taskId = 'task_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    const task   = await SpecialTask.create({
-      taskId, title,
-      description:  description  || '',
-      link:         link         || '',
-      linkText:     linkText     || 'Перейти',
-      rewardType,
-      rewardAmount: Number(rewardAmount),
-      active: true,
-      createdAt: Date.now(),
-    });
-    await logAdminAction(req.admin.login, 'create_task', taskId, { title, rewardType, rewardAmount });
-    res.json({ ok: true, task });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: удалить задание ──
-app.delete('/admin/api/tasks/:taskId', requireAdmin, async (req, res) => {
-  try {
-    await SpecialTask.deleteOne({ taskId: req.params.taskId });
-    await logAdminAction(req.admin.login, 'delete_task', req.params.taskId, {});
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// ── Admin: вкл/выкл задание ──
-app.patch('/admin/api/tasks/:taskId/toggle', requireAdmin, async (req, res) => {
-  try {
-    const task = await SpecialTask.findOne({ taskId: req.params.taskId });
-    if (!task) return res.status(404).json({ ok: false, error: 'not_found' });
-    task.active = !task.active;
-    await task.save();
-    res.json({ ok: true, active: task.active });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/admin/api/user/:tgId/referrals', requireAdmin, async (req, res) => {
@@ -1324,9 +1269,6 @@ app.post('/admin/api/user/:tgId/give-item', requireAdmin, async (req, res) => {
     
     if (forClass) item.forClass = forClass;
     
-    // 🔥 ИСПРАВЛЕНИЕ: используем правильный путь к инвентарю
-    // В клиенте G.inventory — массив на корневом уровне
-    // В MongoDB он хранится в data.inventory
     const result = await Save.findOneAndUpdate(
       { tgId: tgId },
       { 
@@ -1373,17 +1315,20 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
       tx.status = 'approved';
       tx.approvedAt = Date.now();
       
-      // 🔥 ИСПРАВЛЕНИЕ: используем правильный путь к gram
-      // В клиенте G.gram — на корневом уровне
-      // В MongoDB он хранится в data.gram
       const gramDelta = tx.type === 'deposit' ? tx.amount : -tx.amount;
-      await Save.findOneAndUpdate(
+      
+      console.log(`💰 [admin] Начисление ${gramDelta} GRAM пользователю ${tx.userId}`);
+      
+      const result = await Save.findOneAndUpdate(
         { tgId: tx.userId },
         { 
           $inc: { 'data.gram': gramDelta },
           $set: { updatedAt: Date.now() }
-        }
+        },
+        { new: true }
       );
+      
+      console.log(`💰 [admin] Новый баланс: ${result?.data?.gram || 0} GRAM`);
     } else {
       tx.status = 'rejected';
       tx.rejectedAt = Date.now();
@@ -1401,6 +1346,8 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
 **Сумма:** ${tx.amount} GRAM
 **Статус:** ${statusText}
 ${action === 'approve' ? '✅ Баланс обновлен!' : '❌ Средства не были зачислены.'}
+
+🔄 Для обновления баланса перезапустите игру или нажмите "Обновить" в кошельке.
       `;
       try {
         await bot.sendMessage(tx.userId, msg, { parse_mode: 'Markdown' });
@@ -1630,7 +1577,6 @@ app.post('/api/upgrade', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'max_level' });
     }
     
-    // 🔥 Создаём объект для $inc (с динамическими ключами)
     const incObj = {
       'data.gold': -cost,
     };
@@ -1639,7 +1585,6 @@ app.post('/api/upgrade', async (req, res) => {
       incObj['data.baseStats.' + stat] = bonus;
     }
     
-    // Атомарно списываем золото и увеличиваем уровень
     const result = await Save.findOneAndUpdate(
       { 
         tgId: tg.id,
