@@ -301,30 +301,38 @@ function update(dt) {
       if (atkAnimTimer >= 0 && !atkFired &&
           atkAnimTimer >= ATK_ANIM_DUR * (ATK_FRAMES - 1) / ATK_FRAMES) {
         atkFired = true;
-        const _ptype = G_CHAR ? G_CHAR.id : 'fire';
-        if (_ptype === 'light') {
-          // Молния — мгновенный урон, объект только для анимации вспышки
-          var _m = atkTarget;
-          var _dmg = atkDmg;
-          if (_m && _m.hp > 0) {
-            if (_m._cursed && _m._defDebuff) _dmg = Math.floor(_dmg * (1 + _m._defDebuff));
-            _m.hp -= _dmg;
-            _m.hitFlash = 0.15;
-            spawnParticles(_m.worldX, _m.y + 10, '#ffe066', 10);
-            showDmgPop(atkCrit ? _dmg + '!' : _dmg, _m.worldX - worldX, _m.y - 5, atkCrit ? '#fff566' : '#ffe066');
-          }
-          fireballs.push({
-            worldX: player.worldX + 40, y: player.y + 120,
-            targetM: atkTarget, speed: 9999, dmg: 0, crit: atkCrit, angle: 0,
-            ptype: 'light', life: 0.15, maxLife: 0.15
-          });
-        } else {
-          fireballs.push({
-            worldX: player.worldX + 40, y: player.y + 60,
-            targetM: atkTarget, speed: 600, dmg: atkDmg, crit: atkCrit, angle: 0,
-            ptype: _ptype
-          });
+const _ptype = G_CHAR ? G_CHAR.id : 'fire';
+if (_ptype === 'light') {
+    // Молния — мгновенный урон, объект только для анимации вспышки
+    var _m = atkTarget;
+    var _dmg = atkDmg;
+    if (_m && _m.hp > 0) {
+        if (_m._cursed && _m._defDebuff) _dmg = Math.floor(_dmg * (1 + _m._defDebuff));
+        _m.hp -= _dmg;
+        _m.hitFlash = 0.15;
+        spawnParticles(_m.worldX, _m.y + 10, '#ffe066', 10);
+        showDmgPop(atkCrit ? _dmg + '!' : _dmg, _m.worldX - worldX, _m.y - 5, atkCrit ? '#fff566' : '#ffe066');
+        
+        // Вампиризм Люмоса (1% лечение)
+        if (G_CHAR && G_CHAR.perk === 'life_drain') {
+            var heal = Math.max(1, Math.floor(_dmg * 0.01));
+            G.hp = Math.min(G.maxHp, G.hp + heal);
+            updateHUD();
+            showDmgPop('+' + heal + ' HP', PLAYER_SCREEN_X, player.y - 30, '#44ff88');
         }
+    }
+    fireballs.push({
+        worldX: player.worldX + 40, y: player.y + 120,
+        targetM: atkTarget, speed: 9999, dmg: 0, crit: atkCrit, angle: 0,
+        ptype: 'light', life: 0.15, maxLife: 0.15
+    });
+} else {
+    fireballs.push({
+        worldX: player.worldX + 40, y: player.y + 60,
+        targetM: atkTarget, speed: 600, dmg: atkDmg, crit: atkCrit, angle: 0,
+        ptype: _ptype
+    });
+}
       }
       if (atkCooldownTimer <= 0 && atkAnimTimer < 0) {
         atkCooldownTimer = getAtkCooldown();
