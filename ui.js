@@ -11,7 +11,23 @@
 // ═══════════════════════════════
 //  ВКЛАДКА УЛУЧШЕНИЙ
 // ═══════════════════════════════
-var _upgTab = 'stats'; // 'stats' | 'skills'
+// ── Кеш аватаров (чтобы не спамить 404 запросами) ──
+var _avatarFailedCache = {};
+
+function avatarUrl(tgId) {
+  if (!tgId || !window.GameSync || !window.GameSync._API) return '';
+  if (_avatarFailedCache[tgId]) return '';
+  return window.GameSync._API + '/api/avatar/' + tgId;
+}
+
+function onAvatarError(img, tgId, fallbackHtml) {
+  _avatarFailedCache[tgId] = true;
+  img.style.display = 'none';
+  img.parentElement.innerHTML = fallbackHtml;
+  img.parentElement.style.cssText += ';display:flex;align-items:center;justify-content:center;font-size:16px;';
+}
+
+ // 'stats' | 'skills'
 function setUpgTab(t) { _upgTab = t; renderUpgrades(); }
 
 function upgCost(u) {
@@ -346,16 +362,13 @@ function renderRatingData(players, body) {
     var level = p.level || 1;
     var cp = p.cp || 0;
     
-    var avatarUrl = '';
-    if (p.tgId && window.GameSync && window.GameSync._API) {
-      avatarUrl = window.GameSync._API + '/api/avatar/' + p.tgId;
-    }
+    var aUrl = avatarUrl(p.tgId);
     
     html += 
       '<div class="rating-row" style="' + (isMe ? 'border-color:#fa0;background:rgba(245,197,66,0.08);' : '') + '">' +
         '<div class="rating-rank">' + medal + '</div>' +
-        '<div style="flex:0 0 32px;width:32px;height:32px;border-radius:50%;overflow:hidden;border:1.5px solid ' + (isMe ? '#f5c542' : '#2a2a5a') + ';background:#0d0d22;flex-shrink:0;">' +
-          '<img src="' + avatarUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\';this.parentElement.innerHTML=\'' + (charEmoji || '👤') + '\';this.parentElement.style.display=\'flex\';this.parentElement.style.alignItems=\'center\';this.parentElement.style.justifyContent=\'center\';this.parentElement.style.fontSize=\'16px\';">' +
+        '<div style="flex:0 0 32px;width:32px;height:32px;border-radius:50%;overflow:hidden;border:1.5px solid ' + (isMe ? '#f5c542' : '#2a2a5a') + ';background:#0d0d22;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;">' +
+          (aUrl ? '<img src="' + aUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="onAvatarError(this,\'' + p.tgId + '\',\'' + (charEmoji||'👤') + '\')">' : (charEmoji||'👤')) +
         '</div>' +
         '<div style="flex:1;min-width:0;padding-left:10px;">' +
           '<div style="font-size:12px;color:' + (isMe ? '#f5c542' : '#ddd') + ';">' +
@@ -1205,7 +1218,7 @@ function updateHudAvatar() {
 
   // 2. Серверный прокси через Bot API
   if (!photoUrl && window.GameSync && window.GameSync._API) {
-    photoUrl = window.GameSync._API + '/api/avatar/' + tgId;
+    photoUrl = avatarUrl(tgId);
   }
 
   if (!photoUrl) return;
@@ -1217,6 +1230,7 @@ function updateHudAvatar() {
   imgEl.src = photoUrl;
 
   imgEl.onerror = function() {
+    _avatarFailedCache[tgId] = true;
     this.style.display = 'none';
     var name = '';
     try {
