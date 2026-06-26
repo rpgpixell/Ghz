@@ -329,18 +329,14 @@ G.equipped = {
 
   function serverSaveInstant(data) {
     if (!SYNC.online || !SYNC.serverConfirmed) return Promise.resolve({ ok: false });
-    
-    var snap = serializeState();
-    Object.keys(data).forEach(function(key) {
-      snap[key] = data[key];
-    });
-    snap.updatedAt = Date.now();
-    
-    return fetch(API + '/api/save', {
+    // ✅ Шлём через /api/save/delta — только нужные поля, не весь снапшот
+    var delta = Object.assign({ tgId: getTgId(), updatedAt: Date.now() }, data);
+    return fetch(API + '/api/save/delta', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: TG_INIT, data: snap }),
-    }).then(function (r) { return r.json(); });
+      body: JSON.stringify({ initData: TG_INIT, delta: delta }),
+    }).then(function (r) { return r.json(); })
+      .catch(function() { return { ok: false }; });
   }
 
   // ⚡ БАТЧ-СОХРАНЕНИЕ — КАЖДЫЕ 10 СЕКУНД (только дельта изменений)
@@ -436,7 +432,7 @@ G.equipped = {
       var toSend = _instantData;
       _instantData = {};
       serverSaveInstant(toSend).catch(function() {});
-    }, 400);
+    }, 1000);
   }
 
   function touch() {
@@ -832,8 +828,9 @@ function boot() {
           });
         } catch (e) {}
         var snap = serializeState();
-        serverSaveInstant({
-          charId: G.charId,
+        // ✅ Через delta — только структурные поля нового персонажа
+        saveInstant({
+          charId: snap.charId,
           inventory: snap.inventory,
           equipped: snap.equipped,
           upg: snap.upg,
