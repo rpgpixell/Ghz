@@ -642,9 +642,15 @@ G.equipped = {
     if (SYNC.booted) return; // ✅ защита от дублирования слушателей
     SYNC.batchTimer = setInterval(serverSaveBatch, 10000);
 
+    // ✅ visibilitychange — НЕ flush, данные сохраняются батчем каждые 10с
+    // flush только при реальном закрытии
     document.addEventListener('visibilitychange', function () {
-      console.log('[visibilitychange] hidden=' + document.hidden);
-      if (document.hidden) flush();
+      // Просто логируем — не флашим, иначе Telegram WebApp генерирует
+      // visibilitychange при каждом системном жесте на Android
+      if (document.hidden) {
+        console.log('[visibilitychange] скрыт — батч сохранит данные');
+        serverSaveBatch(); // лёгкий батч вместо тяжёлого flush
+      }
     });
 
     if (window.Telegram && window.Telegram.WebApp) {
@@ -882,12 +888,31 @@ function boot() {
       window[name] = function () {
         var r = fn.apply(this, arguments);
         try {
-          var snap = serializeState();
-          var data = {};
-          INSTANT_FIELDS.forEach(function(field) {
-            if (snap[field] !== undefined) data[field] = snap[field];
+          // ✅ Берём поля прямо из G — не вызываем тяжёлый serializeState()
+          var eq = {};
+          EQUIP_SLOTS.forEach(function(slot) {
+            var it = G.equipped && G.equipped[slot];
+            eq[slot] = it ? it.id : null;
           });
-          saveInstant(data);
+          var inv = (G.inventory || []).map(function(it) {
+            var c = Object.assign({}, it);
+            delete c._equipped;
+            return c;
+          });
+          saveInstant({
+            inventory:       inv,
+            equipped:        eq,
+            upg:             Object.assign({}, G.upg),
+            skills:          Object.assign({}, G.skills || {}),
+            potionLv:        G.potionLv,
+            potionThreshold: G.potionThreshold,
+            floor:           G.floor,
+            level:           G.level,
+            pixr:            G.pixr,
+            gram:            G.gram,
+            bp:              Object.assign({}, G.bp   || { active: false, claimed: [] }),
+            prem:            Object.assign({}, G.prem || { tier: null, expiresAt: 0 }),
+          });
         } catch (e) {}
         return r;
       };
