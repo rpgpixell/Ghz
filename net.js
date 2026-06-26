@@ -14,21 +14,6 @@
 (function () {
   'use strict';
 
-  function _getCaller() {
-    try {
-      var e = new Error();
-      var lines = (e.stack || '').split('\n');
-      // lines[0] = Error, [1] = _getCaller, [2] = вызвавшая функция, [3] = источник
-      var out = [];
-      for (var i = 2; i < Math.min(6, lines.length); i++) {
-        var l = lines[i].trim().replace('at ', '');
-        if (l && !l.includes('net.js') || i === 3) out.push(l);
-      }
-      return out.join(' ← ');
-    } catch(e) { return '?'; }
-  }
-
-
   var API = (function() {
     var url = new URLSearchParams(window.location.search).get('api') || 
               window.ENV_API_URL || 
@@ -346,9 +331,10 @@ G.equipped = {
     if (!SYNC.online || !SYNC.serverConfirmed) return Promise.resolve({ ok: false });
     // ✅ Шлём через /api/save/delta — только нужные поля, не весь снапшот
     var delta = Object.assign({ tgId: getTgId(), updatedAt: Date.now() }, data);
+    var _src = 'instant:' + Object.keys(data).join(',');
     return fetch(API + '/api/save/delta', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Save-Source': _src },
       body: JSON.stringify({ initData: TG_INIT, delta: delta }),
     }).then(function (r) { return r.json(); })
       .catch(function() { return { ok: false }; });
@@ -388,14 +374,13 @@ G.equipped = {
     if (currentPixr      !== SYNC.lastPixr)      { delta.pixr      = currentPixr;      hasChanges = true; }
 
     if (!hasChanges) return;
-    var _changedFields = Object.keys(delta).filter(function(k){ return !['tgId','updatedAt','charId','cp'].includes(k); });
-    console.log('📦 [BATCH /api/save/delta] fields=' + _changedFields.join(',') + ' caller=' + _getCaller());
 
     SYNC.pushing = true;
 
+    var _bsrc = 'batch:' + Object.keys(delta).filter(function(k){return !['tgId','updatedAt','charId','cp'].includes(k);}).join(',');
     fetch(API + '/api/save/delta', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Save-Source': _bsrc },
       body: JSON.stringify({ initData: TG_INIT, delta: delta }),
     }).then(function (r) { return r.json(); })
       .then(function (r) {
@@ -441,7 +426,6 @@ G.equipped = {
 
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
-    console.log('⚡ [saveInstant] fields=' + Object.keys(data).join(',') + ' caller=' + _getCaller());
     // ✅ debounce 400мс — несколько быстрых вызовов схлопываются в один запрос
     Object.assign(_instantData, data);
     clearTimeout(_instantTimer);
@@ -465,7 +449,6 @@ G.equipped = {
   function flush() {
     if (!SYNC.started) return;
     if (!SYNC.online || !SYNC.serverConfirmed) return;
-    console.warn('🚨 [FLUSH /api/save] caller: ' + _getCaller());
     // ✅ Debounce flush — не чаще чем раз в 5 секунд
     var now = Date.now();
     if (now - _lastFlushAt < 5000) {
@@ -479,7 +462,7 @@ G.equipped = {
     try {
       fetch(API + '/api/save', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Save-Source': 'flush' },
         body: JSON.stringify({ initData: TG_INIT, data: snap }),
         keepalive: true,
       });

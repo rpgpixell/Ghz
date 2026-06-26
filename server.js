@@ -450,8 +450,8 @@ app.post('/api/save', async (req, res) => {
     );
 
     const duration = Date.now() - startTime;
-    var _sf = Object.keys(data).filter(function(k){ return !['tgId','updatedAt','v','cp'].includes(k); });
-    console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms) fields=${_sf.join(',')}`);
+    const saveSource = req.headers['x-save-source'] || 'unknown';
+    console.log(`✅ [save] ${tg.id} (${duration}ms) SOURCE=${saveSource}`);
 
     res.json({ ok: true, updatedAt: data.updatedAt });
 
@@ -546,8 +546,9 @@ app.post('/api/save/delta', async (req, res) => {
     );
 
     const duration = Date.now() - startTime;
-    var _df = Object.keys(delta).filter(function(k){ return !['tgId','updatedAt','charId','cp'].includes(k); });
-    console.log(`✅ [delta] Сохранено для ${tg.id} (${duration}ms) fields=${_df.join(',')}`);
+    const deltaSource = req.headers['x-save-source'] || 'unknown';
+    const _df = Object.keys(delta).filter(function(k){ return !['tgId','updatedAt','charId','cp'].includes(k); });
+    console.log(`✅ [delta] ${tg.id} (${duration}ms) SOURCE=${deltaSource} fields=${_df.join(',')}`);
 
 
     const response = { ok: true, updatedAt: merged.updatedAt };
