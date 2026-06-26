@@ -14,6 +14,21 @@
 (function () {
   'use strict';
 
+  function _getCaller() {
+    try {
+      var e = new Error();
+      var lines = (e.stack || '').split('\n');
+      // lines[0] = Error, [1] = _getCaller, [2] = вызвавшая функция, [3] = источник
+      var out = [];
+      for (var i = 2; i < Math.min(6, lines.length); i++) {
+        var l = lines[i].trim().replace('at ', '');
+        if (l && !l.includes('net.js') || i === 3) out.push(l);
+      }
+      return out.join(' ← ');
+    } catch(e) { return '?'; }
+  }
+
+
   var API = (function() {
     var url = new URLSearchParams(window.location.search).get('api') || 
               window.ENV_API_URL || 
@@ -373,6 +388,8 @@ G.equipped = {
     if (currentPixr      !== SYNC.lastPixr)      { delta.pixr      = currentPixr;      hasChanges = true; }
 
     if (!hasChanges) return;
+    var _changedFields = Object.keys(delta).filter(function(k){ return !['tgId','updatedAt','charId','cp'].includes(k); });
+    console.log('📦 [BATCH /api/save/delta] fields=' + _changedFields.join(',') + ' caller=' + _getCaller());
 
     SYNC.pushing = true;
 
@@ -424,6 +441,7 @@ G.equipped = {
 
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
+    console.log('⚡ [saveInstant] fields=' + Object.keys(data).join(',') + ' caller=' + _getCaller());
     // ✅ debounce 400мс — несколько быстрых вызовов схлопываются в один запрос
     Object.assign(_instantData, data);
     clearTimeout(_instantTimer);
@@ -447,6 +465,7 @@ G.equipped = {
   function flush() {
     if (!SYNC.started) return;
     if (!SYNC.online || !SYNC.serverConfirmed) return;
+    console.warn('🚨 [FLUSH /api/save] caller: ' + _getCaller());
     // ✅ Debounce flush — не чаще чем раз в 5 секунд
     var now = Date.now();
     if (now - _lastFlushAt < 5000) {
@@ -642,15 +661,9 @@ G.equipped = {
     if (SYNC.booted) return; // ✅ защита от дублирования слушателей
     SYNC.batchTimer = setInterval(serverSaveBatch, 10000);
 
-    // ✅ visibilitychange — НЕ flush, данные сохраняются батчем каждые 10с
-    // flush только при реальном закрытии
     document.addEventListener('visibilitychange', function () {
-      // Просто логируем — не флашим, иначе Telegram WebApp генерирует
-      // visibilitychange при каждом системном жесте на Android
-      if (document.hidden) {
-        console.log('[visibilitychange] скрыт — батч сохранит данные');
-        serverSaveBatch(); // лёгкий батч вместо тяжёлого flush
-      }
+      console.log('[visibilitychange] hidden=' + document.hidden);
+      if (document.hidden) flush();
     });
 
     if (window.Telegram && window.Telegram.WebApp) {
@@ -888,31 +901,12 @@ function boot() {
       window[name] = function () {
         var r = fn.apply(this, arguments);
         try {
-          // ✅ Берём поля прямо из G — не вызываем тяжёлый serializeState()
-          var eq = {};
-          EQUIP_SLOTS.forEach(function(slot) {
-            var it = G.equipped && G.equipped[slot];
-            eq[slot] = it ? it.id : null;
+          var snap = serializeState();
+          var data = {};
+          INSTANT_FIELDS.forEach(function(field) {
+            if (snap[field] !== undefined) data[field] = snap[field];
           });
-          var inv = (G.inventory || []).map(function(it) {
-            var c = Object.assign({}, it);
-            delete c._equipped;
-            return c;
-          });
-          saveInstant({
-            inventory:       inv,
-            equipped:        eq,
-            upg:             Object.assign({}, G.upg),
-            skills:          Object.assign({}, G.skills || {}),
-            potionLv:        G.potionLv,
-            potionThreshold: G.potionThreshold,
-            floor:           G.floor,
-            level:           G.level,
-            pixr:            G.pixr,
-            gram:            G.gram,
-            bp:              Object.assign({}, G.bp   || { active: false, claimed: [] }),
-            prem:            Object.assign({}, G.prem || { tier: null, expiresAt: 0 }),
-          });
+          saveInstant(data);
         } catch (e) {}
         return r;
       };
