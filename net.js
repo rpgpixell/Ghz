@@ -373,6 +373,8 @@ G.equipped = {
     if (currentPixr      !== SYNC.lastPixr)      { delta.pixr      = currentPixr;      hasChanges = true; }
 
     if (!hasChanges) return;
+    var _batchFields = Object.keys(delta).filter(function(k){ return k !== 'tgId' && k !== 'updatedAt' && k !== 'charId' && k !== 'cp'; });
+    console.log('[batch delta] SEND fields=' + _batchFields.join(','));
 
     SYNC.pushing = true;
 
@@ -424,13 +426,20 @@ G.equipped = {
 
   function saveInstant(data) {
     if (!SYNC.started || !SYNC.online) return;
-    // ✅ debounce 400мс — несколько быстрых вызовов схлопываются в один запрос
+    // 🔍 DEBUG: логируем кто вызывает saveInstant
+    try {
+      var _e = new Error();
+      var _lines = (_e.stack || '').split('\n');
+      var _caller = (_lines[2] || _lines[1] || '').trim();
+      console.log('[saveInstant] fields=' + Object.keys(data).join(',') + ' from=' + _caller);
+    } catch(e) {}
     Object.assign(_instantData, data);
     clearTimeout(_instantTimer);
     _instantTimer = setTimeout(function() {
       if (Object.keys(_instantData).length === 0) return;
       var toSend = _instantData;
       _instantData = {};
+      console.log('[saveInstant] SEND fields=' + Object.keys(toSend).join(','));
       serverSaveInstant(toSend).catch(function() {});
     }, 1000);
   }

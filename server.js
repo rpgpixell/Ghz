@@ -450,7 +450,9 @@ app.post('/api/save', async (req, res) => {
     );
 
     const duration = Date.now() - startTime;
-    console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms)`);
+    var _sf = Object.keys(data).filter(function(k){ return !['tgId','updatedAt','v','cp'].includes(k); });
+    console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms) fields=${_sf.join(',')}`);
+
     res.json({ ok: true, updatedAt: data.updatedAt });
 
   } catch (e) {
@@ -544,7 +546,9 @@ app.post('/api/save/delta', async (req, res) => {
     );
 
     const duration = Date.now() - startTime;
-    console.log(`✅ [delta] Сохранено для ${tg.id} (${duration}ms), полей: ${Object.keys(delta).length}`);
+    var _df = Object.keys(delta).filter(function(k){ return !['tgId','updatedAt','charId','cp'].includes(k); });
+    console.log(`✅ [delta] Сохранено для ${tg.id} (${duration}ms) fields=${_df.join(',')}`);
+
 
     const response = { ok: true, updatedAt: merged.updatedAt };
     if (Object.keys(syncToClient).length > 0) response.sync = syncToClient;
