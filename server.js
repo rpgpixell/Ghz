@@ -637,7 +637,7 @@ app.post('/api/ref/friends', async (req, res) => {
       .select('tgId firstName username level charId -_id').lean();
 
     const { gold: pendingGold } = calcPendingGold(milestones, friends);
-    const refLink = `https://t.me/${BOT_USERNAME}?startapp=${tg.id}`;
+    const refLink = `https://t.me/${BOT_USERNAME}?start=${tg.id}`;
 
     res.json({
       ok: true,
