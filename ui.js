@@ -1938,40 +1938,58 @@ function renderMarketListings(listings, isMy) {
     return;
   }
 
+  var _slotNames  = { weapon:'Оружие', body:'Нагрудник', legs:'Штаны', gloves:'Перчатки', boots:'Боты', helmet:'Шлем', ring:'Кольцо', belt:'Пояс' };
+  var _classCols  = { fire:'#ff7030', light:'#ffd040', water:'#40d0ff' };
+  var _classLbls  = { fire:'Пирокан', light:'Люмос', water:'Аквас' };
+  var _statCols   = { atk:'#ff6b6b', def:'#4ecdc4', hp:'#a8e063', spd:'#f5c542', crit:'#ff9f43', dodge:'#a78bfa' };
+  var _statLbls   = { atk:'ATK', def:'DEF', hp:'HP', spd:'SPD', crit:'CRIT%', dodge:'DODGE%' };
+
   var html = '';
   listings.forEach(function(lst) {
-    var item     = lst.item || {};
-    var r        = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
-    var isBook   = item.isSkillBook;
+    var item   = lst.item || {};
+    var r      = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
+    var isBook = item.isSkillBook;
     var iconHtml = isBook
       ? '<span style="font-size:22px;line-height:1;">📖</span>'
       : '<img src="' + (item.icon || '') + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">';
 
-    var subParts = [r.name];
-    if (isBook && item.bookSkillName) subParts.push(item.bookSkillName);
-    if (item.forClass && item.classLabel) subParts.push(item.classLabel);
-    if (!isMy) subParts.push(lst.sellerName || 'Игрок');
+    // Строка 1: Название + refine + Lv.X бейдж
+    var lvBadge = (!isBook && item.level)
+      ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">Lv.' + item.level + '</span>'
+      : (isBook && item.level ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">Lv.' + item.level + '</span>' : '');
+    var nameHtml = '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:3px;">' +
+      '<span style="font-size:13px;font-weight:bold;color:' + r.color + ';">' +
+        (item.name || '—') +
+        (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') +
+      '</span>' + lvBadge + '</div>';
 
-    // Бейджи статов
-    var statBadgesHtml = '';
+    // Строка 2: редкость · слот · класс · продавец
+    var subParts = ['<span style="color:' + r.color + ';">' + r.name + '</span>'];
+    if (!isBook && item.slot && _slotNames[item.slot]) subParts.push(_slotNames[item.slot]);
+    if (isBook && item.bookSkillName) subParts.push(item.bookSkillName);
+    if (item.forClass) {
+      var cc = _classCols[item.forClass] || '#aaa';
+      var cl = _classLbls[item.forClass] || item.forClass;
+      subParts.push('<span style="color:' + cc + ';">' + cl + '</span>');
+    }
+    if (!isMy) subParts.push('<span style="color:#778;">' + (lst.sellerName || 'Игрок') + '</span>');
+    var subHtml = '<div style="font-size:11px;margin-bottom:4px;">' + subParts.join(' · ') + '</div>';
+
+    // Строка 3: бейджи статов
+    var statBadges = '';
     if (!isBook && item.stats) {
-      var statCols = { atk: '#ff6b6b', def: '#4ecdc4', hp: '#a8e063', spd: '#f5c542', crit: '#ff9f43', dodge: '#a78bfa' };
-      var statLabelsM = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT', dodge: 'DODGE' };
       Object.keys(item.stats).forEach(function(s) {
         if (!item.stats[s]) return;
-        var col = statCols[s] || '#aaa';
-        statBadgesHtml += '<span style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;border:1px solid ' + col + '44;background:' + col + '18;color:' + col + ';margin-right:3px;margin-top:3px;">' +
-          (statLabelsM[s] || s) + ' +' + item.stats[s] + '</span>';
+        var col = _statCols[s] || '#aaa';
+        statBadges += '<span style="font-size:9px;padding:2px 6px;border-radius:3px;border:1px solid ' + col + '55;background:' + col + '18;color:' + col + ';margin-right:4px;">+' + item.stats[s] + ' ' + (_statLbls[s] || s) + '</span>';
       });
-      if (item.level) {
-        statBadgesHtml = '<span style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;border:1px solid #55558888;background:rgba(255,255,255,0.04);color:#aaa;margin-right:3px;margin-top:3px;">Lv.' + item.level + '</span>' + statBadgesHtml;
-      }
     }
+    var statsHtml = statBadges ? '<div style="margin-bottom:4px;">' + statBadges + '</div>' : '';
 
-    // Таймер с цветом
-    var timeLeft  = lst.expiresAt - Date.now();
-    var timerCol  = timeLeft > 4 * 3600000 ? '#2ecc71' : timeLeft > 3600000 ? '#f5c542' : '#e74c3c';
-    var timerHtml = '<div style="font-size:9px;color:' + timerCol + ';margin-top:4px;">⏱ ' + marketTimeLeft(lst.expiresAt) + '</div>';
+    // Строка 4: таймер
+    var timeLeft = lst.expiresAt - Date.now();
+    var timerCol = timeLeft > 4 * 3600000 ? '#2ecc71' : timeLeft > 3600000 ? '#f5c542' : '#e74c3c';
+    var timerHtml = '<div style="font-size:9px;color:' + timerCol + ';">⏱ ' + marketTimeLeft(lst.expiresAt) + '</div>';
 
     var actionBtn = '';
     if (isMy) {
@@ -1986,12 +2004,9 @@ function renderMarketListings(listings, isMy) {
     }
 
     html += '<div class="market-listing">' +
-      '<div class="market-listing-icon" style="border-color:' + r.color + '44;">' + iconHtml + '</div>' +
+      '<div class="market-listing-icon" style="border-color:' + r.color + '55;">' + iconHtml + '</div>' +
       '<div class="market-listing-info">' +
-        '<div class="market-listing-name" style="color:' + r.color + ';">' + (item.name || '—') + (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') + '</div>' +
-        '<div class="market-listing-sub">' + subParts.join(' · ') + '</div>' +
-        (statBadgesHtml ? '<div style="line-height:1;">' + statBadgesHtml + '</div>' : '') +
-        timerHtml +
+        nameHtml + subHtml + statsHtml + timerHtml +
       '</div>' +
       '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">' +
         '<div class="market-listing-price">' + lst.price.toLocaleString() + ' 💎</div>' +
