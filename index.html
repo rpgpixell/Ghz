@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Pixel RPG</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <!--
   ══════════════════════════════════════════════════════
   index.html — Точка входа
@@ -705,39 +704,13 @@
       <span class="pvp-page-title">⚔️ PvP АРЕНА</span>
       <span class="pvp-my-rating" id="pvpMyRating">★ —</span>
     </div>
-    <div class="pvp-find-btn-wrap">
-      <button class="pvp-find-btn" id="pvpFindBtn" onclick="pvpStartFinding()">
-        <span style="font-size:28px;">⚔️</span>
-        <span>Найти противника</span>
-        <span style="font-size:11px;color:#c890ff;" id="pvpFindCp"></span>
-      </button>
-    </div>
     <div class="pvp-page-tabs">
-      <button class="pvp-page-tab active" id="pvpTabRating"  onclick="switchPvpTab('rating')">Рейтинг</button>
+      <button class="pvp-page-tab active" id="pvpTabFight"   onclick="switchPvpTab('fight')">⚔️ Бой</button>
+      <button class="pvp-page-tab"        id="pvpTabRating"  onclick="switchPvpTab('rating')">Рейтинг</button>
       <button class="pvp-page-tab"        id="pvpTabHistory" onclick="switchPvpTab('history')">История</button>
     </div>
     <div class="pvp-page-body" id="pvpPageBody">
       <div style="text-align:center;color:#445;padding:30px;">Загрузка...</div>
-    </div>
-  </div>
-
-  <!-- PvP — Оверлей поиска (поверх страницы) -->
-  <div id="pvpSearchOverlay" class="pvp-search-overlay hidden">
-    <div class="pvp-search-box">
-      <div class="pvp-search-title">⚔️ ПОИСК СОПЕРНИКА</div>
-      <div class="pvp-search-anim">⚔️</div>
-      <div class="pvp-search-timer" id="pvpSearchTimer">0:00</div>
-      <div class="pvp-search-cp" id="pvpSearchCp"></div>
-      <button class="pvp-cancel-btn" onclick="pvpCancelSearch()">Отмена</button>
-    </div>
-  </div>
-
-  <!-- PvP — Боевой оверлей -->
-  <div id="pvpBattleOverlay" class="pvp-battle-overlay hidden">
-    <div class="pvp-status-badge" id="pvpStatusBadge"></div>
-    <div class="pvp-battle-bottom">
-      <div class="pvp-skills-bar" id="pvpSkillsBar"></div>
-      <button class="pvp-surrender-btn" onclick="pvpSurrender()">🏳 Сдаться</button>
     </div>
   </div>
 
