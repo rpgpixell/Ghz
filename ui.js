@@ -480,6 +480,7 @@ function atkSpdSvg()   { return `<svg width="20" height="20" viewBox="0 0 10 10"
 // ═══════════════════════════════
 
 var _walletTab = 'wallet'; // 'wallet' | 'stats'
+var _exchangeStats = null; // кэш статистики обмена
 
 function renderWallet() {
   const cp = calcCP();
@@ -509,8 +510,6 @@ function renderWallet() {
   }
   
   // ── КОШЕЛЕК ──
-  const canExchange = pixr >= 1000;
-  
   const html = `
     ${tabsHtml}
     
@@ -528,17 +527,48 @@ function renderWallet() {
       </div>
     </div>
     
+    <!-- Индикатор обмена PIXR→GRAM -->
+    <div id="exchangeIndicator" style="padding:10px 12px;background:rgba(255,255,255,0.02);border:1px solid #2a2a5a;border-radius:10px;margin-bottom:10px;">
+      <div style="font-size:10px;color:#778;letter-spacing:1px;margin-bottom:6px;">📊 ИНДИКАТОР ОБМЕНА PIXR → GRAM</div>
+      <div id="exchangeIndicatorInner" style="color:#445;font-size:11px;">Загрузка...</div>
+    </div>
+    
     <!-- Обмен PIXR → GRAM -->
-    <div style="padding:12px;background:rgba(255,255,255,0.03);border:1px solid #2a2a5a;border-radius:10px;margin-bottom:12px;">
-      <div style="font-size:10px;color:#778;margin-bottom:6px;display:flex;align-items:center;gap:4px;"><img src="images/pixr.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"> ОБМЕН PIXR → <img src="images/gram.png" style="width:14px;height:14px;object-fit:contain;image-rendering:pixelated;vertical-align:middle"> GRAM (1000:1)</div>
+    <div style="padding:12px;background:rgba(255,68,204,0.04);border:1px solid #3a1a5a;border-radius:10px;margin-bottom:10px;">
+      <div style="font-size:10px;color:#aa88cc;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+        <img src="images/pixr.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;">
+        PIXR → <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;"> GRAM
+        <span id="pixrGramRateLabel" style="margin-left:auto;color:#ff44cc;font-weight:bold;">...</span>
+      </div>
       <div style="display:flex;gap:8px;">
-        <input id="exchangeAmount" type="number" min="1000" step="1000" value="1000" 
-          style="flex:1;padding:8px 10px;background:#0d0d22;border:1px solid #2a2a5a;border-radius:6px;color:#fff;font-size:14px;font-family:'Courier New',monospace;">
-        <button onclick="submitExchange()" style="padding:8px 16px;background:linear-gradient(90deg,#4a2a8a,#7a4ad0);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+        <input id="exchangeAmount" type="number" min="1000" step="1000" value="1000"
+          style="flex:1;padding:8px 10px;background:#0d0d22;border:1px solid #3a1a5a;border-radius:6px;color:#fff;font-size:14px;font-family:'Courier New',monospace;"
+          oninput="previewExchange()">
+        <button onclick="submitExchange()" style="padding:8px 14px;background:linear-gradient(90deg,#4a2a8a,#7a4ad0);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
           Обменять
         </button>
       </div>
-      <div id="exchangeResult" style="font-size:10px;color:#556;margin-top:4px;min-height:16px;"></div>
+      <div id="exchangePreview" style="font-size:10px;color:#778;margin-top:4px;min-height:14px;"></div>
+      <div id="exchangeResult" style="font-size:10px;color:#556;margin-top:2px;min-height:14px;"></div>
+    </div>
+    
+    <!-- Обмен GRAM → PIXR -->
+    <div style="padding:12px;background:rgba(64,208,255,0.04);border:1px solid #1a3a5a;border-radius:10px;margin-bottom:12px;">
+      <div style="font-size:10px;color:#80bbcc;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+        <img src="images/gram.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;">
+        GRAM → <img src="images/pixr.png" style="width:13px;height:13px;object-fit:contain;image-rendering:pixelated;"> PIXR
+        <span style="margin-left:auto;color:#40d0ff;font-weight:bold;">1 GRAM = 800 PIXR</span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="exchangeGramAmount" type="number" min="1" step="1" value="1"
+          style="flex:1;padding:8px 10px;background:#0d0d22;border:1px solid #1a3a5a;border-radius:6px;color:#fff;font-size:14px;font-family:'Courier New',monospace;"
+          oninput="previewGramExchange()">
+        <button onclick="submitGramExchange()" style="padding:8px 14px;background:linear-gradient(90deg,#1a4a6a,#2a7aaa);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;">
+          Обменять
+        </button>
+      </div>
+      <div id="gramExchangePreview" style="font-size:10px;color:#778;margin-top:4px;min-height:14px;"></div>
+      <div id="gramExchangeResult" style="font-size:10px;color:#556;margin-top:2px;min-height:14px;"></div>
     </div>
     
     <!-- Кнопки Пополнить/Вывести -->
@@ -560,43 +590,158 @@ function renderWallet() {
   
   document.getElementById('walletBody').innerHTML = html;
   loadTransactions();
+  loadExchangeStats();
+}
+
+// ── Загрузка статистики обмена ──
+function loadExchangeStats() {
+  fetch(window.GameSync._API + '/api/wallet/exchange-stats')
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (!r.ok) return;
+      _exchangeStats = r;
+      renderExchangeIndicator(r);
+      // Обновляем лейбл курса PIXR→GRAM
+      var lbl = document.getElementById('pixrGramRateLabel');
+      if (lbl) lbl.textContent = r.currentRate + ':1';
+      // Обновляем шаг инпута
+      var inp = document.getElementById('exchangeAmount');
+      if (inp) {
+        inp.min = r.currentRate;
+        inp.step = r.currentRate;
+        if (parseInt(inp.value) < r.currentRate) inp.value = r.currentRate;
+      }
+      previewExchange();
+    })
+    .catch(function() {});
+}
+
+function renderExchangeIndicator(stats) {
+  var el = document.getElementById('exchangeIndicatorInner');
+  if (!el) return;
+  var total = stats.totalExchanged || 0;
+  var threshold = stats.threshold || 5000000;
+  var pct = Math.min(100, Math.round(total / threshold * 100));
+  var reached = total >= threshold;
+  var remaining = Math.max(0, threshold - total);
+  var barColor = reached ? '#e74c3c' : (pct > 75 ? '#f5c542' : '#ff44cc');
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+      <span style="color:#aaa;font-size:10px;">Обменяно PIXR → GRAM</span>
+      <span style="color:${barColor};font-weight:bold;font-size:10px;">${total.toLocaleString()} / ${threshold.toLocaleString()}</span>
+    </div>
+    <div style="height:8px;background:#1a1a3a;border-radius:4px;overflow:hidden;margin-bottom:5px;">
+      <div style="height:100%;width:${pct}%;background:${barColor};border-radius:4px;transition:width 0.4s;"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-size:9px;">
+      ${reached
+        ? `<span style="color:#e74c3c;">⚠️ Порог достигнут — курс <b>2000 PIXR</b> за 1 GRAM</span>`
+        : `<span style="color:#778;">До повышения цены: <b style="color:#f5c542;">${remaining.toLocaleString()} PIXR</b></span>
+           <span style="color:#556;">${pct}%</span>`
+      }
+    </div>
+  `;
+}
+
+function previewExchange() {
+  var inp = document.getElementById('exchangeAmount');
+  var prev = document.getElementById('exchangePreview');
+  if (!inp || !prev) return;
+  var amount = parseInt(inp.value) || 0;
+  var rate = (_exchangeStats && _exchangeStats.currentRate) || 1000;
+  if (amount < rate || amount % rate !== 0) {
+    prev.innerHTML = '<span style="color:#e74c3c;">Сумма должна быть кратна ' + rate + ' PIXR</span>';
+    return;
+  }
+  var gram = amount / rate;
+  prev.innerHTML = '<span style="color:#778;">Получите: <b style="color:#40d0ff;">' + gram + ' GRAM</b></span>';
+}
+
+function previewGramExchange() {
+  var inp = document.getElementById('exchangeGramAmount');
+  var prev = document.getElementById('gramExchangePreview');
+  if (!inp || !prev) return;
+  var amount = parseInt(inp.value) || 0;
+  if (amount < 1) { prev.innerHTML = ''; return; }
+  var pixr = amount * 800;
+  prev.innerHTML = '<span style="color:#778;">Получите: <b style="color:#ff44cc;">' + pixr.toLocaleString() + ' PIXR</b></span>';
 }
 
 // ── ОБМЕН PIXR → GRAM ──
 function submitExchange() {
-  const amount = parseInt(document.getElementById('exchangeAmount').value);
-  const result = document.getElementById('exchangeResult');
-  
-  if (!amount || amount < 1000 || amount % 1000 !== 0) {
-    result.innerHTML = '<span style="color:#e74c3c;">Сумма должна быть кратна 1000 PIXR</span>';
+  var amount = parseInt(document.getElementById('exchangeAmount').value);
+  var result = document.getElementById('exchangeResult');
+  var rate = (_exchangeStats && _exchangeStats.currentRate) || 1000;
+
+  if (!amount || amount < rate || amount % rate !== 0) {
+    result.innerHTML = '<span style="color:#e74c3c;">Сумма должна быть кратна ' + rate + ' PIXR</span>';
     return;
   }
-  
+
   if (amount > (G.pixr || 0)) {
     result.innerHTML = '<span style="color:#e74c3c;">Недостаточно PIXR</span>';
     return;
   }
-  
+
   result.innerHTML = '<span style="color:#f5c542;">Обмен...</span>';
-  
+
   fetch(window.GameSync._API + '/api/wallet/exchange', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      initData: window.GameSync._INIT,
-      amount: amount
-    })
+    body: JSON.stringify({ initData: window.GameSync._INIT, amount: amount })
   })
-  .then(r => r.json())
-  .then(r => {
+  .then(function(r) { return r.json(); })
+  .then(function(r) {
+    if (r.ok) {
+      G.pixr = r.pixr;
+      G.gram = r.gram;
+      // Обновляем глобальную статистику
+      if (r.totalExchanged !== undefined && _exchangeStats) {
+        _exchangeStats.totalExchanged = r.totalExchanged;
+        _exchangeStats.currentRate = r.rate;
+      }
+      updateHUD();
+      result.innerHTML = '<span style="color:#2ecc71;">✅ Обменяно ' + amount + ' PIXR → ' + r.earned + ' GRAM</span>';
+      setTimeout(function() { renderWallet(); }, 1200);
+    } else {
+      result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
+    }
+  })
+  .catch(function() {
+    result.innerHTML = '<span style="color:#e74c3c;">❌ Ошибка соединения</span>';
+  });
+}
+
+// ── ОБМЕН GRAM → PIXR ──
+function submitGramExchange() {
+  var amount = parseInt(document.getElementById('exchangeGramAmount').value);
+  var result = document.getElementById('gramExchangeResult');
+
+  if (!amount || amount < 1 || !Number.isInteger(amount)) {
+    result.innerHTML = '<span style="color:#e74c3c;">Минимум 1 GRAM</span>';
+    return;
+  }
+
+  if (amount > Math.floor(G.gram || 0)) {
+    result.innerHTML = '<span style="color:#e74c3c;">Недостаточно GRAM</span>';
+    return;
+  }
+
+  result.innerHTML = '<span style="color:#f5c542;">Обмен...</span>';
+
+  fetch(window.GameSync._API + '/api/wallet/exchange-gram', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: window.GameSync._INIT, amount: amount })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(r) {
     if (r.ok) {
       G.pixr = r.pixr;
       G.gram = r.gram;
       updateHUD();
-      result.innerHTML = `<span style="color:#2ecc71;">✅ Обменяно ${amount} PIXR → ${r.earned} GRAM</span>`;
-      setTimeout(function() {
-        renderWallet();
-      }, 1000);
+      result.innerHTML = '<span style="color:#2ecc71;">✅ Обменяно ' + amount + ' GRAM → ' + r.earned.toLocaleString() + ' PIXR</span>';
+      setTimeout(function() { renderWallet(); }, 1200);
     } else {
       result.innerHTML = '<span style="color:#e74c3c;">❌ ' + (r.error || 'Ошибка') + '</span>';
     }
@@ -1793,91 +1938,40 @@ function renderMarketListings(listings, isMy) {
     return;
   }
 
-  var statLabels = { atk:'ATK', def:'DEF', hp:'HP', spd:'SPD', crit:'CRIT%', dodge:'DODGE%', atkSpd:'АТК SPD', critDmg:'КРИТ УРН' };
-  var statColors = { atk:'#ff8060', def:'#60aaff', hp:'#e74c3c', spd:'#2ecc71', crit:'#f5c542', dodge:'#a78bfa', atkSpd:'#ffa040', critDmg:'#ff6020' };
-  var classColors = { fire:'#ff7030', light:'#ffd040', water:'#40d0ff' };
-  var classLabels = { fire:'Пирокан', light:'Люмос', water:'Аквас' };
-  var slotLabels  = { body:'Нагрудник', legs:'Штаны', gloves:'Перчатки', boots:'Боты', helmet:'Шлем', ring:'Кольцо', belt:'Пояс', weapon:'Оружие' };
-
   var html = '';
   listings.forEach(function(lst) {
-    var item = lst.item || {};
-    var r    = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
-    var isBook = item.isSkillBook;
-
+    var item     = lst.item || {};
+    var r        = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
+    var isBook   = item.isSkillBook;
     var iconHtml = isBook
-      ? '<span style="font-size:24px;line-height:1;">📖</span>'
-      : '<img src="' + (item.icon || '') + '" style="width:34px;height:34px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">';
+      ? '<span style="font-size:22px;line-height:1;">📖</span>'
+      : '<img src="' + (item.icon || '') + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">';
 
-    // ── Строка под именем: редкость · слот · класс · продавец ──
-    var subParts = ['<span style="color:' + r.color + '">' + r.name + '</span>'];
-    if (!isBook && item.slot) subParts.push('<span style="color:#778">' + (slotLabels[item.slot] || item.slot) + '</span>');
-    if (isBook && item.bookSkillName) subParts.push('<span style="color:#a78bfa">' + item.bookSkillName + '</span>');
-    if (item.forClass) subParts.push('<span style="color:' + (classColors[item.forClass] || '#aaa') + '">' + (classLabels[item.forClass] || item.forClass) + '</span>');
-    if (!isMy) subParts.push('<span style="color:#556">' + (lst.sellerName || 'Игрок') + '</span>');
+    var subParts = [r.name];
+    if (isBook && item.bookSkillName) subParts.push(item.bookSkillName);
+    if (item.forClass && item.classLabel) subParts.push(item.classLabel);
+    if (!isMy) subParts.push(lst.sellerName || 'Игрок');
 
-    // ── Уровень и зачарование ──
-    var levelBadge = '';
-    if (item.level && item.level > 0) {
-      levelBadge = '<span style="font-size:9px;color:#f5c542;background:rgba(245,197,66,0.12);border:1px solid rgba(245,197,66,0.3);border-radius:4px;padding:1px 5px;margin-left:4px;">Lv.' + item.level + '</span>';
-    }
-    var refineBadge = item.refine
-      ? '<span style="color:#a78bfa;font-size:10px;"> +' + item.refine + '</span>'
-      : '';
-
-    // ── Статы предмета ──
-    var statsHtml = '';
-    if (!isBook && item.stats && Object.keys(item.stats).length > 0) {
-      var statParts = [];
-      Object.keys(item.stats).forEach(function(s) {
-        var val = item.stats[s];
-        if (!val) return;
-        var col  = statColors[s]  || '#aaa';
-        var lbl  = statLabels[s]  || s;
-        statParts.push('<span style="color:' + col + ';background:rgba(255,255,255,0.05);border-radius:4px;padding:1px 5px;font-size:9px;">+' + val + ' ' + lbl + '</span>');
-      });
-      if (statParts.length) {
-        statsHtml = '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;">' + statParts.join('') + '</div>';
-      }
-    }
-    if (isBook && item.bookClass) {
-      statsHtml = '<div style="margin-top:4px;font-size:9px;color:#b88cf8;">Книга навыка · ' + (classLabels[item.bookClass] || item.bookClass) + '</div>';
-    }
-
-    // ── Таймер ──
-    var timeStr   = marketTimeLeft(lst.expiresAt);
-    var diff      = lst.expiresAt - Date.now();
-    var timerColor = diff < 3600000 ? '#e74c3c' : diff < 14400000 ? '#f5c542' : '#2ecc71';
-    var timerHtml = '<div style="display:flex;align-items:center;gap:4px;margin-top:4px;">' +
-      '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" style="flex-shrink:0"><circle cx="5" cy="5" r="4" stroke="' + timerColor + '" stroke-width="1.5" fill="none"/><rect x="4.5" y="2" width="1" height="3" fill="' + timerColor + '"/><rect x="4.5" y="4.5" width="2" height="1" fill="' + timerColor + '"/></svg>' +
-      '<span style="font-size:9px;color:' + timerColor + ';font-family:Courier New,monospace;">' + timeStr + '</span>' +
-    '</div>';
-
-    // ── Кнопка ──
     var actionBtn = '';
     if (isMy) {
       actionBtn = '<button class="market-cancel-btn" onclick="cancelListing(\'' + lst.listingId + '\')">Снять</button>';
     } else {
       var isSelf    = lst.sellerId === (window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : '');
       var canAfford = (G.pixr || 0) >= lst.price;
-      actionBtn = '<button class="market-buy-btn"' +
-        (isSelf ? ' disabled title="Ваш лот"' : (!canAfford ? ' disabled title="Мало PIXR"' : '')) +
+      actionBtn = '<button class="market-buy-btn" ' +
+        (isSelf ? 'disabled title="Ваш лот"' : (!canAfford ? 'disabled title="Мало PIXR"' : '')) +
         ' onclick="buyListing(\'' + lst.listingId + '\', ' + lst.price + ')">' +
         (isSelf ? 'Ваш' : 'Купить') + '</button>';
     }
 
-    html += '<div class="market-listing" style="border-color:' + r.color + '28;">' +
-      '<div class="market-listing-icon" style="border-color:' + r.color + '55;background:rgba(0,0,0,0.35);">' + iconHtml + '</div>' +
+    html += '<div class="market-listing">' +
+      '<div class="market-listing-icon" style="border-color:' + r.color + '44;">' + iconHtml + '</div>' +
       '<div class="market-listing-info">' +
-        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px;">' +
-          '<span class="market-listing-name" style="color:' + r.color + ';">' + (item.name || '—') + '</span>' +
-          refineBadge + levelBadge +
-        '</div>' +
-        '<div class="market-listing-sub" style="color:#667;margin-top:2px;">' + subParts.join(' · ') + '</div>' +
-        statsHtml +
-        timerHtml +
+        '<div class="market-listing-name" style="color:' + r.color + ';">' + (item.name || '—') + (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') + '</div>' +
+        '<div class="market-listing-sub">' + subParts.join(' · ') + '</div>' +
+        '<div class="market-lot-timer">⏱ ' + marketTimeLeft(lst.expiresAt) + '</div>' +
       '</div>' +
-      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0;">' +
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">' +
         '<div class="market-listing-price">' + lst.price.toLocaleString() + ' 💎</div>' +
         actionBtn +
       '</div>' +

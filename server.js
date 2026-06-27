@@ -200,6 +200,18 @@ const SpecialTaskSchema = new mongoose.Schema({
 SpecialTaskSchema.index({ active: 1, createdAt: -1 });
 const SpecialTask = mongoose.model('SpecialTask', SpecialTaskSchema);
 
+// ── Глобальная статистика (синглтон) ──
+const GlobalStatSchema = new mongoose.Schema({
+  _id:             { type: String, default: 'global' },
+  pixrExchangedTotal: { type: Number, default: 0 }, // сколько PIXR обменяно на GRAM за всё время
+}, { minimize: false });
+const GlobalStat = mongoose.model('GlobalStat', GlobalStatSchema);
+
+// Константы обмена
+const PIXR_EXCHANGE_THRESHOLD = 5_000_000; // после этого порога цена меняется
+const PIXR_PER_GRAM_CHEAP     = 1000;      // до порога: 1000 PIXR = 1 GRAM
+const PIXR_PER_GRAM_EXP       = 2000;      // после порога: 2000 PIXR = 1 GRAM
+const GRAM_PER_PIXR_RATE      = 800;       // 1 GRAM → 800 PIXR (обратный)
 
 // ═══════════════════════════════
 //  КОНФИГ КОШЕЛЬКА
@@ -1104,30 +1116,46 @@ app.post('/api/wallet/transactions', async (req, res) => {
   }
 });
 
+// ── PIXR → GRAM ──
 app.post('/api/wallet/exchange', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
-  
+
   const { amount } = req.body;
-  
-  if (!amount || amount < 1000 || amount % 1000 !== 0) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: 'Сумма должна быть кратна 1000 PIXR (минимум 1000)' 
-    });
+  if (!amount || amount < 1 || !Number.isInteger(amount)) {
+    return res.status(400).json({ ok: false, error: 'Некорректная сумма PIXR' });
   }
-  
+
   try {
-    const gramEarned = amount / 1000;
+    // Получаем текущую глобальную статистику
+    let gstat = await GlobalStat.findOneAndUpdate(
+      { _id: 'global' },
+      { $setOnInsert: { pixrExchangedTotal: 0 } },
+      { upsert: true, new: true }
+    );
+    const totalBefore = gstat.pixrExchangedTotal || 0;
+
+    // Определяем цену за 1 GRAM в PIXR с учётом порога
+    const rate = totalBefore >= PIXR_EXCHANGE_THRESHOLD ? PIXR_PER_GRAM_EXP : PIXR_PER_GRAM_CHEAP;
+
+    if (amount % rate !== 0) {
+      return res.status(400).json({
+        ok: false,
+        error: `Сумма должна быть кратна ${rate} PIXR`
+      });
+    }
+    if (amount < rate) {
+      return res.status(400).json({
+        ok: false,
+        error: `Минимум ${rate} PIXR для обмена`
+      });
+    }
+
+    const gramEarned = amount / rate;
 
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.pixr': { $gte: amount } },
-      {
-        $inc: {
-          'data.pixr': -amount,
-          'data.gram': gramEarned,
-        }
-      },
+      { $inc: { 'data.pixr': -amount, 'data.gram': gramEarned } },
       { new: true }
     );
 
@@ -1135,14 +1163,72 @@ app.post('/api/wallet/exchange', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Недостаточно PIXR' });
     }
 
+    // Обновляем глобальный счётчик
+    await GlobalStat.findOneAndUpdate(
+      { _id: 'global' },
+      { $inc: { pixrExchangedTotal: amount } },
+      { upsert: true }
+    );
+
     res.json({
       ok: true,
       pixr: result.data.pixr,
       gram: result.data.gram,
-      earned: gramEarned
+      earned: gramEarned,
+      rate,
+      totalExchanged: totalBefore + amount
     });
   } catch (e) {
     console.error('❌ [wallet] exchange error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── GRAM → PIXR ──
+app.post('/api/wallet/exchange-gram', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+
+  const { amount } = req.body; // amount в GRAM (целое число)
+  if (!amount || amount < 1 || !Number.isInteger(amount)) {
+    return res.status(400).json({ ok: false, error: 'Минимум 1 GRAM для обмена' });
+  }
+
+  try {
+    const pixrEarned = amount * GRAM_PER_PIXR_RATE;
+
+    const result = await Save.findOneAndUpdate(
+      { tgId: tg.id, 'data.gram': { $gte: amount } },
+      { $inc: { 'data.gram': -amount, 'data.pixr': pixrEarned } },
+      { new: true }
+    );
+
+    if (!result) {
+      return res.status(400).json({ ok: false, error: 'Недостаточно GRAM' });
+    }
+
+    res.json({
+      ok: true,
+      pixr: result.data.pixr,
+      gram: result.data.gram,
+      earned: pixrEarned
+    });
+  } catch (e) {
+    console.error('❌ [wallet] exchange-gram error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Глобальная статистика обмена (для индикатора) ──
+app.get('/api/wallet/exchange-stats', async (req, res) => {
+  try {
+    const gstat = await GlobalStat.findOne({ _id: 'global' }).lean();
+    const total = gstat ? (gstat.pixrExchangedTotal || 0) : 0;
+    const threshold = PIXR_EXCHANGE_THRESHOLD;
+    const currentRate = total >= threshold ? PIXR_PER_GRAM_EXP : PIXR_PER_GRAM_CHEAP;
+    res.json({ ok: true, totalExchanged: total, threshold, currentRate, gramPerPixr: GRAM_PER_PIXR_RATE });
+  } catch (e) {
+    console.error('❌ [wallet] exchange-stats error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
