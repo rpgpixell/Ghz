@@ -957,12 +957,9 @@ function switchTab(tab) {
     var btn = document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1));
     if (btn) btn.classList.toggle('active', t === tab);
   });
-  // pvp-hud-btn: скрываем при открытой арене, иначе показываем
+  // pvp-hud-btn подсвечиваем отдельно
   var pvpHud = document.getElementById('pvpHudBtn');
-  if (pvpHud) {
-    pvpHud.style.display = (tab === 'pvp') ? 'none' : 'flex';
-    pvpHud.classList.toggle('active', tab === 'pvp');
-  }
+  if (pvpHud) pvpHud.style.display = (tab === 'game') ? 'flex' : 'none';
   document.getElementById('panelInv').classList.toggle('visible',      tab === 'inv');
   document.getElementById('panelUpgrades').classList.toggle('visible', tab === 'upgrades');
   document.getElementById('panelFloors').classList.toggle('visible',   tab === 'floors');
