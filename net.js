@@ -147,6 +147,11 @@
       prem:                clone(G.prem || { tier: null, expiresAt: 0 }),
       boss:                clone(G.boss || { floor: 1, lastFightTime: 0 }),
       marketUnlocked:      G.marketUnlocked || false,
+      arenaRating:         G.arenaRating || 1000,
+      pvpAttempts:         G.pvpAttempts || 0,
+      pvpAttemptsDate:     G.pvpAttemptsDate || '',
+      pvpRefreshes:        G.pvpRefreshes || 0,
+      pvpRefreshDate:      G.pvpRefreshDate || '',
       hp:                  G.hp,
       gold:                G.gold,
       xp:                  G.xp,
@@ -158,9 +163,6 @@
       specialTasksClaimed: clone(G.specialTasksClaimed || {}),
       invFilter:           G.invFilter || 'all',
       cp:                  (typeof calcCP === 'function') ? calcCP() : 0,
-      arenaRating:         G.arenaRating || 1000,
-      stats:               clone(G.stats || {}),
-      maxHp:               G.maxHp || 100,
       updatedAt:           Date.now(),
     };
   }
@@ -240,8 +242,11 @@
     G.boss = d.boss || { floor: 1, lastFightTime: 0 };
     if (!G.boss.floor) G.boss.floor = 1;
     G.marketUnlocked = d.marketUnlocked || false;
-
-    G.arenaRating = (typeof d.arenaRating === 'number') ? d.arenaRating : (G.arenaRating || 1000);
+    G.arenaRating    = typeof d.arenaRating === 'number' ? d.arenaRating : 1000;
+    G.pvpAttempts    = d.pvpAttempts    || 0;
+    G.pvpAttemptsDate = d.pvpAttemptsDate || '';
+    G.pvpRefreshes   = d.pvpRefreshes   || 0;
+    G.pvpRefreshDate = d.pvpRefreshDate  || '';
 
     G.invFilter = d.invFilter || 'all';
     G.dailyTasks = d.dailyTasks || { date: '', seconds: 0, claimed: [] };
@@ -704,20 +709,28 @@ function saveInstant(data) {
       START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
     } catch (e) { START_PARAM = ''; }
   }
+  
+  // ✅ ИСПРАВЛЕНО: ищем ПРАВИЛЬНЫЙ параметр
   if (!START_PARAM) {
     try {
-      var urlRef = new URLSearchParams(window.location.search).get('ref') || '';
-      if (urlRef) START_PARAM = urlRef;
+      var urlParams = new URLSearchParams(window.location.search);
+      // Проверяем оба варианта
+      var startapp = urlParams.get('startapp');
+      var ref = urlParams.get('ref');
+      if (startapp) START_PARAM = startapp;
+      else if (ref) START_PARAM = ref;
+      console.log('🔍 [initTelegram] startParam из URL:', START_PARAM || 'none');
     } catch (e) {}
   }
+  
   SYNC.online = !!TG_INIT;
   
   var tgId = getTgId();
   if (tgId) {
     SYNC.currentTgId = tgId;
   }
-  console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online);
-}
+  console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online, 'startParam:', START_PARAM || 'none');
+  }
 
   // ═══════════════════════════════
 //  БУТ — с задержкой
@@ -967,5 +980,3 @@ SYNC.booted = true;
     get _INIT() { return TG_INIT; },
   };
 })();
-// PvP — REST API (Socket.IO удалён)
-// Все PvP функции теперь через обычные fetch-запросы в ui.js
