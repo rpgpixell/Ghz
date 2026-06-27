@@ -2019,6 +2019,31 @@ function renderMarketListings(listings, isMy) {
 }
 
 // ── Купить лот ──
+// ── Синхронизация инвентаря с сервера (сохраняет _equipped и G.equipped) ──
+function syncInventoryFromServer(rawInventory) {
+  var SLOTS = ['weapon','body','legs','gloves','boots','helmet','ring','belt'];
+  // Сбрасываем _equipped у всех
+  var newInv = (rawInventory || []).map(function(it) {
+    var c = Object.assign({}, it);
+    c._equipped = false;
+    return c;
+  });
+  // Восстанавливаем G.equipped — ищем предметы по id
+  SLOTS.forEach(function(slot) {
+    var cur = G.equipped[slot];
+    if (!cur) return;
+    var found = newInv.find(function(i) { return i.id === cur.id; });
+    if (found) {
+      found._equipped = true;
+      G.equipped[slot] = found;
+    } else {
+      // Предмет пропал (продан/выставлен) — снимаем слот
+      G.equipped[slot] = null;
+    }
+  });
+  G.inventory = newInv;
+}
+
 function buyListing(listingId, price) {
   if (!confirm('Купить за ' + price + ' PIXR?')) return;
   var API  = window.GameSync._API;
@@ -2032,7 +2057,7 @@ function buyListing(listingId, price) {
   .then(function(d) {
     if (d.ok) {
       G.pixr = d.pixr;
-      if (d.item) G.inventory.push(d.item);
+      if (d.item) { syncInventoryFromServer(G.inventory.concat([d.item])); }
       updateMarketPixrBal();
       loadMarketListings();
       _taskToast('✅ Куплено: ' + (d.item && d.item.name || 'предмет'));
@@ -2067,7 +2092,7 @@ function cancelListing(listingId) {
   .then(function(d) {
     if (d.ok) {
       if (d.inventory) {
-        G.inventory = d.inventory;
+        syncInventoryFromServer(d.inventory);
         if (typeof renderInventory === 'function') renderInventory();
       }
       loadMarketListings();
@@ -2170,7 +2195,7 @@ function confirmSellItem() {
   .then(function(d) {
     if (btn) btn.disabled = false;
     if (d.ok) {
-      G.inventory = d.inventory;
+      syncInventoryFromServer(d.inventory);
       closeSellModal();
       if (typeof renderInventory === 'function') renderInventory();
       _taskToast('✅ Предмет выставлен на маркет!');
@@ -2200,7 +2225,7 @@ window._handleMarketNotif = function(event, data) {
     window.GameSync.saveInstant();
   } else if (event === 'market_expired') {
     _taskToast('⏰ Лот истёк, "' + (data.item && data.item.name) + '" возвращён');
-    if (data.item) G.inventory.push(data.item);
+    if (data.item) { syncInventoryFromServer(G.inventory.concat([data.item])); }
     if (typeof renderInventory === 'function') renderInventory();
     window.GameSync.saveInstant();
   }
