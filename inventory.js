@@ -485,48 +485,56 @@ function openItemModal(itemId) {
   // ── Обычный предмет ──
   var statLabels = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT %', dodge: 'DODGE %' };
 
-  // Надетый предмет того же слота (для сравнения)
+  // Статы текущего предмета
+  var statsHtml = '';
+  Object.keys(item.stats).forEach(function(s) {
+    if (!item.stats[s]) return;
+    var diff = '';
+    var eqItem = G.equipped[item.slot];
+    if (eqItem && eqItem.id !== item.id) {
+      var d = (item.stats[s] || 0) - (eqItem.stats[s] || 0);
+      diff = d > 0 ? ' <span style="color:#2ecc71;font-size:10px;">▲+' + d + '</span>'
+           : d < 0 ? ' <span style="color:#e74c3c;font-size:10px;">▼' + d + '</span>'
+           : ' <span style="color:#556;font-size:10px;">=</span>';
+    }
+    statsHtml += '<div class="modal-stat-row"><span style="color:#aaa">' + (statLabels[s] || s) + '</span><span>+' + item.stats[s] + diff + '</span></div>';
+  });
+  document.getElementById('mStats').innerHTML = statsHtml || '<div style="color:#445;font-size:11px;">Нет бонусов</div>';
+
+  // Окошко надетого предмета того же слота
+  var eqEl = document.getElementById('mEquipped');
   var equippedItem = G.equipped[item.slot] || null;
-  var compareHtml = '';
-  if (equippedItem && equippedItem.id !== item.id) {
-    var eqR = RARITIES.find(function(x) { return x.id === equippedItem.rarity; });
-    var eqStars = refineStars(equippedItem);
-    compareHtml += '<div style="margin-bottom:8px;padding:8px 10px;background:rgba(64,208,255,0.05);border:1px solid #1a3a5a;border-radius:8px;">' +
-      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">' +
-        '<img src="' + equippedItem.icon + '" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">' +
-        '<div>' +
-          '<div style="font-size:11px;color:' + eqR.color + ';font-weight:bold;">' + equippedItem.name + (eqStars > 0 ? ' +' + eqStars : '') + '</div>' +
-          '<div style="font-size:9px;color:#556;">Надет · Lv.' + equippedItem.level + '</div>' +
-        '</div>' +
-      '</div>';
-    var allStatKeys = Object.keys(item.stats).concat(Object.keys(equippedItem.stats)).filter(function(s,i,a){return a.indexOf(s)===i;});
-    allStatKeys.forEach(function(s) {
-      var newVal = (item.stats[s] || 0);
-      var eqVal  = (equippedItem.stats[s] || 0);
-      var diff   = newVal - eqVal;
-      var diffStr = diff > 0 ? '<span style="color:#2ecc71">▲+' + diff + '</span>' :
-                   diff < 0 ? '<span style="color:#e74c3c">▼' + diff + '</span>' :
-                               '<span style="color:#556">=</span>';
-      compareHtml += '<div class="modal-stat-row">' +
-        '<span style="color:#aaa">' + (statLabels[s] || s) + '</span>' +
-        '<span style="display:flex;align-items:center;gap:6px;">' +
-          '<span style="color:#778;font-size:10px;">+' + eqVal + '</span>' +
-          '<span style="color:#445;font-size:10px;">→</span>' +
-          '<span>+' + newVal + '</span>' +
-          diffStr +
-        '</span>' +
-      '</div>';
-    });
-    compareHtml += '</div>';
-  } else {
-    // Нет надетого — просто статы
-    var statsHtml = '';
-    Object.keys(item.stats).forEach(function(s) {
-      statsHtml += '<div class="modal-stat-row"><span style="color:#aaa">' + (statLabels[s] || s) + '</span><span>+' + item.stats[s] + '</span></div>';
-    });
-    compareHtml = statsHtml || '<div style="color:#445;font-size:11px;">Нет бонусов</div>';
+  if (eqEl) {
+    if (equippedItem && equippedItem.id !== item.id) {
+      var eqR     = RARITIES.find(function(x) { return x.id === equippedItem.rarity; }) || { color: '#888', name: '—' };
+      var eqStars = refineStars(equippedItem);
+      var eqStatRows = '';
+      Object.keys(equippedItem.stats).forEach(function(s) {
+        if (!equippedItem.stats[s]) return;
+        var d = (item.stats[s] || 0) - (equippedItem.stats[s] || 0);
+        var diffStr = d > 0 ? ' <span style="color:#2ecc71;font-size:10px;">▲+' + d + '</span>'
+                   : d < 0 ? ' <span style="color:#e74c3c;font-size:10px;">▼' + d + '</span>'
+                   : ' <span style="color:#556;font-size:10px;">=</span>';
+        eqStatRows += '<div class="modal-stat-row" style="font-size:11px;"><span style="color:#667">' + (statLabels[s] || s) + '</span><span style="color:#999;">+' + equippedItem.stats[s] + diffStr + '</span></div>';
+      });
+      eqEl.innerHTML =
+        '<div style="padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid #2a2a4a;border-radius:10px;margin-bottom:10px;">' +
+          '<div style="font-size:9px;color:#556;letter-spacing:1px;margin-bottom:6px;">НАДЕТ</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+            '<img src="' + equippedItem.icon + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;flex-shrink:0;" onerror="this.style.opacity=0">' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-size:12px;font-weight:bold;color:' + eqR.color + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                equippedItem.name + (eqStars > 0 ? ' <span style="color:#a78bfa">+' + eqStars + '</span>' : '') +
+              '</div>' +
+              '<div style="font-size:9px;color:#556;margin-top:1px;">' + eqR.name + ' · Lv.' + equippedItem.level + '</div>' +
+            '</div>' +
+          '</div>' +
+          eqStatRows +
+        '</div>';
+    } else {
+      eqEl.innerHTML = '';
+    }
   }
-  document.getElementById('mStats').innerHTML = compareHtml;
 
   // Блок заточки
   var refineHtml = '';
