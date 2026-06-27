@@ -2616,7 +2616,9 @@ function pvpSimBattle(playerData, opponentData) {
     }
     if (fighters[0].hp <= 0 || fighters[1].hp <= 0) break;
 
-    // Атаки по таймеру
+    // Атаки по таймеру — одновременный расчёт (нет преимущества первого удара)
+    // Шаг 1: каждый боец считает урон по противнику, НЕ применяя его
+    var pendingDmg = [null, null];
     for (var ai = 0; ai < 2; ai++) {
       fighters[ai].atkTimer += DT;
       var atkInterval = ATK_INTERVAL;
@@ -2625,23 +2627,30 @@ function pvpSimBattle(playerData, opponentData) {
 
       if (!fighters[ai].debuffs.frozen && fighters[ai].atkTimer >= atkInterval) {
         fighters[ai].atkTimer = 0;
-        var ti = 1 - ai;
-        var effAs = { atk: fighters[ai].stats.atk, crit: pvpSimEffCrit(fighters[ai]), critDmg: fighters[ai].stats.critDmg };
-        var effDs = { def: pvpSimEffDef(fighters[ti]), dodge: fighters[ti].stats.dodge || 3 };
-        var r = pvpSimCalcDmg(effAs, effDs);
-        if (!r.dodge) {
-          fighters[ti].hp = Math.max(0, fighters[ti].hp - r.dmg);
-          // Reflect
-          if (fighters[ti].buffs.reflect && r.dmg > 0) {
-            var refl = Math.floor(r.dmg * fighters[ti].buffs.reflect.pct);
-            fighters[ai].hp = Math.max(0, fighters[ai].hp - refl);
-            log.push({ time: time, type: 'reflect', from: ti, dmg: refl, hp: [fighters[0].hp, fighters[1].hp] });
-          }
-        }
-        log.push({ time: time, type: 'atk', from: ai, dmg: r.dmg, dodge: r.dodge, crit: r.crit, hp: [fighters[0].hp, fighters[1].hp] });
-        if (fighters[0].hp <= 0 || fighters[1].hp <= 0) break;
+        var ti2 = 1 - ai;
+        var effAs2 = { atk: fighters[ai].stats.atk, crit: pvpSimEffCrit(fighters[ai]), critDmg: fighters[ai].stats.critDmg };
+        var effDs2 = { def: pvpSimEffDef(fighters[ti2]), dodge: fighters[ti2].stats.dodge || 3 };
+        pendingDmg[ai] = { from: ai, to: ti2, result: pvpSimCalcDmg(effAs2, effDs2) };
       }
     }
+    // Шаг 2: применяем урон одновременно
+    for (var pi = 0; pi < 2; pi++) {
+      if (!pendingDmg[pi]) continue;
+      var pd = pendingDmg[pi];
+      var r = pd.result;
+      var ti3 = pd.to;
+      if (!r.dodge) {
+        fighters[ti3].hp = Math.max(0, fighters[ti3].hp - r.dmg);
+        // Reflect
+        if (fighters[ti3].buffs.reflect && r.dmg > 0) {
+          var refl = Math.floor(r.dmg * fighters[ti3].buffs.reflect.pct);
+          fighters[pd.from].hp = Math.max(0, fighters[pd.from].hp - refl);
+          log.push({ time: time, type: 'reflect', from: ti3, dmg: refl, hp: [fighters[0].hp, fighters[1].hp] });
+        }
+      }
+      log.push({ time: time, type: 'atk', from: pd.from, dmg: r.dmg, dodge: r.dodge, crit: r.crit, hp: [fighters[0].hp, fighters[1].hp] });
+    }
+    if (fighters[0].hp <= 0 || fighters[1].hp <= 0) break;
   }
 
   var winIdx = fighters[0].hp > 0 ? 0 : 1;
