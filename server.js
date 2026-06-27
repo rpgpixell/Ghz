@@ -18,14 +18,9 @@ const path     = require('path');
 const TelegramBot = require('node-telegram-bot-api');
 
 const http = require('http');
-const { Server } = require('socket.io');
 
 const app    = express();
 const server = http.createServer(app);
-const io     = new Server(server, {
-  cors: { origin: '*', methods: ['GET','POST'] },
-  pingTimeout: 20000, pingInterval: 10000,
-});
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
 if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не задан');
 const REF_GOLD_PER_MILESTONE = 500;

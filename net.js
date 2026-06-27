@@ -753,6 +753,7 @@ SYNC.booted = true;
 
     if (!r || !r.ok) {
       console.warn('⚠️ [serverLoad] ответ не ok:', r);
+      // Не кидаем на экран выбора — показываем ошибку с кнопкой обновить
       _showNoServerError();
       _bootFinalize();
       return;
@@ -768,8 +769,14 @@ SYNC.booted = true;
       return;
     }
 
-    if (server && server.data && server.data.charId &&
-        typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
+    // charId может быть в корне save (server.charId) или внутри data (server.data.charId)
+    var resolvedCharId = (server && server.charId) || (server && server.data && server.data.charId);
+
+    if (server && server.data && resolvedCharId &&
+        typeof CHARS !== 'undefined' && CHARS[resolvedCharId]) {
+
+      // Убеждаемся что charId записан в data для applySnapshot
+      if (!server.data.charId) server.data.charId = resolvedCharId;
 
       SYNC.serverConfirmed = true;
       lsSetStatus('Применение данных', 90);
@@ -785,7 +792,8 @@ SYNC.booted = true;
       // Новый пользователь — персонаж не выбран
       _bootFinalize();
     } else {
-      // charId есть, но не найден в CHARS (неизвестный)
+      // data есть но charId пустой — новый пользователь или не выбрал персонажа
+      SYNC.serverConfirmed = true;
       _bootFinalize();
     }
   }).catch(function (err) {
