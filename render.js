@@ -1108,22 +1108,17 @@ function pvpGetCharSprites(charId) {
 
 // ── PvP состояние отрисовки ──
 var pvpRenderState = {
-  active:     false,
-  yourIdx:    0,
-  fighters:   [
-    { charId: 'fire',  hp: 100, maxHp: 100, animTime: 0, state: 'idle', hitFlash: 0, buffs: {}, debuffs: {} },
-    { charId: 'water', hp: 100, maxHp: 100, animTime: 0, state: 'idle', hitFlash: 0, buffs: {}, debuffs: {} },
+  active:      false,
+  yourIdx:     0,
+  fighters:    [
+    { charId: 'fire',  hp: 100, maxHp: 100, animTime: 0, state: 'idle', hitFlash: 0, atkTimer: 0, _atkAnim: 0 },
+    { charId: 'water', hp: 100, maxHp: 100, animTime: 0, state: 'idle', hitFlash: 0, atkTimer: 0, _atkAnim: 0 },
   ],
   floatingTexts: [],
-  lastTs: 0,
-  // Лог боя — воспроизводится прямо в игровом цикле
-  log:       [],
-  logIdx:    0,
-  logTime:   0,    // накопленное виртуальное время (сек)
-  logSpeed:  3.5,  // 3.5× быстрее чем симуляция (~35 сек вместо 120)
-  logDone:   false,
-  onLogDone: null,
-  charColors: { fire: '#ff6622', light: '#ffee55', water: '#22aaff' },
+  lastTs:      0,
+  battling:    false,   // бой идёт в реальном времени
+  onEnd:       null,    // коллбэк по окончании
+  charColors:  { fire: '#ff6622', light: '#ffee55', water: '#22aaff' },
 };
 
 // Вызывается из game loop
@@ -1140,72 +1135,74 @@ function pvpSpawnProjectile(fromIdx, color) {
   pvpProjectiles.push({ x: x0, y: y0, tx: x1, ty: y1, color: color || '#ffcc00', timer: 0.6 });
 }
 
+// Интервал атаки (сек) — как BASE_ATK_COOLDOWN в game.js
+var PVP_ATK_INTERVAL = 2.5;
+
 function renderPvp(ts) {
   if (!pvpRenderState.active) return;
 
-  var dt  = Math.min((ts - pvpRenderState.lastTs) / 1000, 0.05);
+  var dt = Math.min((ts - pvpRenderState.lastTs) / 1000, 0.05);
   pvpRenderState.lastTs = ts;
 
-  pvpRenderState.fighters.forEach(function(f) {
-    f.animTime += dt;
-    if (f.hitFlash > 0) f.hitFlash -= dt;
-    // Анимация атаки — возврат в fight через 0.35с
-    if (f._atkTimer > 0) {
-      f._atkTimer -= dt;
-      if (f._atkTimer <= 0) f.state = 'fight';
-    }
-  });
+  var rs = pvpRenderState;
+  var f0 = rs.fighters[0];
+  var f1 = rs.fighters[1];
 
-  // ── Воспроизведение лога боя ──
-  if (!pvpRenderState.logDone && pvpRenderState.log.length > 0) {
-    pvpRenderState.logTime += dt * pvpRenderState.logSpeed;
-    var rs = pvpRenderState;
-    while (rs.logIdx < rs.log.length && rs.log[rs.logIdx].time <= rs.logTime) {
-      var ev = rs.log[rs.logIdx];
-      rs.logIdx++;
-      var from = ev.from, to = 1 - from;
-      var cc = rs.charColors;
+  // Анимация и флэш
+  f0.animTime += dt; f1.animTime += dt;
+  if (f0.hitFlash > 0) f0.hitFlash -= dt;
+  if (f1.hitFlash > 0) f1.hitFlash -= dt;
+  if (f0._atkAnim > 0) { f0._atkAnim -= dt; if (f0._atkAnim <= 0) f0.state = 'fight'; }
+  if (f1._atkAnim > 0) { f1._atkAnim -= dt; if (f1._atkAnim <= 0) f1.state = 'fight'; }
 
-      if (ev.type === 'atk') {
-        if (ev.dodge) {
-          pvpAddFloatText(to, 'DODGE', '#2ef', false);
-        } else {
-          if (ev.hp) { rs.fighters[0].hp = ev.hp[0]; rs.fighters[1].hp = ev.hp[1]; }
-          rs.fighters[to].hitFlash = 0.35;
-          rs.fighters[from].state  = 'atk';
-          rs.fighters[from]._atkTimer = 0.35;
-          pvpAddFloatText(to, (ev.crit ? '💥' : '') + ev.dmg, ev.crit ? '#fff566' : '#ff6060', !!ev.crit);
-          pvpSpawnProjectile(from, cc[rs.fighters[from].charId] || '#ffcc00');
-        }
-      } else if (ev.type === 'skill') {
-        if (ev.hp) { rs.fighters[0].hp = ev.hp[0]; rs.fighters[1].hp = ev.hp[1]; }
-        rs.fighters[from].state = 'atk';
-        rs.fighters[from]._atkTimer = 0.5;
-        var skillColors = {
-          fire_fireball:'#ff4400', fire_curse:'#8800aa', fire_haste:'#ffaa00',
-          light_smite:'#ffffaa', light_shield:'#4488ff', light_reflect:'#aaffff',
-          water_burst:'#22aaff', water_critup:'#00ffaa', water_freeze:'#aaddff'
-        };
-        var skillNames = {
-          fire_fireball:'🔥Огн.шар!', fire_curse:'💀Проклятие!', fire_haste:'⚡Ускорение!',
-          light_smite:'✨Удар!', light_shield:'🛡Щит!', light_reflect:'↩Отражение!',
-          water_burst:'💧Взрыв!', water_critup:'🎯Крит+!', water_freeze:'❄Заморозка!'
-        };
-        pvpAddFloatText(from, skillNames[ev.skill] || '⚡', skillColors[ev.skill] || '#a064ff', true);
-        if (ev.res === 'dmg') {
-          rs.fighters[to].hitFlash = 0.4;
-          pvpSpawnProjectile(from, skillColors[ev.skill] || '#a064ff');
-        }
-      } else if (ev.type === 'reflect') {
-        if (ev.hp) { rs.fighters[0].hp = ev.hp[0]; rs.fighters[1].hp = ev.hp[1]; }
-        pvpAddFloatText(ev.from, '↩' + ev.dmg, '#aaffff', false);
+  // ── Боевой тик ──
+  if (rs.battling && f0.hp > 0 && f1.hp > 0) {
+    f0.atkTimer += dt;
+    f1.atkTimer += dt;
+
+    // Атака f0 → f1
+    if (f0.atkTimer >= PVP_ATK_INTERVAL) {
+      f0.atkTimer = 0;
+      f0.state = 'atk'; f0._atkAnim = 0.4;
+      var s0 = f0.stats;
+      var dodge0 = Math.random() * 100 < (f1.stats.dodge || 3);
+      if (dodge0) {
+        pvpAddFloatText(1, 'DODGE', '#2ef', false);
+      } else {
+        var dmg0 = Math.max(1, Math.floor((s0.atk || 10) * (0.85 + Math.random() * 0.30) - (f1.stats.def || 5) * 0.4));
+        var crit0 = Math.random() * 100 < (s0.crit || 5);
+        if (crit0) dmg0 = Math.floor(dmg0 * (1.8 + (s0.critDmg || 0)));
+        f1.hp = Math.max(0, f1.hp - dmg0);
+        f1.hitFlash = 0.35;
+        pvpAddFloatText(1, (crit0 ? '💥' : '') + dmg0, crit0 ? '#fff566' : '#ff6060', crit0);
+        pvpSpawnProjectile(0, rs.charColors[f0.charId] || '#ffcc00');
       }
     }
 
-    // Лог закончился — вызываем коллбэк через 1.5с
-    if (rs.logIdx >= rs.log.length && !rs.logDone) {
-      rs.logDone = true;
-      if (rs.onLogDone) setTimeout(rs.onLogDone, 1500);
+    // Атака f1 → f0 (чуть сдвинут по фазе — чтобы не одновременно)
+    if (f1.atkTimer >= PVP_ATK_INTERVAL) {
+      f1.atkTimer = 0;
+      f1.state = 'atk'; f1._atkAnim = 0.4;
+      var s1 = f1.stats;
+      var dodge1 = Math.random() * 100 < (f0.stats.dodge || 3);
+      if (dodge1) {
+        pvpAddFloatText(0, 'DODGE', '#2ef', false);
+      } else {
+        var dmg1 = Math.max(1, Math.floor((s1.atk || 10) * (0.85 + Math.random() * 0.30) - (f0.stats.def || 5) * 0.4));
+        var crit1 = Math.random() * 100 < (s1.crit || 5);
+        if (crit1) dmg1 = Math.floor(dmg1 * (1.8 + (s1.critDmg || 0)));
+        f0.hp = Math.max(0, f0.hp - dmg1);
+        f0.hitFlash = 0.35;
+        pvpAddFloatText(0, (crit1 ? '💥' : '') + dmg1, crit1 ? '#fff566' : '#ff6060', crit1);
+        pvpSpawnProjectile(1, rs.charColors[f1.charId] || '#ffcc00');
+      }
+    }
+
+    // Кто-то умер
+    if (f0.hp <= 0 || f1.hp <= 0) {
+      rs.battling = false;
+      var win = f0.hp > 0;
+      if (rs.onEnd) setTimeout(function() { rs.onEnd(win); }, 800);
     }
   }
 
@@ -1348,7 +1345,7 @@ function _pvpDrawHpBars() {
 }
 
 function _pvpDrawOneHpBar(x, y, w, h, f, isRight) {
-  var pct   = Math.max(0, f.hp / f.maxHp);
+  var pct   = Math.min(1, Math.max(0, f.hp / f.maxHp));
   var color = pct > 0.5 ? '#2ecc71' : pct > 0.25 ? '#f5c542' : '#e74c3c';
 
   // Фон
@@ -1369,7 +1366,7 @@ function _pvpDrawOneHpBar(x, y, w, h, f, isRight) {
   ctx.font = 'bold 11px "Courier New", monospace';
   ctx.fillStyle = '#ccc';
   ctx.textAlign = isRight ? 'right' : 'left';
-  var label = f.name + '  ' + f.hp + '/' + f.maxHp;
+  var label = f.name + '  ' + Math.max(0, Math.floor(f.hp)) + '/' + Math.floor(f.maxHp);
   ctx.fillText(label, isRight ? x + w : x, y - 4);
 
   // Рейтинг

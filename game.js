@@ -389,7 +389,16 @@ function update(dt) {
                 showDmgPop('↩' + refDmg, m.worldX - worldX, m.y - 5, '#aaffff');
               }
               updateHUD();
-              if (G.hp <= 0) { player.state = 'dead'; gameOverSequence(); }
+              if (G.hp <= 0) {
+                player.state = 'dead';
+                // Проверяем PvP
+                var _pvpM = monsters.find(function(_m) { return _m.isPvp; });
+                if (_pvpM && typeof pvpOnLose === 'function') {
+                  pvpOnLose(_pvpM.pvpOpp);
+                } else {
+                  gameOverSequence();
+                }
+              }
             } else {
               showDmgPop('DODGE', PLAYER_SCREEN_X, player.y - 10, '#2ef');
             }
@@ -445,7 +454,11 @@ monsters = monsters.filter(m => {
   if (m.hp <= 0) {
     if (m._attackTimeout) clearTimeout(m._attackTimeout);
     spawnParticles(m.worldX, m.y, m.color, 12);
-    if (m.isBoss) {
+    if (m.isPvp) {
+      // PvP победа — результат через ui.js
+      if (typeof pvpOnWin === 'function') pvpOnWin(m.pvpOpp);
+      return false;
+    } else if (m.isBoss) {
       _onBossKilled(m);
     } else {
       // ✅ Получаем множители ТЕКУЩЕГО этажа
