@@ -1160,40 +1160,57 @@ function renderPvp(ts) {
     f0.atkTimer += dt;
     f1.atkTimer += dt;
 
-    // Атака f0 → f1
+    // Шаг 1: оба рассчитывают урон одновременно, НЕ применяя его
+    var pending0 = null, pending1 = null;
+
     if (f0.atkTimer >= PVP_ATK_INTERVAL) {
       f0.atkTimer = 0;
       f0.state = 'atk'; f0._atkAnim = 0.4;
       var s0 = f0.stats;
       var dodge0 = Math.random() * 100 < (f1.stats.dodge || 3);
-      if (dodge0) {
-        pvpAddFloatText(1, 'DODGE', '#2ef', false);
-      } else {
+      if (!dodge0) {
         var dmg0 = Math.max(1, Math.floor((s0.atk || 10) * (0.85 + Math.random() * 0.30) - (f1.stats.def || 5) * 0.4));
         var crit0 = Math.random() * 100 < (s0.crit || 5);
         if (crit0) dmg0 = Math.floor(dmg0 * (1.8 + (s0.critDmg || 0)));
-        f1.hp = Math.max(0, f1.hp - dmg0);
-        f1.hitFlash = 0.35;
-        pvpAddFloatText(1, (crit0 ? '💥' : '') + dmg0, crit0 ? '#fff566' : '#ff6060', crit0);
-        pvpSpawnProjectile(0, rs.charColors[f0.charId] || '#ffcc00');
+        pending0 = { dmg: dmg0, crit: crit0, dodge: false };
+      } else {
+        pending0 = { dmg: 0, crit: false, dodge: true };
       }
     }
 
-    // Атака f1 → f0 (чуть сдвинут по фазе — чтобы не одновременно)
     if (f1.atkTimer >= PVP_ATK_INTERVAL) {
       f1.atkTimer = 0;
       f1.state = 'atk'; f1._atkAnim = 0.4;
       var s1 = f1.stats;
       var dodge1 = Math.random() * 100 < (f0.stats.dodge || 3);
-      if (dodge1) {
-        pvpAddFloatText(0, 'DODGE', '#2ef', false);
-      } else {
+      if (!dodge1) {
         var dmg1 = Math.max(1, Math.floor((s1.atk || 10) * (0.85 + Math.random() * 0.30) - (f0.stats.def || 5) * 0.4));
         var crit1 = Math.random() * 100 < (s1.crit || 5);
         if (crit1) dmg1 = Math.floor(dmg1 * (1.8 + (s1.critDmg || 0)));
-        f0.hp = Math.max(0, f0.hp - dmg1);
+        pending1 = { dmg: dmg1, crit: crit1, dodge: false };
+      } else {
+        pending1 = { dmg: 0, crit: false, dodge: true };
+      }
+    }
+
+    // Шаг 2: применяем урон одновременно
+    if (pending0) {
+      if (pending0.dodge) {
+        pvpAddFloatText(1, 'DODGE', '#2ef', false);
+      } else {
+        f1.hp = Math.max(0, f1.hp - pending0.dmg);
+        f1.hitFlash = 0.35;
+        pvpAddFloatText(1, (pending0.crit ? '💥' : '') + pending0.dmg, pending0.crit ? '#fff566' : '#ff6060', pending0.crit);
+        pvpSpawnProjectile(0, rs.charColors[f0.charId] || '#ffcc00');
+      }
+    }
+    if (pending1) {
+      if (pending1.dodge) {
+        pvpAddFloatText(0, 'DODGE', '#2ef', false);
+      } else {
+        f0.hp = Math.max(0, f0.hp - pending1.dmg);
         f0.hitFlash = 0.35;
-        pvpAddFloatText(0, (crit1 ? '💥' : '') + dmg1, crit1 ? '#fff566' : '#ff6060', crit1);
+        pvpAddFloatText(0, (pending1.crit ? '💥' : '') + pending1.dmg, pending1.crit ? '#fff566' : '#ff6060', pending1.crit);
         pvpSpawnProjectile(1, rs.charColors[f1.charId] || '#ffcc00');
       }
     }

@@ -2323,8 +2323,7 @@ function _pvpStartBattle(opp) {
     charId: oppCharId, name: oppName, arenaRating: oppRating,
     hp: oppMaxHp, maxHp: oppMaxHp, stats: oppStats,
     animTime: 0, state: 'idle', hitFlash: 0,
-    // Сдвиг таймера атаки — чтобы не атаковали одновременно
-    atkTimer: 1.2, _atkAnim: 0
+    atkTimer: 0, _atkAnim: 0
   };
 
   pvpRenderState.onEnd = function(isWin) {
