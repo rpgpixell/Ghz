@@ -2379,8 +2379,22 @@ function _pvpPlayBattle(result, oppInfo) {
 
   // Читаем maxHp из данных (нужны для HP баров)
   var myMaxHp  = G.maxHp || (G.stats && G.stats.hp) || 100;
-  // oppMaxHp берём из первого события лога или из oppInfo
   var oppMaxHp = (oppInfo && oppInfo.maxHp) || 100;
+
+  // Уточняем maxHp из лога — берём максимальное hp[i] по всем событиям,
+  // это гарантирует что maxHp совпадает с тем что симулировал сервер
+  var log = result.battleLog || [];
+  if (log.length > 0) {
+    var maxHp0 = myMaxHp, maxHp1 = oppMaxHp;
+    for (var _li = 0; _li < log.length; _li++) {
+      var _lev = log[_li];
+      if (!Array.isArray(_lev.hp)) continue;
+      if (typeof _lev.hp[0] === 'number' && _lev.hp[0] > maxHp0) maxHp0 = _lev.hp[0];
+      if (typeof _lev.hp[1] === 'number' && _lev.hp[1] > maxHp1) maxHp1 = _lev.hp[1];
+    }
+    myMaxHp  = maxHp0;
+    oppMaxHp = maxHp1;
+  }
 
   // Инициализируем fighters со стартовым HP
   pvpRenderState.fighters[0] = {

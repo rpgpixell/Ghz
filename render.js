@@ -1282,8 +1282,29 @@ function _pvpDrawHpBars() {
 }
 
 function _pvpDrawOneHpBar(x, y, w, h, f, isRight) {
-  var pct   = Math.max(0, f.hp / f.maxHp);
+  var pct   = Math.min(1, Math.max(0, f.hp / f.maxHp));
   var color = pct > 0.5 ? '#2ecc71' : pct > 0.25 ? '#f5c542' : '#e74c3c';
+
+  // Фон
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.beginPath(); _pvpRRect(x - 2, y - 2, w + 4, h + 4, 4); ctx.fill();
+
+  // Полоска
+  ctx.fillStyle = '#1a1a2a';
+  ctx.beginPath(); _pvpRRect(x, y, w, h, 3); ctx.fill();
+  ctx.fillStyle = color;
+  if (isRight) {
+    ctx.fillRect(x + w * (1 - pct), y, w * pct, h);
+  } else {
+    ctx.fillRect(x, y, w * pct, h);
+  }
+
+  // Имя + HP
+  ctx.font = 'bold 11px "Courier New", monospace';
+  ctx.fillStyle = '#ccc';
+  ctx.textAlign = isRight ? 'right' : 'left';
+  var label = f.name + '  ' + Math.max(0, Math.floor(f.hp)) + '/' + Math.floor(f.maxHp);
+  ctx.fillText(label, isRight ? x + w : x, y - 4);
 
   // Фон
   ctx.fillStyle = 'rgba(0,0,0,0.6)';
