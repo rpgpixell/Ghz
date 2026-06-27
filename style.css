@@ -1566,17 +1566,25 @@ html, body {
 .pvp-search-overlay { display: none !important; } /* Socket.IO удалён */
 
 /* ══════════════════════════════════
-   PvP — Боевой оверлей (удалён)
+   PvP — Боевой оверлей (canvas)
    ══════════════════════════════════ */
-.pvp-battle-overlay { display: none !important; } /* Socket.IO удалён */
+.pvp-battle-overlay {
+  position: fixed; inset: 0; z-index: 340; pointer-events: none;
+}
+.pvp-battle-overlay.hidden { display: none; }
 @keyframes pvpSpin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+.pvp-status-badge {
+  position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
+  font-size: 13px; color: #a78bfa; font-family: 'Courier New', monospace;
+  background: rgba(8,8,20,0.85); border: 1px solid rgba(160,100,255,0.3);
+  padding: 6px 18px; border-radius: 20px; pointer-events: none; white-space: nowrap;
+}
 
 /* ══════════════════════════════════
    PvP — Результат
    ══════════════════════════════════ */
 .pvp-result-modal {
   position: fixed; inset: 0; z-index: 400;
-
   background: rgba(0,0,0,0.88);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }

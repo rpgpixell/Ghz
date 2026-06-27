@@ -2564,6 +2564,7 @@ function pvpSimBotSkill(bot, now) {
 }
 
 // Полная симуляция боя — возвращает { winIdx: 0|1, log: [] }
+// log содержит полный детальный лог для воспроизведения на канвасе клиента
 function pvpSimBattle(playerData, opponentData) {
   var fighters = [
     {
@@ -2584,75 +2585,70 @@ function pvpSimBattle(playerData, opponentData) {
     }
   ];
 
-  var log = [];
-  var tick = 0;
-  var maxTicks = 300; // максимум 300 секунд симуляции
-  var dt = 1;        // 1 секунда за тик
+  var log = [];    // события для воспроизведения на клиенте
+  var time = 0;   // виртуальное время в секундах (float)
+  var maxTime = 120;
   var ATK_INTERVAL = 1.5;
-  var now = 0;
 
-  while (fighters[0].hp > 0 && fighters[1].hp > 0 && tick < maxTicks) {
-    tick++;
-    now += dt * 1000;
+  // Шаг симуляции — 0.1 секунды для плавности
+  var DT = 0.1;
 
-    pvpSimTickBuffs(fighters[0], dt);
-    pvpSimTickBuffs(fighters[1], dt);
+  while (fighters[0].hp > 0 && fighters[1].hp > 0 && time < maxTime) {
+    time = Math.round((time + DT) * 100) / 100;
+    var now = time * 1000;
 
-    // Навыки бота (idx 1) — ИИ использует навыки автоматически
-    var botSkill = pvpSimBotSkill(fighters[1], now);
-    if (botSkill) {
-      pvpSimApplySkill(botSkill, fighters[1], fighters[0]);
-      if (fighters[0].hp <= 0) break;
-    }
+    pvpSimTickBuffs(fighters[0], DT);
+    pvpSimTickBuffs(fighters[1], DT);
 
-    // Навыки игрока — тоже ИИ для симуляции (если есть навыки)
-    var playerSkill = pvpSimBotSkill(fighters[0], now);
-    if (playerSkill) {
-      pvpSimApplySkill(playerSkill, fighters[0], fighters[1]);
-      if (fighters[1].hp <= 0) break;
-    }
-
-    // Атаки
-    fighters[0].atkTimer += dt;
-    if (!fighters[0].debuffs.frozen && fighters[0].atkTimer >= ATK_INTERVAL) {
-      fighters[0].atkTimer = 0;
-      var effAs0 = { atk: fighters[0].stats.atk, crit: pvpSimEffCrit(fighters[0]), critDmg: fighters[0].stats.critDmg };
-      var effDs1 = { def: pvpSimEffDef(fighters[1]), dodge: fighters[1].stats.dodge };
-      var r0 = pvpSimCalcDmg(effAs0, effDs1);
-      if (!r0.dodge) {
-        fighters[1].hp = Math.max(0, fighters[1].hp - r0.dmg);
-        if (fighters[1].buffs.reflect && r0.dmg > 0) {
-          fighters[0].hp = Math.max(0, fighters[0].hp - Math.floor(r0.dmg * fighters[1].buffs.reflect.pct));
+    // Навыки (проверяем каждые 0.1с)
+    for (var fi = 0; fi < 2; fi++) {
+      var skill = pvpSimBotSkill(fighters[fi], now);
+      if (skill) {
+        var target = fighters[1 - fi];
+        var hpBefore = [fighters[0].hp, fighters[1].hp];
+        var sRes = pvpSimApplySkill(skill, fighters[fi], target);
+        if (fighters[0].hp <= 0 || fighters[1].hp <= 0) {
+          log.push({ time: time, type: 'skill', from: fi, skill: skill, hp: [fighters[0].hp, fighters[1].hp] });
+          break;
         }
+        if (sRes) log.push({ time: time, type: 'skill', from: fi, skill: skill, hp: [fighters[0].hp, fighters[1].hp], res: sRes.type });
       }
-      if (tick <= 30) log.push({ t: tick, a: 0, d: r0.dmg, dodge: r0.dodge, crit: r0.crit });
     }
+    if (fighters[0].hp <= 0 || fighters[1].hp <= 0) break;
 
-    fighters[1].atkTimer += dt;
-    if (!fighters[1].debuffs.frozen && fighters[1].atkTimer >= ATK_INTERVAL) {
-      fighters[1].atkTimer = 0;
-      var effAs1 = { atk: fighters[1].stats.atk, crit: pvpSimEffCrit(fighters[1]), critDmg: fighters[1].stats.critDmg };
-      var effDs0 = { def: pvpSimEffDef(fighters[0]), dodge: fighters[0].stats.dodge };
-      var r1 = pvpSimCalcDmg(effAs1, effDs0);
-      if (!r1.dodge) {
-        fighters[0].hp = Math.max(0, fighters[0].hp - r1.dmg);
-        if (fighters[0].buffs.reflect && r1.dmg > 0) {
-          fighters[1].hp = Math.max(0, fighters[1].hp - Math.floor(r1.dmg * fighters[0].buffs.reflect.pct));
+    // Атаки по таймеру
+    for (var ai = 0; ai < 2; ai++) {
+      fighters[ai].atkTimer += DT;
+      var atkInterval = ATK_INTERVAL;
+      if (fighters[ai].buffs.haste) atkInterval /= fighters[ai].buffs.haste.atkSpdMult;
+      atkInterval = Math.max(0.3, atkInterval);
+
+      if (!fighters[ai].debuffs.frozen && fighters[ai].atkTimer >= atkInterval) {
+        fighters[ai].atkTimer = 0;
+        var ti = 1 - ai;
+        var effAs = { atk: fighters[ai].stats.atk, crit: pvpSimEffCrit(fighters[ai]), critDmg: fighters[ai].stats.critDmg };
+        var effDs = { def: pvpSimEffDef(fighters[ti]), dodge: fighters[ti].stats.dodge || 3 };
+        var r = pvpSimCalcDmg(effAs, effDs);
+        if (!r.dodge) {
+          fighters[ti].hp = Math.max(0, fighters[ti].hp - r.dmg);
+          // Reflect
+          if (fighters[ti].buffs.reflect && r.dmg > 0) {
+            var refl = Math.floor(r.dmg * fighters[ti].buffs.reflect.pct);
+            fighters[ai].hp = Math.max(0, fighters[ai].hp - refl);
+            log.push({ time: time, type: 'reflect', from: ti, dmg: refl, hp: [fighters[0].hp, fighters[1].hp] });
+          }
         }
+        log.push({ time: time, type: 'atk', from: ai, dmg: r.dmg, dodge: r.dodge, crit: r.crit, hp: [fighters[0].hp, fighters[1].hp] });
+        if (fighters[0].hp <= 0 || fighters[1].hp <= 0) break;
       }
-      if (tick <= 30) log.push({ t: tick, a: 1, d: r1.dmg, dodge: r1.dodge, crit: r1.crit });
     }
   }
 
-  // Если ничья по времени — победитель у кого больше HP
-  var winIdx = 0;
-  if (fighters[0].hp <= 0 && fighters[1].hp <= 0) {
-    winIdx = 0; // ничья — дефолт игрок
-  } else if (fighters[0].hp <= 0) {
-    winIdx = 1;
-  } else {
-    winIdx = 0;
-  }
+  var winIdx = fighters[0].hp > 0 ? 0 : 1;
+  if (fighters[0].hp <= 0 && fighters[1].hp <= 0) winIdx = 0;
+
+  // Лимит лога — максимум 200 событий, чтобы не раздувать ответ
+  if (log.length > 200) log = log.slice(0, 200);
 
   return { winIdx, log, hp: [fighters[0].hp, fighters[1].hp] };
 }
