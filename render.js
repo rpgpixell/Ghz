@@ -1116,6 +1116,14 @@ var pvpRenderState = {
   ],
   floatingTexts: [],
   lastTs: 0,
+  // Лог боя — воспроизводится прямо в игровом цикле
+  log:       [],
+  logIdx:    0,
+  logTime:   0,    // накопленное виртуальное время (сек)
+  logSpeed:  3.5,  // 3.5× быстрее чем симуляция (~35 сек вместо 120)
+  logDone:   false,
+  onLogDone: null,
+  charColors: { fire: '#ff6622', light: '#ffee55', water: '#22aaff' },
 };
 
 // Вызывается из game loop
@@ -1141,7 +1149,65 @@ function renderPvp(ts) {
   pvpRenderState.fighters.forEach(function(f) {
     f.animTime += dt;
     if (f.hitFlash > 0) f.hitFlash -= dt;
+    // Анимация атаки — возврат в fight через 0.35с
+    if (f._atkTimer > 0) {
+      f._atkTimer -= dt;
+      if (f._atkTimer <= 0) f.state = 'fight';
+    }
   });
+
+  // ── Воспроизведение лога боя ──
+  if (!pvpRenderState.logDone && pvpRenderState.log.length > 0) {
+    pvpRenderState.logTime += dt * pvpRenderState.logSpeed;
+    var rs = pvpRenderState;
+    while (rs.logIdx < rs.log.length && rs.log[rs.logIdx].time <= rs.logTime) {
+      var ev = rs.log[rs.logIdx];
+      rs.logIdx++;
+      var from = ev.from, to = 1 - from;
+      var cc = rs.charColors;
+
+      if (ev.type === 'atk') {
+        if (ev.dodge) {
+          pvpAddFloatText(to, 'DODGE', '#2ef', false);
+        } else {
+          if (ev.hp) { rs.fighters[0].hp = ev.hp[0]; rs.fighters[1].hp = ev.hp[1]; }
+          rs.fighters[to].hitFlash = 0.35;
+          rs.fighters[from].state  = 'atk';
+          rs.fighters[from]._atkTimer = 0.35;
+          pvpAddFloatText(to, (ev.crit ? '💥' : '') + ev.dmg, ev.crit ? '#fff566' : '#ff6060', !!ev.crit);
+          pvpSpawnProjectile(from, cc[rs.fighters[from].charId] || '#ffcc00');
+        }
+      } else if (ev.type === 'skill') {
+        if (ev.hp) { rs.fighters[0].hp = ev.hp[0]; rs.fighters[1].hp = ev.hp[1]; }
+        rs.fighters[from].state = 'atk';
+        rs.fighters[from]._atkTimer = 0.5;
+        var skillColors = {
+          fire_fireball:'#ff4400', fire_curse:'#8800aa', fire_haste:'#ffaa00',
+          light_smite:'#ffffaa', light_shield:'#4488ff', light_reflect:'#aaffff',
+          water_burst:'#22aaff', water_critup:'#00ffaa', water_freeze:'#aaddff'
+        };
+        var skillNames = {
+          fire_fireball:'🔥Огн.шар!', fire_curse:'💀Проклятие!', fire_haste:'⚡Ускорение!',
+          light_smite:'✨Удар!', light_shield:'🛡Щит!', light_reflect:'↩Отражение!',
+          water_burst:'💧Взрыв!', water_critup:'🎯Крит+!', water_freeze:'❄Заморозка!'
+        };
+        pvpAddFloatText(from, skillNames[ev.skill] || '⚡', skillColors[ev.skill] || '#a064ff', true);
+        if (ev.res === 'dmg') {
+          rs.fighters[to].hitFlash = 0.4;
+          pvpSpawnProjectile(from, skillColors[ev.skill] || '#a064ff');
+        }
+      } else if (ev.type === 'reflect') {
+        if (ev.hp) { rs.fighters[0].hp = ev.hp[0]; rs.fighters[1].hp = ev.hp[1]; }
+        pvpAddFloatText(ev.from, '↩' + ev.dmg, '#aaffff', false);
+      }
+    }
+
+    // Лог закончился — вызываем коллбэк через 1.5с
+    if (rs.logIdx >= rs.log.length && !rs.logDone) {
+      rs.logDone = true;
+      if (rs.onLogDone) setTimeout(rs.onLogDone, 1500);
+    }
+  }
 
   ctx.clearRect(0, 0, W, H);
   _pvpDrawBackground();
@@ -1282,29 +1348,8 @@ function _pvpDrawHpBars() {
 }
 
 function _pvpDrawOneHpBar(x, y, w, h, f, isRight) {
-  var pct   = Math.min(1, Math.max(0, f.hp / f.maxHp));
+  var pct   = Math.max(0, f.hp / f.maxHp);
   var color = pct > 0.5 ? '#2ecc71' : pct > 0.25 ? '#f5c542' : '#e74c3c';
-
-  // Фон
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.beginPath(); _pvpRRect(x - 2, y - 2, w + 4, h + 4, 4); ctx.fill();
-
-  // Полоска
-  ctx.fillStyle = '#1a1a2a';
-  ctx.beginPath(); _pvpRRect(x, y, w, h, 3); ctx.fill();
-  ctx.fillStyle = color;
-  if (isRight) {
-    ctx.fillRect(x + w * (1 - pct), y, w * pct, h);
-  } else {
-    ctx.fillRect(x, y, w * pct, h);
-  }
-
-  // Имя + HP
-  ctx.font = 'bold 11px "Courier New", monospace';
-  ctx.fillStyle = '#ccc';
-  ctx.textAlign = isRight ? 'right' : 'left';
-  var label = f.name + '  ' + Math.max(0, Math.floor(f.hp)) + '/' + Math.floor(f.maxHp);
-  ctx.fillText(label, isRight ? x + w : x, y - 4);
 
   // Фон
   ctx.fillStyle = 'rgba(0,0,0,0.6)';

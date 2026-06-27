@@ -2368,21 +2368,19 @@ function _pvpShowBattleLoading(oppInfo) {
   _pvpSetHudVisible(false);
 }
 
-// Воспроизводим бой пошагово из лога
+// Воспроизводим бой через игровой цикл (renderPvp) — без setTimeout
 function _pvpPlayBattle(result, oppInfo) {
   var myCharId  = G_CHAR ? G_CHAR.id : 'fire';
   var oppCharId = (result.opponentCharId) || (oppInfo && oppInfo.charId) || 'fire';
   var myName    = G.firstName || 'Ты';
   var oppName   = result.opponentName || (oppInfo && oppInfo.name) || 'Соперник';
-  var myRating  = G.arenaRating || 1000; // уже обновлён после боя
+  var myRating  = G.arenaRating || 1000;
   var oppRating = (oppInfo && oppInfo.arenaRating) || 1000;
 
-  // Читаем maxHp из данных (нужны для HP баров)
   var myMaxHp  = G.maxHp || (G.stats && G.stats.hp) || 100;
   var oppMaxHp = (oppInfo && oppInfo.maxHp) || 100;
 
-  // Уточняем maxHp из лога — берём максимальное hp[i] по всем событиям,
-  // это гарантирует что maxHp совпадает с тем что симулировал сервер
+  // Уточняем maxHp из лога — берём максимальное hp[i] по всем событиям
   var log = result.battleLog || [];
   if (log.length > 0) {
     var maxHp0 = myMaxHp, maxHp1 = oppMaxHp;
@@ -2396,118 +2394,31 @@ function _pvpPlayBattle(result, oppInfo) {
     oppMaxHp = maxHp1;
   }
 
-  // Инициализируем fighters со стартовым HP
   pvpRenderState.fighters[0] = {
-    charId: myCharId, name: myName, arenaRating: myRating - result.ratingChange, // рейтинг ДО боя
-    hp: myMaxHp, maxHp: myMaxHp, animTime: 0, state: 'fight', hitFlash: 0, buffs: {}, debuffs: {}
+    charId: myCharId, name: myName, arenaRating: myRating - result.ratingChange,
+    hp: myMaxHp, maxHp: myMaxHp, animTime: 0, state: 'fight', hitFlash: 0,
+    buffs: {}, debuffs: {}, _atkTimer: 0
   };
   pvpRenderState.fighters[1] = {
     charId: oppCharId, name: oppName, arenaRating: oppRating,
-    hp: oppMaxHp, maxHp: oppMaxHp, animTime: 0, state: 'fight', hitFlash: 0, buffs: {}, debuffs: {}
+    hp: oppMaxHp, maxHp: oppMaxHp, animTime: 0, state: 'fight', hitFlash: 0,
+    buffs: {}, debuffs: {}, _atkTimer: 0
+  };
+
+  // Загружаем лог в renderState — воспроизведение идёт в renderPvp()
+  pvpRenderState.log      = log;
+  pvpRenderState.logIdx   = 0;
+  pvpRenderState.logTime  = 0;
+  pvpRenderState.logDone  = false;
+  pvpRenderState.onLogDone = function() {
+    if (_pvpBattleActive) _pvpShowCanvasResult(result);
   };
 
   var badge = document.getElementById('pvpStatusBadge');
   if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
 
-  var CHAR_COLORS = { fire: '#ff6622', light: '#ffee55', water: '#22aaff' };
-
-  var log    = result.battleLog || [];
-  var logIdx = 0;
-
-  // Воспроизводим события с задержкой
-  // Скорость: 1 секунда симуляции = 0.6 секунды воспроизведения
-  var SPEED = 0.6;
-  var prevTime = 0;
-
-  function playNextEvent() {
-    if (!_pvpBattleActive) return;
-
-    if (logIdx >= log.length) {
-      // Все события воспроизведены — показываем результат через 1.5с
-      setTimeout(function() {
-        if (_pvpBattleActive) _pvpShowCanvasResult(result);
-      }, 1500);
-      return;
-    }
-
-    var ev = log[logIdx];
-    logIdx++;
-
-    // Вычисляем задержку до следующего события
-    var delay = Math.max(80, (ev.time - prevTime) * 1000 * SPEED);
-    prevTime = ev.time;
-
-    // Применяем событие к pvpRenderState
-    var from = ev.from;
-    var to   = 1 - from;
-
-    if (ev.type === 'atk') {
-      if (ev.dodge) {
-        pvpAddFloatText(to, 'DODGE', '#2ef', false);
-      } else {
-        // Обновляем HP
-        if (ev.hp) {
-          pvpRenderState.fighters[0].hp = ev.hp[0];
-          pvpRenderState.fighters[1].hp = ev.hp[1];
-        }
-        pvpRenderState.fighters[to].hitFlash = 0.35;
-        pvpRenderState.fighters[from].state  = 'atk';
-        setTimeout(function() {
-          if (pvpRenderState.fighters[from]) pvpRenderState.fighters[from].state = 'fight';
-        }, 350);
-
-        var col = ev.crit ? '#fff566' : '#ff6060';
-        pvpAddFloatText(to, (ev.crit ? '💥' : '') + ev.dmg, col, ev.crit);
-
-        // Снаряд
-        var projColor = CHAR_COLORS[pvpRenderState.fighters[from].charId] || '#ffcc00';
-        pvpSpawnProjectile(from, projColor);
-      }
-
-    } else if (ev.type === 'skill') {
-      if (ev.hp) {
-        pvpRenderState.fighters[0].hp = ev.hp[0];
-        pvpRenderState.fighters[1].hp = ev.hp[1];
-      }
-      pvpRenderState.fighters[from].state = 'atk';
-      setTimeout(function() {
-        if (pvpRenderState.fighters[from]) pvpRenderState.fighters[from].state = 'fight';
-      }, 500);
-
-      var skillColors = {
-        fire_fireball: '#ff4400', fire_curse: '#8800aa', fire_haste: '#ffaa00',
-        light_smite: '#ffffaa', light_shield: '#4488ff', light_reflect: '#aaffff',
-        water_burst: '#22aaff', water_critup: '#00ffaa', water_freeze: '#aaddff'
-      };
-      var skillNames = {
-        fire_fireball: '🔥Огн. шар!', fire_curse: '💀Проклятие!', fire_haste: '⚡Ускорение!',
-        light_smite: '✨Удар света!', light_shield: '🛡Щит!', light_reflect: '↩Отражение!',
-        water_burst: '💧Взрыв!', water_critup: '🎯Крит UP!', water_freeze: '❄Заморозка!'
-      };
-      var sColor = skillColors[ev.skill] || '#a064ff';
-      var sName  = skillNames[ev.skill]  || '⚡' + ev.skill;
-
-      pvpAddFloatText(from, sName, sColor, true);
-      if (ev.res === 'dmg') {
-        pvpRenderState.fighters[to].hitFlash = 0.4;
-        pvpSpawnProjectile(from, sColor);
-      }
-
-    } else if (ev.type === 'reflect') {
-      if (ev.hp) {
-        pvpRenderState.fighters[0].hp = ev.hp[0];
-        pvpRenderState.fighters[1].hp = ev.hp[1];
-      }
-      pvpAddFloatText(ev.from, '↩' + ev.dmg, '#aaffff', false);
-    }
-
-    _pvpPlaybackTimer = setTimeout(playNextEvent, delay);
-  }
-
-  // Небольшая пауза перед стартом — "бой начался"
   pvpAddFloatText(0, 'БОЙ!', '#ffd700', true);
   pvpAddFloatText(1, 'БОЙ!', '#ffd700', true);
-  _pvpPlaybackTimer = setTimeout(playNextEvent, 600);
 }
 
 // Результат поверх канваса
@@ -2548,7 +2459,8 @@ function _pvpShowCanvasResult(result) {
 // Останавливаем канвас-бой и возвращаем обычный рендер
 function _pvpStopBattleCanvas() {
   _pvpBattleActive = false;
-  if (_pvpPlaybackTimer) { clearTimeout(_pvpPlaybackTimer); _pvpPlaybackTimer = null; }
+  pvpRenderState.logDone  = true;
+  pvpRenderState.onLogDone = null;
   pvpRenderState.active = false;
   pvpProjectiles = [];
   var bo = document.getElementById('pvpBattleOverlay');
