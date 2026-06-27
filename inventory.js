@@ -484,11 +484,49 @@ function openItemModal(itemId) {
 
   // ── Обычный предмет ──
   var statLabels = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT %', dodge: 'DODGE %' };
-  var statsHtml = '';
-  Object.keys(item.stats).forEach(function(s) {
-    statsHtml += '<div class="modal-stat-row"><span style="color:#aaa">' + (statLabels[s] || s) + '</span><span>+' + item.stats[s] + '</span></div>';
-  });
-  document.getElementById('mStats').innerHTML = statsHtml || '<div style="color:#445;font-size:11px;">Нет бонусов</div>';
+
+  // Надетый предмет того же слота (для сравнения)
+  var equippedItem = G.equipped[item.slot] || null;
+  var compareHtml = '';
+  if (equippedItem && equippedItem.id !== item.id) {
+    var eqR = RARITIES.find(function(x) { return x.id === equippedItem.rarity; });
+    var eqStars = refineStars(equippedItem);
+    compareHtml += '<div style="margin-bottom:8px;padding:8px 10px;background:rgba(64,208,255,0.05);border:1px solid #1a3a5a;border-radius:8px;">' +
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">' +
+        '<img src="' + equippedItem.icon + '" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">' +
+        '<div>' +
+          '<div style="font-size:11px;color:' + eqR.color + ';font-weight:bold;">' + equippedItem.name + (eqStars > 0 ? ' +' + eqStars : '') + '</div>' +
+          '<div style="font-size:9px;color:#556;">Надет · Lv.' + equippedItem.level + '</div>' +
+        '</div>' +
+      '</div>';
+    var allStatKeys = Object.keys(item.stats).concat(Object.keys(equippedItem.stats)).filter(function(s,i,a){return a.indexOf(s)===i;});
+    allStatKeys.forEach(function(s) {
+      var newVal = (item.stats[s] || 0);
+      var eqVal  = (equippedItem.stats[s] || 0);
+      var diff   = newVal - eqVal;
+      var diffStr = diff > 0 ? '<span style="color:#2ecc71">▲+' + diff + '</span>' :
+                   diff < 0 ? '<span style="color:#e74c3c">▼' + diff + '</span>' :
+                               '<span style="color:#556">=</span>';
+      compareHtml += '<div class="modal-stat-row">' +
+        '<span style="color:#aaa">' + (statLabels[s] || s) + '</span>' +
+        '<span style="display:flex;align-items:center;gap:6px;">' +
+          '<span style="color:#778;font-size:10px;">+' + eqVal + '</span>' +
+          '<span style="color:#445;font-size:10px;">→</span>' +
+          '<span>+' + newVal + '</span>' +
+          diffStr +
+        '</span>' +
+      '</div>';
+    });
+    compareHtml += '</div>';
+  } else {
+    // Нет надетого — просто статы
+    var statsHtml = '';
+    Object.keys(item.stats).forEach(function(s) {
+      statsHtml += '<div class="modal-stat-row"><span style="color:#aaa">' + (statLabels[s] || s) + '</span><span>+' + item.stats[s] + '</span></div>';
+    });
+    compareHtml = statsHtml || '<div style="color:#445;font-size:11px;">Нет бонусов</div>';
+  }
+  document.getElementById('mStats').innerHTML = compareHtml;
 
   // Блок заточки
   var refineHtml = '';
@@ -590,11 +628,9 @@ function renderInventory() {
       '<button onclick="deleteSelected()" ' + (selCount > 0 ? '' : 'disabled') + ' style="flex:2;font-size:10px;font-family:Courier New,monospace;padding:5px 0;border-radius:6px;border:1.5px solid ' + (selCount > 0 ? '#e74c3c' : '#333') + ';background:' + (selCount > 0 ? 'rgba(231,76,60,0.15)' : 'rgba(255,255,255,0.02)') + ';color:' + (selCount > 0 ? '#e74c3c' : '#444') + ';cursor:' + (selCount > 0 ? 'pointer' : 'not-allowed') + ';">🗑 Удалить (' + selCount + ')</button></div>';
   }
 
-  var items = G.inventory.slice();
+  var items = G.inventory.filter(function(i) { return !i._equipped; });
   if (G.invFilter !== 'all') items = items.filter(function(i) { return i.slot === G.invFilter; });
   items.sort(function(a, b) {
-    if (a._equipped && !b._equipped) return -1;
-    if (!a._equipped && b._equipped) return 1;
     var rd = rarityOrder(b.rarity) - rarityOrder(a.rarity);
     if (rd) return rd;
     return b.level - a.level;
@@ -613,7 +649,7 @@ function renderInventory() {
       var selModeClass = _invSelectMode ? ' sel-mode' : '';
       var selClass = isSel ? ' selected' : '';
       var clickHandler = _invSelectMode
-        ? (item._equipped ? '' : 'toggleInvSelect(' + item.id + ')')
+        ? 'toggleInvSelect(' + item.id + ')'
         : 'openItemModal(' + item.id + ')';
       var checkmark = _invSelectMode ? '<div class="sel-check">' + (isSel ? '✓' : '○') + '</div>' : '';
 
@@ -630,9 +666,8 @@ function renderInventory() {
           '<div style="font-size:7px;color:' + classCol + ';margin-top:2px;">' + (isWrong ? '🔒' : have + '/' + bkcost) + '</div>' +
           '<div class="inv-rarity-dot" style="background:#9b59b6"></div></div>';
       } else {
-        gridHtml += '<div class="inv-slot rarity-' + item.rarity + (item._equipped ? ' equipped' : '') + selModeClass + selClass + '" onclick="' + clickHandler + '">' +
+        gridHtml += '<div class="inv-slot rarity-' + item.rarity + selModeClass + selClass + '" onclick="' + clickHandler + '">' +
           checkmark +
-          (item._equipped ? '<div class="inv-eq-badge">E</div>' : '') +
           '<div class="inv-icon"><img src="' + item.icon + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'"></div>' +
           '<div class="inv-lvl">Lv.' + item.level + (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') + '</div>' +
           '<div class="inv-rarity-dot" style="background:' + r.dot + '"></div></div>';
