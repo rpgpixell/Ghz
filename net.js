@@ -204,7 +204,7 @@ var AUTH = {
     }
 
     G.upg = Object.assign(
-      { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0 },
+      { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, atkSpd: 0, critDmg: 0 },
       d.upg || {}
     );
 

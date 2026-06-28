@@ -2241,11 +2241,15 @@ function syncInventoryFromServer(rawInventory) {
       found._equipped = true;
       G.equipped[slot] = found;
     } else {
-      // Предмет пропал (продан/выставлен) — снимаем слот
-      G.equipped[slot] = null;
+      // Предмет не найден в новом инвентаре — НЕ обнуляем слот автоматически,
+      // сохраняем текущий объект чтобы saveInstant не затёр equipped на сервере
+      // Слот обнуляется только явно (unequip, sell)
     }
   });
   G.inventory = newInv;
+  // Пересчитываем статы и CP после любого изменения инвентаря
+  if (typeof recalcStats === 'function') recalcStats();
+  if (typeof updateHUD === 'function') updateHUD();
 }
 
 function buyListing(listingId, price) {

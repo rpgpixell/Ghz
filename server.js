@@ -2078,19 +2078,19 @@ app.get('/admin/api/items/list', requireAdmin, (req, res) => {
     const items = [];
     
     const ITEM_TYPES = [
-      { slot: 'body', name: 'Нагрудник', stats: ['def', 'hp'], primary: 'def' },
-      { slot: 'legs', name: 'Штаны', stats: ['def', 'dodge'], primary: 'def' },
-      { slot: 'gloves', name: 'Перчатки', stats: ['atk', 'crit'], primary: 'atk' },
-      { slot: 'boots', name: 'Боты', stats: ['spd', 'dodge'], primary: 'spd' },
-      { slot: 'helmet', name: 'Шлем', stats: ['def', 'hp'], primary: 'def' },
-      { slot: 'ring', name: 'Кольцо', stats: ['crit', 'atk'], primary: 'crit' },
-      { slot: 'belt', name: 'Пояс', stats: ['hp', 'def'], primary: 'hp' }
+      { slot: 'body',   name: 'Нагрудник', stats: ['def', 'hp'],   primary: 'def' },
+      { slot: 'legs',   name: 'Штаны',     stats: ['def', 'dodge'], primary: 'def' },
+      { slot: 'gloves', name: 'Перчатки',  stats: ['atk', 'def'],  primary: 'atk' },
+      { slot: 'boots',  name: 'Боты',      stats: ['spd', 'dodge'], primary: 'spd' },
+      { slot: 'helmet', name: 'Шлем',      stats: ['def', 'hp'],   primary: 'def' },
+      { slot: 'ring',   name: 'Кольцо',    stats: ['atk', 'spd'],  primary: 'atk' },
+      { slot: 'belt',   name: 'Пояс',      stats: ['hp', 'def'],   primary: 'hp'  }
     ];
-    
+
     const STAFF_TYPES = [
-      { slot: 'weapon', name: 'Посох огня', stats: ['atk', 'crit'], primary: 'atk', forClass: 'fire', classLabel: 'Пирокан' },
-      { slot: 'weapon', name: 'Посох света', stats: ['atk', 'hp'], primary: 'atk', forClass: 'light', classLabel: 'Люмос' },
-      { slot: 'weapon', name: 'Посох воды', stats: ['atk', 'dodge'], primary: 'atk', forClass: 'water', classLabel: 'Аквас' }
+      { slot: 'weapon', name: 'Посох огня',  stats: ['atk', 'crit', 'critDmg'], primary: 'atk', forClass: 'fire',  classLabel: 'Пирокан' },
+      { slot: 'weapon', name: 'Посох света', stats: ['atk', 'crit', 'critDmg'], primary: 'atk', forClass: 'light', classLabel: 'Люмос'   },
+      { slot: 'weapon', name: 'Посох воды',  stats: ['atk', 'crit', 'critDmg'], primary: 'atk', forClass: 'water', classLabel: 'Аквас'   }
     ];
     
     ITEM_TYPES.forEach(type => items.push({
@@ -2441,7 +2441,6 @@ app.post('/api/market/sell', async (req, res) => {
 
     // Очищаем служебные поля перед сохранением в листинг
     const item = Object.assign({}, inventory[itemIdx]);
-    delete item._equipped;
     console.log(`✅ [market/sell] item found: ${item.name}, refine=${item.refine || 0}`);
 
     if (!item.isSkillBook && !MARKET_MIN_RARITY.includes(item.rarity)) {
@@ -2450,6 +2449,7 @@ app.post('/api/market/sell', async (req, res) => {
     if (item._equipped) {
       return res.status(400).json({ ok: false, error: 'item_equipped' });
     }
+    delete item._equipped;
 
     // Удаляем предмет из инвентаря
     const updated = await Save.findOneAndUpdate(
@@ -2819,7 +2819,7 @@ const UPG_DEFS_SRV = [
   { id: 'spd',     stat: 'spd',     bonus: 1    },
   { id: 'atkSpd',  stat: 'atkSpd',  bonus: 0.15 },
   { id: 'crit',    stat: 'crit',    bonus: 3    },
-  { id: 'critDmg', stat: 'critDmg', bonus: 0.1  },
+  { id: 'critDmg', stat: 'critDmg', bonus: 0.15 },
   { id: 'dodge',   stat: 'dodge',   bonus: 2    },
 ];
 
@@ -2869,7 +2869,11 @@ function calcFullStats(data) {
     });
   });
 
-  // 5. Итоговые статы
+  // 5. Итоговые статы + капы предметных бонусов (зеркало equippedStats клиента)
+  bonus.crit    = Math.min(bonus.crit,    10);
+  bonus.dodge   = Math.min(bonus.dodge,   10);
+  bonus.critDmg = Math.min(bonus.critDmg, 0.5);
+
   const stats = {};
   ['atk','def','hp','spd','crit','dodge','atkSpd','critDmg'].forEach(s => {
     stats[s] = (base[s] || 0) + (bonus[s] || 0);
@@ -2880,6 +2884,8 @@ function calcFullStats(data) {
   stats.crit  = Math.floor(stats.crit);
   stats.dodge = Math.floor(stats.dodge);
   stats.atkSpd = parseFloat((stats.atkSpd || 1.0).toFixed(4));
+  // critDmg как множитель (зеркало effectiveCritDmg клиента: 1.8 + stats.critDmg)
+  stats.effectiveCritDmg = parseFloat((1.8 + (stats.critDmg || 0)).toFixed(4));
 
   return stats;
 }

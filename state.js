@@ -69,9 +69,12 @@ G.baseStats = { atk: 10, def: 5, spd: 3, hp: 100, crit: 5, dodge: 3, atkSpd: 1.0
 // ── Расчёт боевой мощи (CP) ──
 function calcCP() {
   const s = G.stats;
+  const critDmgBonus = (typeof effectiveCritDmg === 'function')
+    ? Math.max(0, effectiveCritDmg() - 1.8)
+    : (s.critDmg || 0);
   return Math.floor(
     s.atk * 4 + s.def * 3 + s.hp * 0.5 + s.spd * 6 + s.crit * 8 + s.dodge * 8
-    + ((s.critDmg || 0) * 500)
+    + critDmgBonus * 500
     + ((s.atkSpd || 1.0) - 1.0) * 200
     + G.level * 20
   );
