@@ -1589,6 +1589,13 @@ html, body {
   color: #e74c3c; cursor: pointer;
 }
 .market-cancel-btn:active { transform: scale(0.95); }
+.market-claim-btn {
+  flex-shrink: 0; padding: 5px 10px; font-size: 10px; line-height: 1.4;
+  font-family: 'Courier New', monospace; border-radius: 8px; text-align: center;
+  border: 1.5px solid #f5c542; background: rgba(245,197,66,0.12);
+  color: #f5c542; cursor: pointer; font-weight: bold;
+}
+.market-claim-btn:active { transform: scale(0.95); }
 .market-empty { text-align: center; color: #445; font-size: 12px; padding: 40px 0; }
 .market-loading { text-align: center; color: #445; font-size: 12px; padding: 30px 0; }
 .market-lot-timer { font-size: 8px; color: #445; margin-top: 1px; }

@@ -132,6 +132,8 @@ const MarketListingSchema = new mongoose.Schema({
   expiresAt:   { type: Number, required: true },
   soldAt:      { type: Number, default: null },
   cancelledAt: { type: Number, default: null },
+  pendingPixr:  { type: Number, default: null },   // PIXR ожидает получения продавцом
+  claimedAt:    { type: Number, default: null },    // когда продавец забрал PIXR
 }, { minimize: false });
 MarketListingSchema.index({ status: 1, createdAt: -1 });
 MarketListingSchema.index({ sellerId: 1, status: 1 });
@@ -2184,17 +2186,77 @@ app.post('/api/market/list', async (req, res) => {
   }
 });
 
-// ── Мои лоты ──
+// ── Мои лоты (активные + проданные к получению) ──
 app.post('/api/market/my', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
   try {
-    const listings = await MarketListing.find({ sellerId: tg.id, status: 'active' })
+    // Активные лоты + проданные у которых pendingPixr ещё не получен
+    const listings = await MarketListing.find({
+      sellerId: tg.id,
+      $or: [
+        { status: 'active' },
+        { status: 'sold', claimedAt: null }
+      ]
+    })
       .sort({ createdAt: -1 })
       .lean();
     res.json({ ok: true, listings });
   } catch (e) {
     console.error('❌ [market/my] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Забрать PIXR за проданный лот ──
+app.post('/api/market/claim', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const { listingId } = req.body || {};
+    if (!listingId) return res.status(400).json({ ok: false, error: 'bad_params' });
+
+    // Атомарно: найти свой sold-лот с pendingPixr и пометить как claimed
+    const listing = await MarketListing.findOneAndUpdate(
+      { listingId, sellerId: tg.id, status: 'sold', claimedAt: null, pendingPixr: { $gt: 0 } },
+      { $set: { claimedAt: Date.now() } },
+      { new: false }
+    );
+    if (!listing) return res.status(400).json({ ok: false, error: 'not_found' });
+
+    const earned = listing.pendingPixr;
+
+    // Начисляем PIXR продавцу
+    const updated = await Save.findOneAndUpdate(
+      { tgId: tg.id },
+      { $inc: { 'data.pixr': earned }, $set: { updatedAt: Date.now() } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ ok: false, error: 'user_not_found' });
+
+    console.log(\`✅ [market/claim] \${tg.id} забрал \${earned} PIXR за лот \${listingId}\`);
+    res.json({ ok: true, earned, pixr: updated.data.pixr });
+  } catch (e) {
+    console.error('❌ [market/claim] error:', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── История продаж ──
+app.post('/api/market/history', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const listings = await MarketListing.find({
+      sellerId: tg.id,
+      status: { $in: ['sold', 'cancelled'] }
+    })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+    res.json({ ok: true, listings });
+  } catch (e) {
+    console.error('❌ [market/history] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
@@ -2442,17 +2504,19 @@ app.post('/api/market/buy', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'already_sold' });
     }
 
-    // Начисляем продавцу 90%
+    // Начисляем продавцу 90% — НЕ сразу, а как "к получению"
     const sellerEarns = Math.floor(price * (1 - MARKET_COMMISSION));
-    await Save.findOneAndUpdate(
-      { tgId: listing.sellerId },
-      { $inc: { 'data.pixr': sellerEarns } }
+    // Обновляем листинг: ставим pendingPixr (продавец должен забрать вручную)
+    await MarketListing.findOneAndUpdate(
+      { listingId },
+      { $set: { pendingPixr: sellerEarns } }
     );
 
     notifyClient(listing.sellerId, 'market_sold', {
       listingId,
       itemName: listing.item.name,
       earned:   sellerEarns,
+      pending:  true,
     });
 
     console.log(`✅ [market] ${tg.id} купил "${listing.item.name}" у ${listing.sellerId} за ${price} PIXR`);

@@ -1898,7 +1898,7 @@ function callBoss(bossId) {
 //  МАРКЕТ
 // ═══════════════════════════════════════════════════════
 
-var _marketTab    = 'all';   // 'all' | 'my'
+var _marketTab    = 'all';   // 'all' | 'my' | 'history'
 var _marketFilter = 'all';   // 'all' | rarity | 'book'
 var _sellItemId   = null;
 
@@ -1945,9 +1945,35 @@ function switchMarketTab(tab) {
   loadMarketListings();
 }
 
+// ── Забрать PIXR за проданный лот ──
+function claimListing(listingId, earned) {
+  var API  = window.GameSync._API;
+  var init = window.GameSync._INIT;
+  fetch(API + '/api/market/claim', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: init, listingId: listingId })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      G.pixr = d.pixr;
+      updateMarketPixrBal();
+      window.GameSync.saveInstant({ pixr: G.pixr });
+      _taskToast('✅ Получено: +' + d.earned + ' 💎 PIXR');
+      loadMarketListings();
+    } else {
+      _taskToast('❌ Ошибка: ' + (d.error || 'неизвестно'));
+    }
+  })
+  .catch(function() { _taskToast('❌ Ошибка сети'); });
+}
+
 function _syncMarketTabs() {
   document.getElementById('marketTabAll').classList.toggle('active', _marketTab === 'all');
   document.getElementById('marketTabMy').classList.toggle('active', _marketTab === 'my');
+  var histBtn = document.getElementById('marketTabHistory');
+  if (histBtn) histBtn.classList.toggle('active', _marketTab === 'history');
 }
 
 // ── Фильтры ──
@@ -1983,6 +2009,15 @@ function loadMarketListings() {
     .then(function(r) { return r.json(); })
     .then(function(d) { renderMarketListings(d.listings || [], true); })
     .catch(function() { body.innerHTML = '<div class="market-empty">Ошибка загрузки</div>'; });
+  } else if (_marketTab === 'history') {
+    fetch(API + '/api/market/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: init })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { renderMarketHistory(d.listings || []); })
+    .catch(function() { body.innerHTML = '<div class="market-empty">Ошибка загрузки</div>'; });
   } else {
     fetch(API + '/api/market/list', {
       method: 'POST',
@@ -1993,6 +2028,74 @@ function loadMarketListings() {
     .then(function(d) { renderMarketListings(d.listings || [], false); })
     .catch(function() { body.innerHTML = '<div class="market-empty">Ошибка загрузки</div>'; });
   }
+}
+
+// ── История продаж ──
+function renderMarketHistory(listings) {
+  var body = document.getElementById('marketBody');
+  if (!body) return;
+
+  if (listings.length === 0) {
+    body.innerHTML = '<div class="market-empty">📋 История пуста.<br><span style="font-size:10px">Проданные и отменённые лоты появятся здесь.</span></div>';
+    return;
+  }
+
+  var html = '';
+  listings.forEach(function(lst) {
+    var item = lst.item || {};
+    var r    = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
+    var stars = (item.refine || 0);
+    var isOre = !!item.isOre;
+
+    var iconHtml = item.isSkillBook
+      ? '<span style="font-size:22px;line-height:1;">📖</span>'
+      : '<img src="' + (item.icon || '') + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.3">';
+
+    var nameHtml = '<div style="font-size:13px;font-weight:bold;color:' + r.color + ';margin-bottom:2px;">' +
+      (item.name || '—') +
+      (stars > 0 ? ' <span style="color:#a78bfa">+' + stars + '</span>' : '') +
+      (isOre ? ' <span style="font-size:10px;color:#aaa">×' + (item.qty||1) + '</span>' : '') +
+    '</div>';
+
+    var isSold      = lst.status === 'sold';
+    var isCancelled = lst.status === 'cancelled';
+    var statusColor = isSold ? '#2ecc71' : '#e74c3c';
+    var statusText  = isSold ? '✅ Продано' : '❌ Отменён/Истёк';
+
+    var dateStr = '';
+    if (isSold && lst.soldAt) {
+      var d = new Date(lst.soldAt);
+      dateStr = d.getDate() + '.' + (d.getMonth()+1) + '.' + d.getFullYear() + ' ' +
+        String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+    } else if (isCancelled && lst.cancelledAt) {
+      var d2 = new Date(lst.cancelledAt);
+      dateStr = d2.getDate() + '.' + (d2.getMonth()+1) + '.' + d2.getFullYear() + ' ' +
+        String(d2.getHours()).padStart(2,'0') + ':' + String(d2.getMinutes()).padStart(2,'0');
+    }
+
+    var priceStr = isSold
+      ? (lst.pendingPixr != null
+          ? (lst.claimedAt ? '+' + lst.pendingPixr + ' 💎 (получено)' : '+' + lst.pendingPixr + ' 💎')
+          : lst.price + ' 💎')
+      : lst.price + ' 💎 (не продано)';
+
+    html += '<div class="market-listing" style="opacity:' + (isCancelled ? '0.6' : '1') + ';">' +
+      '<div class="market-listing-icon" style="border-color:' + r.color + '55;">' + iconHtml + '</div>' +
+      '<div class="market-listing-info">' +
+        nameHtml +
+        '<div style="font-size:11px;margin-bottom:3px;">' +
+          '<span style="color:' + statusColor + ';font-weight:bold;">' + statusText + '</span>' +
+          (dateStr ? ' <span style="color:#556;font-size:10px;">· ' + dateStr + '</span>' : '') +
+        '</div>' +
+        (lst.buyerName && isSold ? '<div style="font-size:10px;color:#778;">Покупатель: ' + lst.buyerName + '</div>' : '') +
+      '</div>' +
+      '<div style="text-align:right;">' +
+        '<div style="font-size:12px;font-weight:bold;color:' + (isSold ? '#2ecc71' : '#556') + ';">' + priceStr + '</div>' +
+      '</div>' +
+    '</div>';
+  });
+
+  body.innerHTML = html;
 }
 
 // ── Отрисовка списка лотов ──
@@ -2030,11 +2133,14 @@ function renderMarketListings(listings, isMy) {
       : (!isBook && item.level)
         ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">Lv.' + item.level + '</span>'
         : (isBook && item.level ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">Lv.' + item.level + '</span>' : '');
+    var soldBadge = (isMy && lst.status === 'sold' && !lst.claimedAt)
+      ? ' <span style="font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(46,204,113,0.2);border:1px solid #2ecc71;color:#2ecc71;vertical-align:middle;">ПРОДАНО</span>'
+      : '';
     var nameHtml = '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:3px;">' +
       '<span style="font-size:13px;font-weight:bold;color:' + r.color + ';">' +
         (item.name || '—') +
         (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') +
-      '</span>' + lvBadge + '</div>';
+      '</span>' + lvBadge + soldBadge + '</div>';
 
     // Строка 2: редкость · слот · класс · продавец
     var subParts = ['<span style="color:' + r.color + ';">' + r.name + '</span>'];
@@ -2066,7 +2172,11 @@ function renderMarketListings(listings, isMy) {
 
     var actionBtn = '';
     if (isMy) {
-      actionBtn = '<button class="market-cancel-btn" onclick="cancelListing(\'' + lst.listingId + '\')">Снять</button>';
+      if (lst.status === 'sold' && !lst.claimedAt && lst.pendingPixr > 0) {
+        actionBtn = '<button class="market-claim-btn" onclick="claimListing(\'' + lst.listingId + '\', ' + lst.pendingPixr + ')">💰 Забрать<br><span style="font-size:10px;color:#2ecc71;">+' + lst.pendingPixr + ' 💎</span></button>';
+      } else if (lst.status === 'active') {
+        actionBtn = '<button class="market-cancel-btn" onclick="cancelListing(\'' + lst.listingId + '\')">Снять</button>';
+      }
     } else {
       var isSelf    = lst.sellerId === (window.GameSync && window.GameSync.getTgId ? window.GameSync.getTgId() : '');
       var canAfford = (G.pixr || 0) >= lst.price;
@@ -2310,14 +2420,17 @@ function confirmSellItem() {
 // ── Серверные уведомления ──
 window._handleMarketNotif = function(event, data) {
   if (event === 'market_sold') {
-    _taskToast('💰 Продано: "' + data.itemName + '" +' + data.earned + ' 💎');
-    G.pixr = (G.pixr || 0) + data.earned;
-    window.GameSync.saveInstant();
+    // PIXR не начисляется автоматически — нужно забрать вручную в "Мои лоты"
+    _taskToast('💰 Продано: "' + data.itemName + '" · Зайди в Мои лоты чтобы забрать ' + data.earned + ' 💎');
   } else if (event === 'market_expired') {
     _taskToast('⏰ Лот истёк, "' + (data.item && data.item.name) + '" возвращён');
-    if (data.item) { syncInventoryFromServer(G.inventory.concat([data.item])); }
+    if (data.item && !data.item.isOre) { syncInventoryFromServer(G.inventory.concat([data.item])); }
+    if (data.item && data.item.isOre) {
+      if (!G.ore) G.ore = {};
+      G.ore[data.item.oreId] = (G.ore[data.item.oreId] || 0) + (data.item.qty || 1);
+    }
     if (typeof renderInventory === 'function') renderInventory();
-    window.GameSync.saveInstant();
+    window.GameSync.saveInstant({ inventory: (G.inventory||[]).map(function(i){var c=Object.assign({},i);delete c._equipped;return c;}), ore: G.ore });
   }
 };
 
