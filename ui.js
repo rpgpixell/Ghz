@@ -188,6 +188,7 @@ function openFloorLoot(floorN) {
   var rarityNames  = { common:'Обычный', uncommon:'Необычный', rare:'Редкий', epic:'Эпический', legend:'Легендарный' };
   var classColors  = { fire:'#ff7030', light:'#ffd040', water:'#40d0ff' };
   var classLabels  = { fire:'Пирокан', light:'Люмос', water:'Аквас' };
+  // Реальные границы редкости (совпадают с FLOOR_MIN/MAX_RARITY в inventory.js)
   var maxRarityMap = { 1:'common', 2:'uncommon', 3:'uncommon', 4:'rare', 5:'rare', 6:'rare', 7:'epic', 8:'epic', 9:'legend', 10:'legend' };
   var minRarityMap = { 1:'common', 2:'common', 3:'common', 4:'common', 5:'common', 6:'common', 7:'common', 8:'uncommon', 9:'uncommon', 10:'uncommon' };
   var minR = minRarityMap[f.n] || 'common';
@@ -205,41 +206,69 @@ function openFloorLoot(floorN) {
     '<span style="color:' + minCol + ';">' + rarityNames[minR] + '</span>' +
     ' — <span style="color:' + maxCol + ';">' + rarityNames[maxR] + '</span></div></div></div>';
 
-  if (f.loot && f.loot.length) {
-    var totalWeight = f.loot.reduce(function(s, i) { return s + i.chance; }, 0);
-    f.loot.forEach(function(item) {
-      var col    = rarityColors[item.rarity] || '#888';
-      var rname  = rarityNames[item.rarity]  || item.rarity;
-      var iconSrc = itemIcon(item.slot, item.rarity, item.forClass || null);
-      var realChance = ((item.chance / totalWeight) * parseFloat(realItemChance)).toFixed(2);
-      html += '<div class="loot-row"><img src="' + iconSrc + '" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
-      html += '<span style="flex:1;color:#ddd;">' + item.name;
-      if (item.forClass) html += ' <span style="font-size:9px;color:' + (classColors[item.forClass]||'#aaa') + ';border:1px solid ' + (classColors[item.forClass]||'#aaa') + ';padding:1px 4px;border-radius:3px;">' + (classLabels[item.forClass]||item.forClass) + '</span>';
-      html += '</span><span class="loot-rarity-badge" style="color:' + col + ';border-color:' + col + ';margin-right:8px;">' + rname + '</span>';
-      html += '<span style="color:#f5c542;font-weight:bold;min-width:38px;text-align:right;">' + realChance + '%</span></div>';
-    });
-  } else {
-    html += '<div style="color:#445;font-size:11px;text-align:center;padding:20px 0;">Нет данных о дропе</div>';
-  }
+  // Пояснение: реальный дроп — случайный предмет из пула
+  html += '<div style="font-size:9px;color:#556;padding:6px 8px;margin-bottom:8px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid #2a2a5a;">' +
+    '⚙ Тип предмета выбирается случайно из общего пула. Редкость определяется этажом.</div>';
+
+  // Раздел: обычные предметы (75% от дропа)
+  var itemChanceEach = (parseFloat(realItemChance) * 0.75 / 7).toFixed(3);
+  html += '<div style="font-size:10px;color:#aaa;margin-bottom:4px;border-bottom:1px solid #2a2a5a;padding-bottom:4px;">⚔ Снаряжение <span style="color:#556;font-size:9px;">(75% от дропа, каждый тип равновероятен)</span></div>';
+  var allItemTypes = [
+    { slot:'body',   name:'Нагрудник' },
+    { slot:'legs',   name:'Штаны'     },
+    { slot:'gloves', name:'Перчатки'  },
+    { slot:'boots',  name:'Боты'      },
+    { slot:'helmet', name:'Шлем'      },
+    { slot:'ring',   name:'Кольцо'    },
+    { slot:'belt',   name:'Пояс'      },
+  ];
+  allItemTypes.forEach(function(it) {
+    var iconSrc = itemIcon(it.slot, maxR, null);
+    html += '<div class="loot-row"><img src="' + iconSrc + '" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
+    html += '<span style="flex:1;color:#ddd;">' + it.name + '</span>';
+    html += '<span class="loot-rarity-badge" style="color:' + minCol + ';border-color:' + minCol + ';margin-right:8px;">' + rarityNames[minR] +
+      (minR !== maxR ? '<span style="color:#556;">–</span><span style="color:' + maxCol + ';">' + rarityNames[maxR] + '</span>' : '') + '</span>';
+    html += '<span style="color:#f5c542;font-weight:bold;min-width:48px;text-align:right;">~' + itemChanceEach + '%</span></div>';
+  });
+
+  // Раздел: посохи (25% от дропа)
+  var staffChanceEach = (parseFloat(realItemChance) * 0.25 / 3).toFixed(3);
+  html += '<div style="font-size:10px;color:#aaa;margin:8px 0 4px;border-bottom:1px solid #2a2a5a;padding-bottom:4px;">🔮 Посохи <span style="color:#556;font-size:9px;">(25% от дропа, для своего класса)</span></div>';
+  var staffTypes = [
+    { forClass:'fire',  label:'Пирокан', color:'#ff7030' },
+    { forClass:'light', label:'Люмос',   color:'#ffd040' },
+    { forClass:'water', label:'Аквас',   color:'#40d0ff' },
+  ];
+  staffTypes.forEach(function(st) {
+    var iconSrc = itemIcon('weapon', maxR, st.forClass);
+    html += '<div class="loot-row"><img src="' + iconSrc + '" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
+    html += '<span style="flex:1;color:#ddd;">Посох <span style="font-size:9px;color:' + st.color + ';border:1px solid ' + st.color + ';padding:1px 4px;border-radius:3px;">' + st.label + '</span></span>';
+    html += '<span class="loot-rarity-badge" style="color:' + minCol + ';border-color:' + minCol + ';margin-right:8px;">' + rarityNames[minR] +
+      (minR !== maxR ? '<span style="color:#556;">–</span><span style="color:' + maxCol + ';">' + rarityNames[maxR] + '</span>' : '') + '</span>';
+    html += '<span style="color:#f5c542;font-weight:bold;min-width:48px;text-align:right;">~' + staffChanceEach + '%</span></div>';
+  });
 
   // PIXR
+  html += '<div style="font-size:10px;color:#aaa;margin:8px 0 4px;border-bottom:1px solid #2a2a5a;padding-bottom:4px;">💰 Валюта</div>';
   html += '<div class="loot-row"><img src="images/pixr.png" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0">';
   html += '<span style="flex:1;color:#ff44cc;">PIXR монетка</span>';
   html += '<span class="loot-rarity-badge" style="color:#ff44cc;border-color:#ff44cc;margin-right:8px;">Валюта</span>';
-  html += '<span style="color:#f5c542;font-weight:bold;min-width:38px;text-align:right;">' + pixrChance + '%</span></div>';
+  html += '<span style="color:#f5c542;font-weight:bold;min-width:48px;text-align:right;">' + pixrChance + '%</span></div>';
 
-  // Книги по классам
+  // Книги навыков
+  html += '<div style="font-size:10px;color:#aaa;margin:8px 0 4px;border-bottom:1px solid #2a2a5a;padding-bottom:4px;">📖 Книги навыков <span style="color:#556;font-size:9px;">(случайный навык класса)</span></div>';
   var bookClasses = [
     { id:'fire',  label:'Пирокан', color:'#ff7030', skills:'Огн. шар, Проклятие, Ярость' },
     { id:'light', label:'Люмос',   color:'#ffd040', skills:'Кара света, Щит света, Отражение' },
     { id:'water', label:'Аквас',   color:'#40d0ff', skills:'Тройной удар, Концентрация, Заморозка' },
   ];
+  var bookChanceEach = (parseFloat(realBookChance) / 3).toFixed(4);
   bookClasses.forEach(function(bc) {
     html += '<div class="loot-row"><span style="font-size:20px;margin-right:8px;">📖</span>';
-    html += '<span style="flex:1;color:#b88cf8;">Книга навыка <span style="font-size:9px;color:' + bc.color + ';border:1px solid ' + bc.color + ';padding:1px 4px;border-radius:3px;">' + bc.label + '</span>';
+    html += '<span style="flex:1;color:#b88cf8;">Книга <span style="font-size:9px;color:' + bc.color + ';border:1px solid ' + bc.color + ';padding:1px 4px;border-radius:3px;">' + bc.label + '</span>';
     html += ' <span style="font-size:9px;color:#556;">(' + bc.skills + ')</span></span>';
     html += '<span class="loot-rarity-badge" style="color:#9b59b6;border-color:#9b59b6;margin-right:8px;">Эпический</span>';
-    html += '<span style="color:#f5c542;font-weight:bold;min-width:38px;text-align:right;">' + realBookChance + '%</span></div>';
+    html += '<span style="color:#f5c542;font-weight:bold;min-width:48px;text-align:right;">~' + bookChanceEach + '%</span></div>';
   });
 
   html += '<div style="margin-top:10px;font-size:9px;color:#445;text-align:center;">% — шанс выпадения за каждое убийство</div>';
