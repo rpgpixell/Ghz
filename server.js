@@ -535,7 +535,7 @@ app.post('/api/save', async (req, res) => {
       if (resetAt > clientUpdatedAt) {
         console.log(`🛑 [save] Блок после сброса для ${tg.id}: resetAt=${resetAt} > clientAt=${clientUpdatedAt}`);
         // Принудительно шлём reload через SSE и блокируем save
-        notifyClient(tg.id, 'reload', { reason: 'progress_reset' });
+        notifyClient(tg.id, 'force_close', { reason: 'progress_reset' });
         return res.json({ ok: false, error: 'reset_detected', updatedAt: serverUpdatedAt, resetAt });
       }
 
@@ -1995,7 +1995,7 @@ app.post('/admin/api/user/:tgId/reset', requireAdmin, async (req, res) => {
     console.log(`🔄 [admin] Прогресс сброшен для ${tgId} (рефералы сохранены, награды сброшены)`);
     await logAdminAction(req.admin.login, 'reset_progress', tgId, { preserved: ['refBy'], cleared: ['refMilestones_values', 'refClaimVer'] });
 
-    notifyClient(tgId, 'reload', { reason: 'progress_reset' });
+    notifyClient(tgId, 'force_close', { reason: 'progress_reset' });
 
     res.json({ ok: true });
   } catch (e) {
@@ -2040,6 +2040,7 @@ app.post('/admin/api/reset-all', requireAdmin, async (req, res) => {
           }
         }
       });
+      notifyClient(user.tgId, 'force_close', { reason: 'progress_reset' });
       processed++;
     }
 

@@ -400,40 +400,18 @@ G.equipped = {
         if (typeof startGame === 'function') startGame();
       }
     }
-    // После восстановления соединения — сначала проверяем сервер,
-    // только потом сохраняем (защита от перезаписи после сброса)
+    // После восстановления — сохраняем только если serverConfirmed не был сброшен
     if (SYNC.started && SYNC.serverConfirmed) {
-      fetch(API + '/api/load', {
+      var snap = serializeState();
+      snap.updatedAt = Date.now();
+      fetch(API + '/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT }),
+        body: JSON.stringify({ initData: TG_INIT, data: snap }),
       })
       .then(function(r) { return r.json(); })
       .then(function(r) {
-        if (!r || !r.ok) return;
-        var srv = r.save;
-        if (!srv || !srv.data) return;
-        // Если на сервере _resetAt свежее нашего updatedAt — применяем серверные данные
-        var serverResetAt = (srv.data._resetAt) || 0;
-        var clientTs = SYNC.lastServerTs || 0;
-        if (serverResetAt > clientTs) {
-          console.warn('🛑 [conn] Обнаружен сброс, применяем серверные данные');
-          SYNC.serverConfirmed = false;
-          if (typeof window.forceReload === 'function') {
-            window.forceReload();
-          } else {
-            location.reload();
-          }
-          return;
-        }
-        // Всё ок — сохраняем
-        var snap = serializeState();
-        snap.updatedAt = Date.now();
-        fetch(API + '/api/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ initData: TG_INIT, data: snap }),
-        }).catch(function() {});
+        if (r && r.error === 'reset_detected') forceCloseApp();
       })
       .catch(function() {});
     }
@@ -474,16 +452,8 @@ G.equipped = {
         _onConnRestored();
         if (r.updatedAt) SYNC.lastServerTs = r.updatedAt;
       } else if (r && r.error === 'reset_detected') {
-        // Сервер заблокировал save — на сервере был сброс прогресса
-        console.warn('🛑 [instant] reset_detected — перезагружаем данные с сервера');
-        SYNC.serverConfirmed = false;
-        if (typeof window.forceReload === 'function') {
-          window.forceReload().then(function(ok) {
-            if (!ok) location.reload();
-          });
-        } else {
-          location.reload();
-        }
+        console.warn('🛑 [instant] reset_detected — закрываем приложение');
+        forceCloseApp();
       }
       return r;
     })
@@ -566,15 +536,8 @@ G.equipped = {
             SYNC.lastPixr = G.pixr;
           }
         } else if (r && r.error === 'reset_detected') {
-          console.warn('🛑 [batch] reset_detected — перезагружаем данные с сервера');
-          SYNC.serverConfirmed = false;
-          if (typeof window.forceReload === 'function') {
-            window.forceReload().then(function(ok) {
-              if (!ok) location.reload();
-            });
-          } else {
-            location.reload();
-          }
+          console.warn('🛑 [batch] reset_detected — закрываем приложение');
+          forceCloseApp();
         } else if (r && r.error === 'rate_limit') {
           SYNC.rlBackoffUntil = Date.now() + 6000;
           console.warn('⚠️ [save] rate limit, пауза 6s');
@@ -670,9 +633,12 @@ function saveInstant(data) {
       if (response.ok && response.notifications && response.notifications.length > 0) {
         console.log('📨 [Poll] Получено ' + response.notifications.length + ' уведомлений');
         response.notifications.forEach(function(notification) {
-          if (notification.event === 'reload') {
+          if (notification.event === 'force_close') {
+            console.warn('🚪 [Poll] Команда закрытия от сервера — сброс прогресса');
+            forceCloseApp();
+            return;
+          } else if (notification.event === 'reload') {
             console.log('🔄 [Poll] Обновление данных с сервера...');
-            // ✅ Один forceReload — применяет всё актуальное состояние
             if (typeof window.forceReload === 'function') {
               window.forceReload().then(function(success) {
                 if (success) {
@@ -716,6 +682,37 @@ function saveInstant(data) {
   // ═══════════════════════════════
   //  ПРИНУДИТЕЛЬНАЯ ПЕРЕЗАГРУЗКА
   // ═══════════════════════════════
+
+  // Закрыть приложение принудительно (после сброса прогресса админом)
+  function forceCloseApp() {
+    console.warn('🚪 [forceClose] Закрываем приложение по команде сервера');
+    // Останавливаем все сохранения
+    SYNC.serverConfirmed = false;
+    SYNC.started = false;
+    if (typeof window.gameActive !== 'undefined') window.gameActive = false;
+    if (typeof window._loopRunning !== 'undefined') window._loopRunning = false;
+    // Закрываем через Telegram WebApp API
+    try {
+      if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.close === 'function') {
+        window.Telegram.WebApp.close();
+        return;
+      }
+    } catch (e) {}
+    // Фолбэк — показываем экран с сообщением
+    var ls = document.getElementById('loadingScreen');
+    if (ls) {
+      ls.style.display = '';
+      ls.style.pointerEvents = 'all';
+      ls.classList.remove('fade-out', 'hidden-done');
+      var statusEl = document.getElementById('lsStatus');
+      if (statusEl) {
+        statusEl.innerHTML = '<span style="color:#f5c542;font-size:13px;">⚠️ Прогресс был сброшен администратором</span>' +
+          '<br><span style="font-size:11px;color:#888;margin-top:6px;display:block;">Перезапустите игру</span>';
+      }
+      var barFill = document.getElementById('lsBar');
+      if (barFill) barFill.style.width = '0%';
+    }
+  }
 
   window.forceReload = function() {
     console.log('🔄 [forceReload] Запрос обновления данных...');
