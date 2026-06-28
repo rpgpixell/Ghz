@@ -333,7 +333,11 @@ function doRefineItem(itemId, useBless) {
     showRefineResult(false, item, false, cost, 0, 'normal', oreBack, oreKey);
   }
   updateHUD();
-  if (typeof saveNow === 'function') saveNow();
+  // Сохраняем инвентарь немедленно — важно чтобы заточка попала на сервер до возможной продажи
+  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    window.GameSync.saveInstant({ inventory: inv, gold: G.gold, ore: G.ore, blessStones: G.blessStones });
+  }
 }
 
 // ── Оверлей результата заточки ──
@@ -894,8 +898,8 @@ function openOreSellModal(oreId) {
       '</div>' +
 
       '<div style="margin-bottom:14px;">' +
-        '<label style="font-size:10px;color:#556;display:block;margin-bottom:4px;">ЦЕНА ЗА ШТУКУ (PIXR)</label>' +
-        '<input id="oreSellPrice" type="number" min="1" placeholder="Цена за 1 шт." ' +
+        '<label style="font-size:10px;color:#556;display:block;margin-bottom:4px;">ЦЕНА ЗА ВЕСЬ ЛОТ (PIXR)</label>' +
+        '<input id="oreSellPrice" type="number" min="1" placeholder="Общая цена лота" ' +
           'style="width:100%;box-sizing:border-box;background:#0d0d22;border:1.5px solid #2a2a5a;border-radius:6px;color:#ccd;font-size:15px;text-align:center;padding:8px;font-family:inherit;" ' +
           'oninput="_oreUpdateNote()">' +
       '</div>' +
@@ -931,13 +935,13 @@ function _oreQtySet(v) {
 
 function _oreUpdateNote() {
   var qty   = parseInt(document.getElementById('oreSellQty').value) || 0;
-  var price = parseInt(document.getElementById('oreSellPrice').value) || 0;
+  var total = parseInt(document.getElementById('oreSellPrice').value) || 0;
   var note  = document.getElementById('oreSellNote');
   if (!note) return;
-  if (qty > 0 && price > 0) {
-    var total = qty * price;
-    var earn  = Math.floor(total * 0.9);
-    note.innerHTML = 'Итого: <strong style="color:#ff44cc;">' + total + ' PIXR</strong>' +
+  if (qty > 0 && total > 0) {
+    var perUnit = (total / qty).toFixed(1);
+    var earn    = Math.floor(total * 0.9);
+    note.innerHTML = 'За штуку: <strong style="color:#aaa;">' + perUnit + ' PIXR</strong>' +
       ' · Вы получите: <strong style="color:#2ecc71;">' + earn + ' PIXR</strong> (−10% комиссия)';
   } else {
     note.textContent = 'Итого: —';
@@ -945,13 +949,13 @@ function _oreUpdateNote() {
 }
 
 function confirmOreSell(oreId) {
-  var qty   = parseInt(document.getElementById('oreSellQty').value);
-  var price = parseInt(document.getElementById('oreSellPrice').value);
-  var max   = G.ore[oreId] || 0;
+  var qty        = parseInt(document.getElementById('oreSellQty').value);
+  var totalPrice = parseInt(document.getElementById('oreSellPrice').value);
+  var max        = G.ore[oreId] || 0;
 
-  if (!qty || qty < 1)        { _taskToast('❌ Укажи количество'); return; }
-  if (!price || price < 1)    { _taskToast('❌ Укажи цену'); return; }
-  if (qty > max)              { _taskToast('❌ Недостаточно руды'); return; }
+  if (!qty || qty < 1)             { _taskToast('❌ Укажи количество'); return; }
+  if (!totalPrice || totalPrice < 1) { _taskToast('❌ Укажи цену'); return; }
+  if (qty > max)                   { _taskToast('❌ Недостаточно руды'); return; }
 
   var API  = window.GameSync._API;
   var init = window.GameSync._INIT;
@@ -959,7 +963,7 @@ function confirmOreSell(oreId) {
   fetch(API + '/api/market/sell-ore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initData: init, oreId: oreId, qty: qty, price: price })
+    body: JSON.stringify({ initData: init, oreId: oreId, qty: qty, price: totalPrice })
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
@@ -968,7 +972,7 @@ function confirmOreSell(oreId) {
       document.getElementById('oreSellModal').remove();
       renderInventory();
       _taskToast('✅ Руда выставлена на маркет!');
-      if (typeof saveNow === 'function') saveNow();
+      // ore уже атомарно списана на сервере — saveInstant не нужен
     } else {
       var msgs = {
         max_lots:    '❌ Максимум 3 активных лота',

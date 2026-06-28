@@ -2019,14 +2019,17 @@ function renderMarketListings(listings, isMy) {
     var item   = lst.item || {};
     var r      = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888', name: '—' };
     var isBook = item.isSkillBook;
+    var isOre  = !!item.isOre;
     var iconHtml = isBook
       ? '<span style="font-size:22px;line-height:1;">📖</span>'
       : '<img src="' + (item.icon || '') + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'">';
 
     // Строка 1: Название + refine + Lv.X бейдж
-    var lvBadge = (!isBook && item.level)
-      ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">Lv.' + item.level + '</span>'
-      : (isBook && item.level ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">Lv.' + item.level + '</span>' : '');
+    var lvBadge = isOre
+      ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">×' + (item.qty || 1) + ' шт.</span>'
+      : (!isBook && item.level)
+        ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">Lv.' + item.level + '</span>'
+        : (isBook && item.level ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);border:1px solid #444;color:#bbb;vertical-align:middle;">Lv.' + item.level + '</span>' : '');
     var nameHtml = '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:3px;">' +
       '<span style="font-size:13px;font-weight:bold;color:' + r.color + ';">' +
         (item.name || '—') +
