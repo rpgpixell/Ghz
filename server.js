@@ -2234,7 +2234,7 @@ app.post('/api/market/claim', async (req, res) => {
     );
     if (!updated) return res.status(404).json({ ok: false, error: 'user_not_found' });
 
-    console.log(\`✅ [market/claim] \${tg.id} забрал \${earned} PIXR за лот \${listingId}\`);
+    console.log(`✅ [market/claim] ${tg.id} забрал ${earned} PIXR за лот ${listingId}`);
     res.json({ ok: true, earned, pixr: updated.data.pixr });
   } catch (e) {
     console.error('❌ [market/claim] error:', e.message);
