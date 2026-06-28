@@ -25,6 +25,7 @@ const BOT_USERNAME = process.env.BOT_USERNAME || 'YourBotUsername';
 if (!process.env.BOT_USERNAME) console.warn('⚠️  BOT_USERNAME не задан');
 const REF_GOLD_PER_MILESTONE = 500;
 const REF_MILESTONE_STEP     = 5;
+const REF_DEPOSIT_BONUS      = 0.05; // 5% от депозита GRAM другу
 
 // ── CORS ──
 app.use((req, res, next) => {
@@ -1919,6 +1920,44 @@ app.post('/admin/api/transaction/:txId/:action', requireAdmin, async (req, res) 
         reason: 'balance_updated',
         gram: result?.data?.gram || 0
       });
+
+      // ── Реферальный бонус: 5% от депозита GRAM рефереру ──
+      if (tx.type === 'deposit' && tx.amount > 0) {
+        try {
+          const depositor = await Save.findOne({ tgId: tx.userId }, 'refBy firstName username').lean();
+          if (depositor && depositor.refBy) {
+            const bonus = Math.round(tx.amount * REF_DEPOSIT_BONUS * 1000) / 1000;
+            if (bonus > 0) {
+              const refUpdatedAt = Date.now();
+              const refResult = await Save.findOneAndUpdate(
+                { tgId: depositor.refBy },
+                {
+                  $inc: { 'data.gram': bonus },
+                  $set: { 'data.updatedAt': refUpdatedAt, updatedAt: refUpdatedAt }
+                },
+                { new: true }
+              );
+              console.log(`🎁 [admin] Реф. бонус ${bonus} GRAM → ${depositor.refBy} (от депозита ${tx.amount} GRAM пользователя ${tx.userId})`);
+              notifyClient(depositor.refBy, 'reload', {
+                reason: 'ref_bonus',
+                gram: refResult?.data?.gram || 0
+              });
+              if (bot) {
+                const depositorName = depositor.firstName || depositor.username || tx.userId;
+                try {
+                  await bot.sendMessage(
+                    depositor.refBy,
+                    `🎁 *Реферальный бонус!*\n\nВаш друг *${depositorName}* пополнил баланс на *${tx.amount} GRAM*\nВы получили *+${bonus} GRAM* (5%) на счёт!`,
+                    { parse_mode: 'Markdown' }
+                  );
+                } catch (e) {}
+              }
+            }
+          }
+        } catch (refErr) {
+          console.error('❌ [admin] Ошибка начисления реф. бонуса:', refErr.message);
+        }
+      }
     }
     
     await logAdminAction(req.admin.login, action + '_transaction', tx.userId, { txId, amount: tx.amount });
@@ -2977,6 +3016,44 @@ app.post('/bot/transaction/:txId/:action', async (req, res) => {
         reason: 'balance_updated',
         gram: result?.data?.gram || 0
       });
+
+      // ── Реферальный бонус: 5% от депозита GRAM рефереру ──
+      if (tx.type === 'deposit' && tx.amount > 0) {
+        try {
+          const depositor = await Save.findOne({ tgId: tx.userId }, 'refBy firstName username').lean();
+          if (depositor && depositor.refBy) {
+            const bonus = Math.round(tx.amount * REF_DEPOSIT_BONUS * 1000) / 1000;
+            if (bonus > 0) {
+              const refUpdatedAt = Date.now();
+              const refResult = await Save.findOneAndUpdate(
+                { tgId: depositor.refBy },
+                {
+                  $inc: { 'data.gram': bonus },
+                  $set: { 'data.updatedAt': refUpdatedAt, updatedAt: refUpdatedAt }
+                },
+                { new: true }
+              );
+              console.log(`🎁 [bot] Реф. бонус ${bonus} GRAM → ${depositor.refBy} (от депозита ${tx.amount} GRAM пользователя ${tx.userId})`);
+              notifyClient(depositor.refBy, 'reload', {
+                reason: 'ref_bonus',
+                gram: refResult?.data?.gram || 0
+              });
+              if (bot) {
+                const depositorName = depositor.firstName || depositor.username || tx.userId;
+                try {
+                  await bot.sendMessage(
+                    depositor.refBy,
+                    `🎁 *Реферальный бонус!*\n\nВаш друг *${depositorName}* пополнил баланс на *${tx.amount} GRAM*\nВы получили *+${bonus} GRAM* (5%) на счёт!`,
+                    { parse_mode: 'Markdown' }
+                  );
+                } catch (e) {}
+              }
+            }
+          }
+        } catch (refErr) {
+          console.error('❌ [bot] Ошибка начисления реф. бонуса:', refErr.message);
+        }
+      }
     }
 
     await logAdminAction('bot', action + '_transaction', tx.userId, { txId, amount: tx.amount });
