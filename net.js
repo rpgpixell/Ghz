@@ -30,6 +30,7 @@
   ];
 
   var TG_INIT = '';
+var START_PARAM = ''; // ✅ ЭТО ДОБАВИТЬ
   var SYNC = {
     booted: false,
     started: false,
@@ -51,6 +52,12 @@
     lastFloor: 0,
     lastPixr: 0,
   };
+  
+  // ✅ Добавить ПОСЛЕ SYNC
+var AUTH = {
+  authorized: false,
+  error: null
+};
 
   function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
   function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
@@ -148,6 +155,9 @@
       boss:                clone(G.boss || { floor: 1, lastFightTime: 0 }),
       marketUnlocked:      G.marketUnlocked || false,
       arenaRating:         G.arenaRating || 1000,
+      ore:                 Object.assign({ core:0, uore:0, rore:0, eore:0, lore:0 }, G.ore || {}),
+      blessStones:         G.blessStones || 0,
+      runes:               Object.assign({ crune:0, urune:0, rrune:0, erune:0, lrune:0 }, G.runes || {}),
       pvpAttempts:         G.pvpAttempts || 0,
       pvpAttemptsDate:     G.pvpAttemptsDate || '',
       pvpRefreshes:        G.pvpRefreshes || 0,
@@ -243,6 +253,9 @@
     if (!G.boss.floor) G.boss.floor = 1;
     G.marketUnlocked = d.marketUnlocked || false;
     G.arenaRating    = typeof d.arenaRating === 'number' ? d.arenaRating : 1000;
+    G.ore            = Object.assign({ core:0, uore:0, rore:0, eore:0, lore:0 }, d.ore || {});
+    G.blessStones    = d.blessStones || 0;
+    G.runes          = Object.assign({ crune:0, urune:0, rrune:0, erune:0, lrune:0 }, d.runes || {});
     G.pvpAttempts    = d.pvpAttempts    || 0;
     G.pvpAttemptsDate = d.pvpAttemptsDate || '';
     G.pvpRefreshes   = d.pvpRefreshes   || 0;
@@ -708,13 +721,25 @@ function saveInstant(data) {
     try {
       START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
     } catch (e) { START_PARAM = ''; }
+    
+    // Проверяем, есть ли initData
+    if (!TG_INIT) {
+      AUTH.authorized = false;
+      AUTH.error = 'Нет данных авторизации (initData)';
+      console.warn('⚠️ [initTelegram] Нет initData');
+    } else {
+      AUTH.authorized = true;
+    }
+  } else {
+    AUTH.authorized = false;
+    AUTH.error = 'Игра запущена не через Telegram WebApp';
+    console.warn('⚠️ [initTelegram] Telegram.WebApp не найден');
   }
   
-  // ✅ ИСПРАВЛЕНО: ищем ВСЕ возможные параметры
+  // Если есть стартовый параметр из URL
   if (!START_PARAM) {
     try {
       var urlParams = new URLSearchParams(window.location.search);
-      // Проверяем все варианты
       var start = urlParams.get('start');
       var startapp = urlParams.get('startapp');
       var ref = urlParams.get('ref');
@@ -727,7 +752,7 @@ function saveInstant(data) {
     } catch (e) {}
   }
   
-  SYNC.online = !!TG_INIT;
+  SYNC.online = AUTH.authorized && !!TG_INIT;
   
   var tgId = getTgId();
   if (tgId) {
@@ -735,7 +760,6 @@ function saveInstant(data) {
   }
   console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online, 'startParam:', START_PARAM || 'none');
 }
-
   // ═══════════════════════════════
 //  БУТ — с задержкой
 // ═══════════════════════════════
@@ -745,10 +769,44 @@ function boot() {
   lsSetStatus('Подключение', 10);
   initTelegram();
 
+  // ✅ НОВОЕ: проверка авторизации
+  if (!AUTH.authorized) {
+    console.warn('⚠️ [boot] Нет авторизации в Telegram:', AUTH.error);
+    lsSetStatus('❌ ' + AUTH.error, 100);
+    
+    // Показываем кнопку "Открыть в Telegram"
+    var barWrap = document.querySelector('.ls-bar-wrap');
+    if (barWrap && !document.querySelector('.ls-telegram-btn')) {
+      var btn = document.createElement('button');
+      btn.className = 'ls-telegram-btn';
+      btn.innerHTML = '📱 ОТКРЫТЬ В TELEGRAM';
+      btn.style.cssText = 'margin-top:12px;padding:10px 24px;background:linear-gradient(90deg,#1a3a6a,#2a6aaa);border:2px solid #4a8aff;border-radius:10px;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;font-family:"Courier New",monospace;letter-spacing:1px;';
+      btn.onclick = function() {
+        // Пытаемся открыть через Telegram Deep Link
+        var botUsername = window.BOT_USERNAME || 'pixel_rpg_bot';
+        var link = 'https://t.me/' + botUsername + '?start=' + (START_PARAM || '');
+        window.open(link, '_blank');
+      };
+      barWrap.parentNode.insertBefore(btn, barWrap.nextSibling);
+      
+      // Убираем анимацию прогресса
+      var barFill = document.getElementById('lsBar');
+      if (barFill) barFill.style.width = '100%';
+    }
+    
+    // Показываем выбор персонажа всё равно (но кнопка будет заблокирована)
+    // или скрываем экран загрузки
+    setTimeout(function() {
+      lsHide();
+    }, 3000);
+    return;
+  }
+
+  // ✅ Если авторизация есть — продолжаем как обычно
   function _bootFinalize() {
     try {
       startSyncLoops();
-SYNC.booted = true;
+      SYNC.booted = true;
       if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
         serverSaveBatch();
       }
@@ -760,7 +818,7 @@ SYNC.booted = true;
 
   lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 30);
 
-  // Анимируем прогресс пока ждём ответ сервера
+  // Анимируем прогресс
   var _pct = 30;
   var _progressTimer = SYNC.online ? setInterval(function () {
     if (_pct < 85) { _pct += 1; lsSetStatus('Загрузка с сервера', _pct); }
@@ -807,7 +865,7 @@ SYNC.booted = true;
       // Новый пользователь — персонаж не выбран
       _bootFinalize();
     } else {
-      // charId есть, но не найден в CHARS (неизвестный)
+      // charId есть, но не найден в CHARS
       _bootFinalize();
     }
   }).catch(function (err) {

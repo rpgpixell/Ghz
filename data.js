@@ -468,3 +468,124 @@ function goldCoinSvg(size) {
   size = size || 14;
   return `<svg width="${size}" height="${size}" viewBox="0 0 10 10" fill="none" style="image-rendering:pixelated;vertical-align:middle;flex-shrink:0"><rect x="2" y="0" width="6" height="2" fill="#f5c542"/><rect x="0" y="2" width="10" height="6" fill="#f5c542"/><rect x="2" y="8" width="6" height="2" fill="#f5c542"/><rect x="3" y="2" width="4" height="6" fill="#c8a000"/><rect x="4" y="3" width="2" height="4" fill="#f5c542"/></svg>`;
 }
+// ═══════════════════════════════
+//  РУДА (Материалы для крафта)
+// ═══════════════════════════════
+const ORE_TYPES = [
+  { id: 'core',  name: 'Руда',        rarity: 'common',   icon: 'images/core.png', color: '#888'    },
+  { id: 'uore',  name: 'Ред. руда',   rarity: 'uncommon', icon: 'images/uore.png', color: '#2ecc71' },
+  { id: 'rore',  name: 'Редк. руда',  rarity: 'rare',     icon: 'images/rore.png', color: '#3498db' },
+  { id: 'eore',  name: 'Эпич. руда',  rarity: 'epic',     icon: 'images/eore.png', color: '#9b59b6' },
+  { id: 'lore',  name: 'Леген. руда', rarity: 'legend',   icon: 'images/lore.png', color: '#f5c542' },
+];
+
+// Шансы дропа руды по этажам (%), отдельный бросок, 1-3 шт
+const ORE_DROP_TABLE = {
+  1:  { core: 2,   uore: 0,   rore: 0,   eore: 0,   lore: 0   },
+  2:  { core: 3,   uore: 1.5, rore: 0,   eore: 0,   lore: 0   },
+  3:  { core: 4,   uore: 2.5, rore: 0,   eore: 0,   lore: 0   },
+  4:  { core: 4,   uore: 3,   rore: 1,   eore: 0,   lore: 0   },
+  5:  { core: 4,   uore: 3.5, rore: 2,   eore: 0,   lore: 0   },
+  6:  { core: 4,   uore: 4,   rore: 2.5, eore: 0.5, lore: 0   },
+  7:  { core: 4,   uore: 4,   rore: 3,   eore: 1,   lore: 0   },
+  8:  { core: 4,   uore: 4,   rore: 3.5, eore: 1.5, lore: 0.2 },
+  9:  { core: 4,   uore: 4,   rore: 4,   eore: 2,   lore: 0.4 },
+  10: { core: 4,   uore: 4,   rore: 4,   eore: 2.5, lore: 0.6 },
+};
+
+// ═══════════════════════════════
+//  ТИПЫ РУН
+// ═══════════════════════════════
+const RUNE_TYPES = [
+  { id: 'crune', name: 'Обычная руна',    rarity: 'common',   icon: 'images/crune.png', color: '#888888',
+    stats: { atk: [1, 10] } },
+  { id: 'urune', name: 'Необычная руна',  rarity: 'uncommon', icon: 'images/urune.png', color: '#2ecc71',
+    stats: { atk: [5, 20] } },
+  { id: 'rrune', name: 'Редкая руна',     rarity: 'rare',     icon: 'images/rrune.png', color: '#3498db',
+    stats: { atk: [10, 30], def: [10, 30] } },
+  { id: 'erune', name: 'Эпическая руна',  rarity: 'epic',     icon: 'images/erune.png', color: '#9b59b6',
+    stats: { atk: [30, 50], def: [30, 50], hp: [100, 300] } },
+  { id: 'lrune', name: 'Легендарная руна',rarity: 'legend',   icon: 'images/lrune.png', color: '#f5c542',
+    stats: { atk: [50, 100], def: [50, 100], hp: [300, 1000] } },
+];
+
+// Стоимость вставки руны по редкости предмета (PIXR)
+const RUNE_INSERT_COST = {
+  common: 1, uncommon: 10, rare: 50, epic: 300, legend: 1000
+};
+
+// ═══════════════════════════════
+//  РЕЦЕПТЫ КРАФТА
+// ═══════════════════════════════
+const CRAFT_RECIPES = [
+  {
+    id: 'bless_stone',
+    name: 'Камень заточки',
+    desc: 'Защищает предмет от разрушения при провале заточки',
+    icon: 'images/bless.png',
+    result: { type: 'bless_stone', qty: 1 },
+    cost: [
+      { oreId: 'core', qty: 100 },
+      { oreId: 'uore', qty: 100 },
+    ],
+    pixrCost: 50,
+    chance: 100,
+  },
+  {
+    id: 'crune',
+    name: 'Обычная руна',
+    desc: '+1-10 ATK при вставке в предмет',
+    icon: 'images/crune.png',
+    result: { type: 'rune', runeId: 'crune', qty: 1 },
+    cost: [ { oreId: 'core', qty: 100 } ],
+    pixrCost: 5,
+    chance: 70,
+  },
+  {
+    id: 'urune',
+    name: 'Необычная руна',
+    desc: '+5-20 ATK при вставке в предмет',
+    icon: 'images/urune.png',
+    result: { type: 'rune', runeId: 'urune', qty: 1 },
+    cost: [ { oreId: 'uore', qty: 100 }, { runeId: 'crune', qty: 5 } ],
+    pixrCost: 10,
+    chance: 70,
+  },
+  {
+    id: 'rrune',
+    name: 'Редкая руна',
+    desc: '+10-30 ATK, +10-30 DEF при вставке',
+    icon: 'images/rrune.png',
+    result: { type: 'rune', runeId: 'rrune', qty: 1 },
+    cost: [ { oreId: 'rore', qty: 100 }, { runeId: 'urune', qty: 5 } ],
+    pixrCost: 20,
+    chance: 70,
+  },
+  {
+    id: 'erune',
+    name: 'Эпическая руна',
+    desc: '+30-50 ATK, +30-50 DEF, +100-300 HP',
+    icon: 'images/erune.png',
+    result: { type: 'rune', runeId: 'erune', qty: 1 },
+    cost: [ { oreId: 'eore', qty: 100 }, { runeId: 'rrune', qty: 5 } ],
+    pixrCost: 40,
+    chance: 70,
+  },
+  {
+    id: 'lrune',
+    name: 'Легендарная руна',
+    desc: '+50-100 ATK, +50-100 DEF, +300-1000 HP',
+    icon: 'images/lrune.png',
+    result: { type: 'rune', runeId: 'lrune', qty: 1 },
+    cost: [ { oreId: 'lore', qty: 100 }, { runeId: 'erune', qty: 5 } ],
+    pixrCost: 80,
+    chance: 70,
+  },
+];
+
+// ═══════════════════════════════
+//  НОВЫЕ ШАНСЫ ЗАТОЧКИ (+1..+15)
+// ═══════════════════════════════
+var REFINE_CHANCES_V2 = [95, 85, 75, 65, 55, 45, 35, 25, 15, 5, 5, 5, 5, 5, 1];
+var REFINE_MAX_V2     = 15;
+var REFINE_GOLD_COST  = [100, 200, 400, 700, 1200, 2000, 3500, 6000, 10000, 20000, 20000, 20000, 20000, 20000, 50000];

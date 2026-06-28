@@ -271,6 +271,25 @@ function openFloorLoot(floorN) {
     html += '<span style="color:#f5c542;font-weight:bold;min-width:48px;text-align:right;">~' + bookChanceEach + '%</span></div>';
   });
 
+  // Руда
+  var oreTable = ORE_DROP_TABLE[f.n] || ORE_DROP_TABLE[10];
+  var oreRows = '';
+  ORE_TYPES.forEach(function(ore) {
+    var chance = oreTable[ore.id] || 0;
+    if (chance <= 0) return;
+    var r2 = RARITIES.find(function(x) { return x.id === ore.rarity; }) || { color: '#888', name: '—' };
+    oreRows += '<div class="loot-row">' +
+      '<img src="' + ore.icon + '" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;margin-right:8px;vertical-align:middle;" onerror="this.style.opacity=0.3">' +
+      '<span style="flex:1;color:' + r2.color + ';">' + ore.name + ' <span style="font-size:9px;color:#556;">1–3 шт.</span></span>' +
+      '<span class="loot-rarity-badge" style="color:' + r2.color + ';border-color:' + r2.color + ';margin-right:8px;">' + r2.name + '</span>' +
+      '<span style="color:#f5c542;font-weight:bold;min-width:48px;text-align:right;">' + chance + '%</span>' +
+    '</div>';
+  });
+  if (oreRows) {
+    html += '<div style="font-size:10px;color:#aaa;margin:8px 0 4px;border-bottom:1px solid #2a2a5a;padding-bottom:4px;">⛏ Руда <span style="color:#556;font-size:9px;">(отдельный бросок от шмота)</span></div>';
+    html += oreRows;
+  }
+
   html += '<div style="margin-top:10px;font-size:9px;color:#445;text-align:center;">% — шанс выпадения за каждое убийство</div>';
   html += '<button onclick="closeFloorLootModal()" style="width:100%;margin-top:12px;padding:10px;font-size:12px;font-family:Courier New,monospace;border-radius:8px;border:1.5px solid #2a2a5a;background:rgba(255,255,255,0.04);color:#778;cursor:pointer;">Закрыть</button>';
   document.getElementById('floorLootContent').innerHTML = html;
@@ -1131,9 +1150,13 @@ function switchTab(tab) {
     var btn = document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1));
     if (btn) btn.classList.toggle('active', t === tab);
   });
-  // pvp-hud-btn подсвечиваем отдельно
+  // pvp-hud-btn, craft-hud-btn, rune-hud-btn показываем только на игровом экране
   var pvpHud = document.getElementById('pvpHudBtn');
   if (pvpHud) pvpHud.style.display = (tab === 'game') ? 'flex' : 'none';
+  var craftHud = document.getElementById('craftHudBtn');
+  if (craftHud) craftHud.style.display = (tab === 'game' && !!G_CHAR) ? 'flex' : 'none';
+  var runeHud = document.getElementById('runeHudBtn');
+  if (runeHud) runeHud.style.display = (tab === 'game' && !!G_CHAR) ? 'flex' : 'none';
   document.getElementById('panelInv').classList.toggle('visible',      tab === 'inv');
   document.getElementById('panelUpgrades').classList.toggle('visible', tab === 'upgrades');
   document.getElementById('panelFloors').classList.toggle('visible',   tab === 'floors');
@@ -1143,6 +1166,10 @@ function switchTab(tab) {
   document.getElementById('panelPvp').classList.toggle('visible',      tab === 'pvp');
   var bossPanel = document.getElementById('panelBoss');
   if (bossPanel) bossPanel.classList.toggle('visible', tab === 'boss');
+  var craftPanel = document.getElementById('panelCraft');
+  if (craftPanel) craftPanel.classList.toggle('visible', tab === 'craft');
+  var runePanel = document.getElementById('panelRune');
+  if (runePanel) runePanel.classList.toggle('visible', tab === 'rune');
   var hudEl = document.getElementById('skillsHud');
   if (hudEl) hudEl.classList.toggle('visible', tab === 'game' && !!G_CHAR);
   var isGame = tab === 'game' && !!G_CHAR;
@@ -1165,6 +1192,8 @@ function switchTab(tab) {
   if (tab === 'friends')  renderFriends();
   if (tab === 'boss')     renderBossTab();
   if (tab === 'pvp')      renderPvpLobby();
+  if (tab === 'craft')    renderCraft();
+  if (tab === 'rune')     renderRune();
 }
 
 // ═══════════════════════════════
@@ -1363,6 +1392,12 @@ let _csIdleImgs      = {};
 let G_CHAR           = null;
 
 function selectChar(id) {
+  // ✅ Проверка на авторизацию
+  if (!window.GameSync || !window.GameSync.state || !window.GameSync.state.online) {
+    showFriendsToast('❌ Открой игру через Telegram!');
+    return;
+  }
+  
   _csSelected = id;
   ['fire','light','water'].forEach(function(c) {
     document.getElementById('card-' + c).classList.toggle('selected', c === id);
@@ -1373,6 +1408,12 @@ function selectChar(id) {
 }
 
 function confirmChar() {
+  // ✅ Проверка на авторизацию
+  if (!window.GameSync || !window.GameSync.state || !window.GameSync.state.online) {
+    showFriendsToast('❌ Открой игру через Telegram!');
+    return;
+  }
+  
   if (!_csSelected) return;
   Object.values(_csSpriteTimers).forEach(clearInterval);
   if (_csParticleTimer) cancelAnimationFrame(_csParticleTimer);
@@ -3419,3 +3460,353 @@ function _pvpRenderHistoryData(d, body) {
 
 
 
+
+// ═══════════════════════════════
+//  ВКЛАДКА КРАФТ
+// ═══════════════════════════════
+function renderCraft() {
+  var body = document.getElementById('craftBody');
+  if (!body) return;
+  if (!G.ore) G.ore = {};
+  if (!G.runes) G.runes = {};
+
+  // Секция руды
+  var oreHtml = '<div style="margin-bottom:16px;">' +
+    '<div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:8px;">МАТЕРИАЛЫ</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+  ORE_TYPES.forEach(function(ore) {
+    var qty = G.ore[ore.id] || 0;
+    var r = RARITIES.find(function(x) { return x.id === ore.rarity; }) || { color: '#888' };
+    oreHtml += '<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border:1px solid #1e1e3a;border-radius:8px;padding:6px 10px;">' +
+      '<img src="' + ore.icon + '" style="width:22px;height:22px;image-rendering:pixelated;" onerror="this.style.opacity=0.3">' +
+      '<div><div style="font-size:10px;color:' + r.color + ';">' + ore.name + '</div>' +
+      '<div style="font-size:13px;font-weight:700;color:#ccd;">×' + qty + '</div></div>' +
+    '</div>';
+  });
+  oreHtml += '</div></div>';
+
+  // Секция рун (в крафте)
+  var hasRunes = RUNE_TYPES.some(function(rt) { return (G.runes[rt.id] || 0) > 0; });
+  var runeHtml = '<div style="margin-bottom:16px;">' +
+    '<div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:8px;">РУНЫ</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+  if (hasRunes) {
+    RUNE_TYPES.forEach(function(rt) {
+      var qty = G.runes[rt.id] || 0;
+      if (qty <= 0) return;
+      var rc = RARITIES.find(function(x) { return x.id === rt.rarity; }) || { color: '#888' };
+      runeHtml += '<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border:1px solid ' + rc.color + '44;border-radius:8px;padding:6px 10px;">' +
+        '<img src="' + rt.icon + '" style="width:22px;height:22px;image-rendering:pixelated;" onerror="this.style.opacity=0.3">' +
+        '<div><div style="font-size:9px;color:' + rc.color + ';">' + rt.name + '</div>' +
+        '<div style="font-size:13px;font-weight:700;color:#ccd;">×' + qty + '</div></div>' +
+      '</div>';
+    });
+  } else {
+    runeHtml += '<div style="color:#334;font-size:11px;padding:6px 0;">Рун нет — скрафти!</div>';
+  }
+  runeHtml += '</div></div>';
+
+  // Камни безопасной заточки (счётчик)
+  var blessCount = G.blessStones || 0;
+  var blessHtml = '<div style="display:flex;align-items:center;gap:10px;background:rgba(46,204,113,0.05);border:1px solid rgba(46,204,113,0.2);border-radius:8px;padding:8px 12px;margin-bottom:16px;">' +
+    '<img src="images/bless.png" style="width:28px;height:28px;image-rendering:pixelated;" onerror="this.textContent=\'🛡\'">' +
+    '<div><div style="font-size:11px;color:#2ecc71;font-weight:700;">Камень безопасной заточки</div>' +
+    '<div style="font-size:10px;color:#556;">В наличии: <span style="color:#ccd;font-weight:700;">' + blessCount + ' шт.</span></div></div>' +
+  '</div>';
+
+  // Рецепты
+  var recipesHtml = '<div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:10px;">РЕЦЕПТЫ</div>';
+  CRAFT_RECIPES.forEach(function(recipe) {
+    var canCraft = true;
+    var costsHtml = '';
+    recipe.cost.forEach(function(c) {
+      // Руда
+      if (c.oreId) {
+        var have = G.ore[c.oreId] || 0;
+        var ore = ORE_TYPES.find(function(o) { return o.id === c.oreId; });
+        var r = ore ? (RARITIES.find(function(x) { return x.id === ore.rarity; }) || { color: '#888' }) : { color: '#888' };
+        var ok = have >= c.qty;
+        if (!ok) canCraft = false;
+        costsHtml += '<div style="display:flex;align-items:center;gap:4px;font-size:11px;">' +
+          '<img src="' + (ore ? ore.icon : '') + '" style="width:16px;height:16px;image-rendering:pixelated;" onerror="this.style.opacity=0">' +
+          '<span style="color:' + r.color + ';">' + (ore ? ore.name : c.oreId) + '</span>' +
+          '<span style="color:' + (ok ? '#2ecc71' : '#e74c3c') + ';margin-left:2px;">' + have + '/' + c.qty + '</span>' +
+        '</div>';
+      }
+      // Руны как ресурс
+      if (c.runeId) {
+        var haveR = G.runes[c.runeId] || 0;
+        var rt = RUNE_TYPES.find(function(r) { return r.id === c.runeId; });
+        var rtc = rt ? (RARITIES.find(function(x) { return x.id === rt.rarity; }) || { color: '#888' }) : { color: '#888' };
+        var okR = haveR >= c.qty;
+        if (!okR) canCraft = false;
+        costsHtml += '<div style="display:flex;align-items:center;gap:4px;font-size:11px;">' +
+          '<img src="' + (rt ? rt.icon : '') + '" style="width:16px;height:16px;image-rendering:pixelated;" onerror="this.style.opacity=0">' +
+          '<span style="color:' + rtc.color + ';">' + (rt ? rt.name : c.runeId) + '</span>' +
+          '<span style="color:' + (okR ? '#2ecc71' : '#e74c3c') + ';margin-left:2px;">' + haveR + '/' + c.qty + '</span>' +
+        '</div>';
+      }
+    });
+    if (recipe.pixrCost) {
+      var hp = G.pixr || 0;
+      var okp = hp >= recipe.pixrCost;
+      if (!okp) canCraft = false;
+      costsHtml += '<div style="display:flex;align-items:center;gap:4px;font-size:11px;">' +
+        '<img src="pixr.png" style="width:16px;height:16px;image-rendering:pixelated;" onerror="this.style.opacity=0">' +
+        '<span style="color:#ff44cc;">PIXR</span>' +
+        '<span style="color:' + (okp ? '#2ecc71' : '#e74c3c') + ';margin-left:2px;">' + hp + '/' + recipe.pixrCost + '</span>' +
+      '</div>';
+    }
+    var chanceStr = (recipe.chance && recipe.chance < 100) ? ' · <span style="color:#f5c542;font-size:9px;">⚡ ' + recipe.chance + '% шанс</span>' : '';
+    var borderCol = canCraft ? '#2ecc71' : '#1e1e3a';
+    var bgCol     = canCraft ? 'rgba(46,204,113,0.06)' : 'rgba(255,255,255,0.02)';
+    recipesHtml +=
+      '<div style="background:' + bgCol + ';border:1px solid ' + borderCol + ';border-radius:10px;padding:12px;margin-bottom:10px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
+          '<img src="' + recipe.icon + '" style="width:36px;height:36px;image-rendering:pixelated;" onerror="this.replaceWith(document.createTextNode(\'🛡\'))">' +
+          '<div style="flex:1;"><div style="font-size:13px;font-weight:700;color:#ccd;">' + recipe.name + chanceStr + '</div>' +
+          '<div style="font-size:10px;color:#556;margin-top:2px;">' + recipe.desc + '</div></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;">' + costsHtml + '</div>' +
+        '<button onclick="doCraft(\'' + recipe.id + '\')" ' + (canCraft ? '' : 'disabled ') +
+          'style="width:100%;padding:10px;border-radius:8px;font-family:inherit;font-size:12px;font-weight:700;' +
+          'cursor:' + (canCraft ? 'pointer' : 'not-allowed') + ';' +
+          'background:' + (canCraft ? 'rgba(46,204,113,0.15)' : 'rgba(255,255,255,0.03)') + ';' +
+          'border:1.5px solid ' + (canCraft ? '#2ecc71' : '#2a2a40') + ';' +
+          'color:' + (canCraft ? '#2ecc71' : '#334') + ';">' +
+          '⚒ СКРАФТИТЬ' +
+        '</button>' +
+      '</div>';
+  });
+
+  body.innerHTML = oreHtml + runeHtml + blessHtml + recipesHtml;
+}
+
+// ── Выполнить крафт ──
+function doCraft(recipeId) {
+  var recipe = CRAFT_RECIPES.find(function(r) { return r.id === recipeId; });
+  if (!recipe) return;
+  if (!G.ore) G.ore = {};
+  if (!G.runes) G.runes = {};
+
+  // Проверка ресурсов
+  for (var i = 0; i < recipe.cost.length; i++) {
+    var c = recipe.cost[i];
+    if (c.oreId) {
+      if ((G.ore[c.oreId] || 0) < c.qty) { _showCraftMsg(false, 'Недостаточно руды!'); return; }
+    }
+    if (c.runeId) {
+      if ((G.runes[c.runeId] || 0) < c.qty) { _showCraftMsg(false, 'Недостаточно рун!'); return; }
+    }
+  }
+  if (recipe.pixrCost && (G.pixr || 0) < recipe.pixrCost) {
+    _showCraftMsg(false, 'Недостаточно PIXR!'); return;
+  }
+
+  // Списываем ресурсы
+  recipe.cost.forEach(function(c) {
+    if (c.oreId)  G.ore[c.oreId]    = (G.ore[c.oreId] || 0) - c.qty;
+    if (c.runeId) G.runes[c.runeId] = (G.runes[c.runeId] || 0) - c.qty;
+  });
+  if (recipe.pixrCost) G.pixr = (G.pixr || 0) - recipe.pixrCost;
+
+  // Шанс успеха
+  var chance = recipe.chance !== undefined ? recipe.chance : 100;
+  var success = Math.random() * 100 < chance;
+
+  if (!success) {
+    // Провал — ресурсы сгорели
+    updateHUD();
+    if (typeof saveNow === 'function') saveNow();
+    renderCraft();
+    _showCraftMsg(false, 'Провал! Ресурсы сгорели.');
+    return;
+  }
+
+  // Успех
+  if (recipe.result.type === 'bless_stone') {
+    G.blessStones = (G.blessStones || 0) + recipe.result.qty;
+  } else if (recipe.result.type === 'rune') {
+    G.runes[recipe.result.runeId] = (G.runes[recipe.result.runeId] || 0) + recipe.result.qty;
+  }
+  updateHUD();
+  if (typeof saveNow === 'function') saveNow();
+  renderCraft();
+  _showCraftMsg(true, recipe.name + ' ×' + recipe.result.qty + ' готово!');
+}
+
+function _showCraftMsg(ok, msg) {
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);' +
+    'background:#13132a;border:2px solid ' + (ok ? '#2ecc71' : '#e74c3c') + ';' +
+    'border-radius:12px;padding:18px 28px;text-align:center;z-index:9999;' +
+    'color:' + (ok ? '#2ecc71' : '#e74c3c') + ';font-size:14px;font-weight:700;font-family:inherit;pointer-events:none;';
+  el.textContent = (ok ? '✨ ' : '❌ ') + msg;
+  document.body.appendChild(el);
+  setTimeout(function() { el.remove(); }, 2000);
+}
+
+// ═══════════════════════════════
+//  ВКЛАДКА РУНЫ
+// ═══════════════════════════════
+var _runeSelectedItem = null; // id предмета выбранного для вставки
+
+function renderRune() {
+  var body = document.getElementById('runeBody');
+  if (!body) return;
+  if (!G.runes) G.runes = {};
+
+  // Счётчик рун
+  var runesHtml = '<div style="margin-bottom:14px;">' +
+    '<div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:8px;">МОИ РУНЫ</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+  var anyRune = RUNE_TYPES.some(function(rt) { return (G.runes[rt.id] || 0) > 0; });
+  if (anyRune) {
+    RUNE_TYPES.forEach(function(rt) {
+      var qty = G.runes[rt.id] || 0;
+      if (qty <= 0) return;
+      var rc = RARITIES.find(function(x) { return x.id === rt.rarity; }) || { color: '#888' };
+      runesHtml += '<div style="display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.04);border:1px solid ' + rc.color + '55;border-radius:8px;padding:6px 10px;">' +
+        '<img src="' + rt.icon + '" style="width:22px;height:22px;image-rendering:pixelated;" onerror="this.style.opacity=0.3">' +
+        '<div><div style="font-size:9px;color:' + rc.color + ';">' + rt.name + '</div>' +
+        '<div style="font-size:13px;font-weight:700;color:#ccd;">×' + qty + '</div></div>' +
+      '</div>';
+    });
+  } else {
+    runesHtml += '<div style="color:#334;font-size:11px;padding:6px 0;">Рун нет — скрафти в КРАФТ</div>';
+  }
+  runesHtml += '</div></div>';
+
+  // Слоты экипировки
+  var slotsHtml = '<div style="font-size:10px;color:#556;letter-spacing:1px;margin-bottom:8px;">ЭКИПИРОВКА — выбери предмет для вставки</div>';
+  slotsHtml += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px;">';
+  ['weapon','body','legs','gloves','boots','helmet','ring','belt'].forEach(function(slot) {
+    var item = G.equipped[slot];
+    if (!item) {
+      slotsHtml += '<div style="border-radius:8px;border:1px dashed #1e1e3a;padding:10px 8px;display:flex;align-items:center;gap:8px;opacity:0.35;">' +
+        '<img src="images/' + ({ weapon:'wwc', body:'ac', legs:'lc', gloves:'pc', boots:'bc', helmet:'hc', ring:'ringc', belt:'beltc' }[slot] || 'ac') + '.png" style="width:28px;height:28px;image-rendering:pixelated;opacity:0.3;">' +
+        '<div style="font-size:11px;color:#334;">' + ({ weapon:'Оружие', body:'Тело', legs:'Штаны', gloves:'Перчи', boots:'Боты', helmet:'Шлем', ring:'Кольцо', belt:'Пояс' }[slot]) + '</div>' +
+      '</div>';
+      return;
+    }
+    var r = RARITIES.find(function(x) { return x.id === item.rarity; }) || { color: '#888' };
+    var hasRune = !!item.rune;
+    var isSelected = _runeSelectedItem === item.id;
+    var runeOverlay = hasRune ? ('<img src="' + (RUNE_TYPES.find(function(rt) { return rt.id === item.rune.type; }) || { icon: '' }).icon + '" style="width:14px;height:14px;image-rendering:pixelated;flex-shrink:0;">') : '';
+
+    slotsHtml += '<div onclick="runeSelectItem(' + item.id + ')" style="' +
+      'border-radius:8px;border:1.5px solid ' + (isSelected ? '#f5c542' : (hasRune ? '#a78bfa' : r.color + '88')) + ';' +
+      'background:' + (isSelected ? 'rgba(245,197,66,0.1)' : 'rgba(255,255,255,0.03)') + ';' +
+      'padding:8px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:background .15s;">' +
+      '<div style="position:relative;flex-shrink:0;">' +
+        '<img src="' + item.icon + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;">' +
+        (hasRune ? '<div style="position:absolute;bottom:-2px;right:-2px;">' + runeOverlay + '</div>' : '') +
+      '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:11px;color:' + r.color + ';font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + item.name + (item.refine ? ' +' + item.refine : '') + '</div>' +
+        '<div style="font-size:9px;color:' + (hasRune ? '#a78bfa' : '#556') + ';">' + (hasRune ? 'Руна вставлена' : 'Слот свободен') + '</div>' +
+      '</div>' +
+    '</div>';
+  });
+  slotsHtml += '</div>';
+
+  // Панель вставки (если предмет выбран)
+  var insertHtml = '';
+  if (_runeSelectedItem) {
+    var selItem = null;
+    Object.values(G.equipped).forEach(function(it) { if (it && it.id === _runeSelectedItem) selItem = it; });
+    if (selItem) {
+      var selR = RARITIES.find(function(x) { return x.id === selItem.rarity; }) || { color: '#888' };
+      insertHtml = '<div style="border:1.5px solid #f5c542;border-radius:10px;padding:12px;background:rgba(245,197,66,0.05);">' +
+        '<div style="font-size:10px;color:#f5c542;letter-spacing:1px;margin-bottom:10px;">ВЫБРАТЬ РУНУ ДЛЯ ВСТАВКИ</div>';
+      if (selItem.rune) {
+        // Руна уже вставлена
+        var existRt = RUNE_TYPES.find(function(r) { return r.id === selItem.rune.type; });
+        var existRc = existRt ? (RARITIES.find(function(x) { return x.id === existRt.rarity; }) || { color: '#888' }) : { color: '#888' };
+        var runeStatsTxt = '';
+        if (selItem.rune.atk) runeStatsTxt += '+' + selItem.rune.atk + ' ATK ';
+        if (selItem.rune.def) runeStatsTxt += '+' + selItem.rune.def + ' DEF ';
+        if (selItem.rune.hp)  runeStatsTxt += '+' + selItem.rune.hp + ' HP';
+        insertHtml += '<div style="text-align:center;padding:12px;color:#a78bfa;font-size:12px;">' +
+          '<img src="' + (existRt ? existRt.icon : '') + '" style="width:28px;height:28px;image-rendering:pixelated;vertical-align:middle;margin-right:6px;">' +
+          (existRt ? existRt.name : 'Руна') + '<br><span style="font-size:10px;color:#778;">' + runeStatsTxt.trim() + '</span><br>' +
+          '<span style="font-size:10px;color:#445;margin-top:4px;display:block;">Руна вставлена — нельзя снять</span>' +
+        '</div>';
+      } else {
+        // Показываем доступные руны
+        var cost = RUNE_INSERT_COST[selItem.rarity] || 1;
+        var availRunes = RUNE_TYPES.filter(function(rt) { return (G.runes[rt.id] || 0) > 0; });
+        if (availRunes.length === 0) {
+          insertHtml += '<div style="text-align:center;padding:12px;color:#445;font-size:11px;">Нет рун для вставки</div>';
+        } else {
+          insertHtml += '<div style="font-size:10px;color:#556;margin-bottom:8px;">Стоимость вставки: <span style="color:#ff44cc;font-weight:700;">' + cost + ' PIXR</span></div>';
+          insertHtml += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;">';
+          availRunes.forEach(function(rt) {
+            var qty = G.runes[rt.id] || 0;
+            var rc = RARITIES.find(function(x) { return x.id === rt.rarity; }) || { color: '#888' };
+            var canInsert = (G.pixr || 0) >= cost && qty > 0;
+            // Превью статов
+            var statPrev = '';
+            Object.keys(rt.stats).forEach(function(s) {
+              statPrev += '+' + rt.stats[s][0] + '-' + rt.stats[s][1] + ' ' + s.toUpperCase() + ' ';
+            });
+            insertHtml += '<div onclick="' + (canInsert ? 'doInsertRune(' + selItem.id + ',\'' + rt.id + '\')' : '') + '" style="' +
+              'border-radius:8px;border:1.5px solid ' + (canInsert ? rc.color : '#2a2a3a') + ';' +
+              'background:' + (canInsert ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)') + ';' +
+              'padding:8px;cursor:' + (canInsert ? 'pointer' : 'not-allowed') + ';' +
+              'display:flex;flex-direction:column;align-items:center;gap:4px;' +
+              'opacity:' + (canInsert ? '1' : '0.4') + ';">' +
+              '<img src="' + rt.icon + '" style="width:28px;height:28px;image-rendering:pixelated;">' +
+              '<div style="font-size:10px;color:' + rc.color + ';font-weight:700;text-align:center;">' + rt.name + '</div>' +
+              '<div style="font-size:9px;color:#667;text-align:center;">' + statPrev.trim() + '</div>' +
+              '<div style="font-size:9px;color:#aaa;">×' + qty + ' в наличии</div>' +
+            '</div>';
+          });
+          insertHtml += '</div>';
+        }
+      }
+      insertHtml += '</div>';
+    }
+  }
+
+  body.innerHTML = runesHtml + slotsHtml + insertHtml;
+}
+
+function runeSelectItem(itemId) {
+  _runeSelectedItem = (_runeSelectedItem === itemId) ? null : itemId;
+  renderRune();
+}
+
+function doInsertRune(itemId, runeTypeId) {
+  if (!G.runes) G.runes = {};
+  var rt = RUNE_TYPES.find(function(r) { return r.id === runeTypeId; });
+  if (!rt) return;
+  var selItem = null;
+  Object.values(G.equipped).forEach(function(it) { if (it && it.id === itemId) selItem = it; });
+  if (!selItem) return;
+  if (selItem.rune) { _showCraftMsg(false, 'Уже есть руна!'); return; }
+  var cost = RUNE_INSERT_COST[selItem.rarity] || 1;
+  if ((G.pixr || 0) < cost) { _showCraftMsg(false, 'Недостаточно PIXR! Нужно ' + cost); return; }
+  if ((G.runes[runeTypeId] || 0) <= 0) { _showCraftMsg(false, 'Нет руны!'); return; }
+
+  // Списываем
+  G.pixr = (G.pixr || 0) - cost;
+  G.runes[runeTypeId] = (G.runes[runeTypeId] || 0) - 1;
+
+  // Генерируем статы руны
+  var runeStats = {};
+  Object.keys(rt.stats).forEach(function(s) {
+    var min = rt.stats[s][0], max = rt.stats[s][1];
+    runeStats[s] = min + Math.floor(Math.random() * (max - min + 1));
+  });
+
+  selItem.rune = Object.assign({ type: runeTypeId }, runeStats);
+
+  _runeSelectedItem = null;
+  updateHUD();
+  if (typeof saveNow === 'function') saveNow();
+  renderRune();
+
+  var statTxt = Object.keys(runeStats).map(function(s) { return '+' + runeStats[s] + ' ' + s.toUpperCase(); }).join(', ');
+  _showCraftMsg(true, rt.name + ' вставлена! ' + statTxt);
+}

@@ -53,6 +53,10 @@ const G = {
   boss: { floor: 1, lastFightTime: 0 }, // lastFightTime = timestamp победы (ms)
   marketUnlocked: false,
   arenaRating: 1000,
+  // Материалы крафта
+  ore: { core: 0, uore: 0, rore: 0, eore: 0, lore: 0 },
+  blessStones: 0,
+  runes: { crune: 0, urune: 0, rrune: 0, erune: 0, lrune: 0 },
   pvpAttempts: 0,
   pvpAttemptsDate: '',
   pvpRefreshes: 0,
