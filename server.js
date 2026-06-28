@@ -2497,7 +2497,11 @@ app.post('/api/market/cancel', async (req, res) => {
     }
 
     console.log('✅ [market] ' + tg.id + ' снял лот ' + listingId);
-    res.json({ ok: true, item: cancelled.item, inventory: updated.data.inventory });
+    if (cancelled.item && cancelled.item.isOre) {
+      res.json({ ok: true, item: cancelled.item, ore: updated.data.ore || {} });
+    } else {
+      res.json({ ok: true, item: cancelled.item, inventory: updated.data.inventory });
+    }
   } catch (e) {
     console.error('❌ [market/cancel] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });

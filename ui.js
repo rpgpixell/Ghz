@@ -2161,7 +2161,13 @@ function cancelListing(listingId) {
   .then(function(r) { return r.json(); })
   .then(function(d) {
     if (d.ok) {
-      if (d.inventory) {
+      if (d.ore) {
+        // Лот был с рудой — обновляем G.ore
+        if (!G.ore) G.ore = {};
+        Object.keys(d.ore).forEach(function(k) { G.ore[k] = d.ore[k]; });
+        if (typeof renderInventory === 'function') renderInventory();
+        if (typeof renderCraft === 'function') renderCraft();
+      } else if (d.inventory) {
         syncInventoryFromServer(d.inventory);
         if (typeof renderInventory === 'function') renderInventory();
       }
