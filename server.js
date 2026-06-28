@@ -2251,8 +2251,10 @@ app.post('/api/market/sell', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'item_not_found' });
     }
 
-    const item = inventory[itemIdx];
-    console.log(`✅ [market/sell] item found: ${item.name}`);
+    // Очищаем служебные поля перед сохранением в листинг
+    const item = Object.assign({}, inventory[itemIdx]);
+    delete item._equipped;
+    console.log(`✅ [market/sell] item found: ${item.name}, refine=${item.refine || 0}`);
 
     if (!item.isSkillBook && !MARKET_MIN_RARITY.includes(item.rarity)) {
       return res.status(400).json({ ok: false, error: 'rarity_too_low' });
@@ -2454,7 +2456,11 @@ app.post('/api/market/buy', async (req, res) => {
     });
 
     console.log(`✅ [market] ${tg.id} купил "${listing.item.name}" у ${listing.sellerId} за ${price} PIXR`);
-    res.json({ ok: true, item: listing.item, pixr: buyer.data.pixr, inventory: buyer.data.inventory });
+    if (isOre) {
+      res.json({ ok: true, item: listing.item, pixr: buyer.data.pixr, ore: buyer.data.ore || {} });
+    } else {
+      res.json({ ok: true, item: listing.item, pixr: buyer.data.pixr, inventory: buyer.data.inventory });
+    }
   } catch (e) {
     console.error('❌ [market/buy] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });

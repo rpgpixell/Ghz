@@ -2092,8 +2092,8 @@ function renderMarketListings(listings, isMy) {
 // ── Синхронизация инвентаря с сервера (сохраняет _equipped и G.equipped) ──
 function syncInventoryFromServer(rawInventory) {
   var SLOTS = ['weapon','body','legs','gloves','boots','helmet','ring','belt'];
-  // Сбрасываем _equipped у всех
-  var newInv = (rawInventory || []).map(function(it) {
+  // Фильтруем руду — она не должна попадать в G.inventory
+  var newInv = (rawInventory || []).filter(function(it) { return !it.isOre; }).map(function(it) {
     var c = Object.assign({}, it);
     c._equipped = false;
     return c;
@@ -2127,12 +2127,22 @@ function buyListing(listingId, price) {
   .then(function(d) {
     if (d.ok) {
       G.pixr = d.pixr;
-      if (d.inventory) { syncInventoryFromServer(d.inventory); }
-      else if (d.item) { syncInventoryFromServer(G.inventory.concat([d.item])); }
+      if (d.ore) {
+        // Куплена руда — обновляем G.ore, инвентарь не трогаем
+        if (!G.ore) G.ore = {};
+        Object.keys(d.ore).forEach(function(k) { G.ore[k] = d.ore[k]; });
+        if (typeof renderInventory === 'function') renderInventory();
+        if (typeof renderCraft === 'function') renderCraft();
+      } else if (d.inventory) {
+        syncInventoryFromServer(d.inventory);
+        if (typeof renderInventory === 'function') renderInventory();
+      } else if (d.item && !d.item.isOre) {
+        syncInventoryFromServer(G.inventory.concat([d.item]));
+        if (typeof renderInventory === 'function') renderInventory();
+      }
       updateMarketPixrBal();
       loadMarketListings();
       _taskToast('✅ Куплено: ' + (d.item && d.item.name || 'предмет'));
-      if (typeof renderInventory === 'function') renderInventory();
       // НЕ вызываем saveInstant — данные уже сохранены на сервере атомарно
     } else {
       var msgs = {
@@ -2174,7 +2184,7 @@ function cancelListing(listingId) {
       }
       loadMarketListings();
       _taskToast('✅ Лот снят, предмет возвращён');
-      window.GameSync.saveInstant();
+      // saveInstant не нужен — сервер уже вернул предмет атомарно
     } else {
       _taskToast('❌ Ошибка: ' + d.error);
     }
@@ -2276,7 +2286,7 @@ function confirmSellItem() {
       closeSellModal();
       if (typeof renderInventory === 'function') renderInventory();
       _taskToast('✅ Предмет выставлен на маркет!');
-      window.GameSync.saveInstant();
+      // saveInstant не нужен — сервер уже удалил предмет атомарно
     } else {
       var msgs = {
         max_lots:       '❌ Максимум 3 активных лота',

@@ -749,7 +749,7 @@ function renderInventory() {
       '<button onclick="deleteSelected()" ' + (selCount > 0 ? '' : 'disabled') + ' style="flex:2;font-size:10px;font-family:Courier New,monospace;padding:5px 0;border-radius:6px;border:1.5px solid ' + (selCount > 0 ? '#e74c3c' : '#333') + ';background:' + (selCount > 0 ? 'rgba(231,76,60,0.15)' : 'rgba(255,255,255,0.02)') + ';color:' + (selCount > 0 ? '#e74c3c' : '#444') + ';cursor:' + (selCount > 0 ? 'pointer' : 'not-allowed') + ';">🗑 Удалить (' + selCount + ')</button></div>';
   }
 
-  var items = G.inventory.filter(function(i) { return !i._equipped; });
+  var items = G.inventory.filter(function(i) { return !i._equipped && !i.isOre; });
   if (G.invFilter !== 'all') items = items.filter(function(i) { return i.slot === G.invFilter; });
   items.sort(function(a, b) {
     var rd = rarityOrder(b.rarity) - rarityOrder(a.rarity);
@@ -798,7 +798,7 @@ function renderInventory() {
           checkmark +
           runeOverlay +
           '<div class="inv-icon"><img src="' + item.icon + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.display=\'none\'"></div>' +
-          '<div class="inv-lvl">Lv.' + item.level + (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') + '</div>' +
+          '<div class="inv-lvl">Lv.' + (item.level || '?') + (item.refine ? ' <span style="color:#a78bfa">+' + item.refine + '</span>' : '') + '</div>' +
           '<div class="inv-rarity-dot" style="background:' + r.dot + '"></div></div>';
       }
     });
