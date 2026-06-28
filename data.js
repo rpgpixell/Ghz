@@ -418,19 +418,19 @@ function itemIcon(slot, rarity, forClass) {
 
 // Посохи — привязаны к классу персонажа
 const STAFF_TYPES = [
-  { slot: 'weapon', name: 'Посох огня',  stats: ['atk', 'crit'],  primary: 'atk', forClass: 'fire',  classLabel: 'Пирокан', classColor: '#ff7030' },
-  { slot: 'weapon', name: 'Посох света', stats: ['atk', 'hp'],    primary: 'atk', forClass: 'light', classLabel: 'Люмос',   classColor: '#ffd040' },
-  { slot: 'weapon', name: 'Посох воды',  stats: ['atk', 'dodge'], primary: 'atk', forClass: 'water', classLabel: 'Аквас',   classColor: '#40d0ff' },
+  { slot: 'weapon', name: 'Посох огня',  stats: ['atk', 'crit', 'critDmg'], primary: 'atk', forClass: 'fire',  classLabel: 'Пирокан', classColor: '#ff7030' },
+  { slot: 'weapon', name: 'Посох света', stats: ['atk', 'crit', 'critDmg'], primary: 'atk', forClass: 'light', classLabel: 'Люмос',   classColor: '#ffd040' },
+  { slot: 'weapon', name: 'Посох воды',  stats: ['atk', 'crit', 'critDmg'], primary: 'atk', forClass: 'water', classLabel: 'Аквас',   classColor: '#40d0ff' },
 ];
 
 // Общие типы предметов
 const ITEM_TYPES = [
   { slot: 'body',   name: 'Нагрудник', stats: ['def', 'hp'],    primary: 'def'  },
   { slot: 'legs',   name: 'Штаны',     stats: ['def', 'dodge'], primary: 'def'  },
-  { slot: 'gloves', name: 'Перчатки',  stats: ['atk', 'crit'],  primary: 'atk'  },
+  { slot: 'gloves', name: 'Перчатки',  stats: ['atk', 'def'],   primary: 'atk'  },
   { slot: 'boots',  name: 'Боты',      stats: ['spd', 'dodge'], primary: 'spd'  },
   { slot: 'helmet', name: 'Шлем',      stats: ['def', 'hp'],    primary: 'def'  },
-  { slot: 'ring',   name: 'Кольцо',    stats: ['crit', 'atk'],  primary: 'crit' },
+  { slot: 'ring',   name: 'Кольцо',    stats: ['atk', 'spd'],   primary: 'atk'  },
   { slot: 'belt',   name: 'Пояс',      stats: ['hp', 'def'],    primary: 'hp'   },
 ];
 
@@ -444,7 +444,7 @@ const UPG_DEFS = [
   { id: 'spd',     name: 'Скорость',       svgId: 'upg-spd',    stat: 'spd',     bonus: 1,    maxLv: 60, baseCost: 100, currency: 'gold' },
   { id: 'atkSpd',  name: 'Скорость атаки', svgId: 'upg-atkspd', stat: 'atkSpd',  bonus: 0.15, maxLv: 60, baseCost: 150, currency: 'gold' },
   { id: 'crit',    name: 'Шанс крита',     svgId: 'upg-crit',   stat: 'crit',    bonus: 3,    maxLv: 10, baseCost: 50,  currency: 'pixr' },
-  { id: 'critDmg', name: 'Сила крита',     svgId: 'upg-critdmg',stat: 'critDmg', bonus: 0.1,  maxLv: 10, baseCost: 50,  currency: 'pixr' },
+  { id: 'critDmg', name: 'Сила крита',     svgId: 'upg-critdmg',stat: 'critDmg', bonus: 0.15, maxLv: 10, baseCost: 50,  currency: 'pixr' },
   { id: 'dodge',   name: 'Уклонение',      svgId: 'upg-dodge',  stat: 'dodge',   bonus: 2,    maxLv: 10, baseCost: 50,  currency: 'pixr' },
 ];
 

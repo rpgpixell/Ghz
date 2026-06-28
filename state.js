@@ -71,6 +71,7 @@ function calcCP() {
   const s = G.stats;
   return Math.floor(
     s.atk * 4 + s.def * 3 + s.hp * 0.5 + s.spd * 6 + s.crit * 8 + s.dodge * 8
+    + ((s.critDmg || 0) * 500)
     + ((s.atkSpd || 1.0) - 1.0) * 200
     + G.level * 20
   );

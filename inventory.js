@@ -61,15 +61,26 @@ function generateItem(floor) {
     type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
   }
 
+  // Капы для вторичных статов на предмет
+  var STAT_CAP = { crit: 5, dodge: 5 };
+  // critDmg генерируется отдельно как дробное (зависит от редкости)
+  var CRITDMG_BY_RARITY = { common: 0.05, uncommon: 0.08, rare: 0.12, epic: 0.18, legend: 0.25 };
+
   var stats = {};
   type.stats.forEach(function(s) {
+    if (s === 'critDmg') {
+      var cdVal = parseFloat(((CRITDMG_BY_RARITY[rarity.id] || 0.05) * (0.85 + Math.random() * 0.3)).toFixed(2));
+      if (cdVal > 0) stats[s] = cdVal;
+      return;
+    }
     var isPrimary = (s === type.primary);
     var val = Math.floor(base * mult * (isPrimary ? 1.0 : 0.45) * (0.85 + Math.random() * 0.3));
+    if (STAT_CAP[s] !== undefined) val = Math.min(val, STAT_CAP[s]);
     if (val > 0) stats[s] = val;
   });
-  // Легендарный — дополнительный случайный стат
+  // Легендарный — дополнительный случайный стат (только основные)
   if (rarity.id === 'legend') {
-    var bonus = ['atk','def','hp','crit','dodge','spd'].filter(function(s) { return !stats[s]; });
+    var bonus = ['atk','def','hp','spd'].filter(function(s) { return !stats[s]; });
     if (bonus.length) stats[bonus[Math.floor(Math.random() * bonus.length)]] = Math.floor(base * 0.5);
   }
 
@@ -167,11 +178,15 @@ function showDropNotif(item) {
 
 // Суммарный бонус от надетых предметов
 function equippedStats() {
-  var bonus = { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0 };
+  var bonus = { atk: 0, def: 0, hp: 0, spd: 0, crit: 0, dodge: 0, critDmg: 0 };
   Object.values(G.equipped).forEach(function(item) {
     if (!item) return;
     Object.keys(item.stats).forEach(function(s) { bonus[s] = (bonus[s] || 0) + item.stats[s]; });
   });
+  // Суммарные капы с предметов
+  bonus.crit    = Math.min(bonus.crit,    10);
+  bonus.dodge   = Math.min(bonus.dodge,   10);
+  bonus.critDmg = Math.min(bonus.critDmg, 0.5);
   return bonus;
 }
 
@@ -183,7 +198,7 @@ function recalcStats() {
   G.stats.def    = base.def    + bonus.def;
   G.stats.spd    = base.spd    + bonus.spd;
   G.stats.crit   = base.crit   + bonus.crit;
-  G.stats.critDmg = base.critDmg || 0;
+  G.stats.critDmg = (base.critDmg || 0) + bonus.critDmg;
   G.stats.dodge  = base.dodge  + bonus.dodge;
   G.stats.atkSpd = (base.atkSpd || 1.0) + (bonus.atkSpd || 0);
   var oldMaxHp   = G.maxHp;
@@ -241,7 +256,7 @@ var REFINE_CHANCES = [75, 60, 50, 40, 30, 20, 12, 7, 4, 2];
 var REFINE_MAX     = 10;
 
 function refineCost(refLv)         { return REFINE_GOLD_COST[Math.min(refLv, REFINE_GOLD_COST.length - 1)]; }
-function refineStatBonus(refLv)    { return Math.floor(3 * Math.pow(1.5, refLv)); }
+function refineStatBonus(refLv)    { return refLv < 5 ? 3 : 10; }
 function refineSuccessChance(refLv){ return REFINE_CHANCES_V2[Math.min(refLv, REFINE_CHANCES_V2.length - 1)]; }
 function refineStars(item)         { return item.isSkillBook ? REFINE_MAX : (item.refine || 0); }
 function refineStarsStr(n) {
@@ -316,7 +331,12 @@ function doRefineItem(itemId, useBless) {
   if (success) {
     item.refine = stars + 1;
     var bonus = refineStatBonus(stars);
-    Object.keys(item.stats).forEach(function(s) { item.stats[s] = (item.stats[s] || 0) + bonus; });
+    // Бонус только к primary стату (не к crit/dodge/critDmg)
+    var typeInfo = [].concat(STAFF_TYPES, ITEM_TYPES).find(function(t) { return t.slot === item.slot && (t.forClass ? t.forClass === item.forClass : !item.forClass); });
+    var primaryStat = typeInfo ? typeInfo.primary : Object.keys(item.stats)[0];
+    if (item.stats[primaryStat] !== undefined) {
+      item.stats[primaryStat] = (item.stats[primaryStat] || 0) + bonus;
+    }
     if (item._equipped) recalcStats();
     showRefineResult(true, item, false, cost, bonus, useBless ? 'bless' : 'normal');
   } else if (useBless) {
@@ -580,7 +600,7 @@ function openItemModal(itemId) {
   }
 
   // ── Обычный предмет ──
-  var statLabels = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT %', dodge: 'DODGE %' };
+  var statLabels = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT %', dodge: 'DODGE %', critDmg: 'CRIT DMG' };
 
   // Статы текущего предмета
   var statsHtml = '';
@@ -594,7 +614,8 @@ function openItemModal(itemId) {
            : d < 0 ? ' <span style="color:#e74c3c;font-size:10px;">▼' + d + '</span>'
            : ' <span style="color:#556;font-size:10px;">=</span>';
     }
-    statsHtml += '<div class="modal-stat-row"><span style="color:#aaa">' + (statLabels[s] || s) + '</span><span>+' + item.stats[s] + diff + '</span></div>';
+    var displayVal = s === 'critDmg' ? ('×' + item.stats[s].toFixed(2)) : ('+' + item.stats[s]);
+    statsHtml += '<div class="modal-stat-row"><span style="color:#aaa">' + (statLabels[s] || s) + '</span><span>' + displayVal + diff + '</span></div>';
   });
   document.getElementById('mStats').innerHTML = statsHtml || '<div style="color:#445;font-size:11px;">Нет бонусов</div>';
 
@@ -730,7 +751,7 @@ function renderInventory() {
 
   // Суммарный бонус
   var bonusHtml = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px;">';
-  var statLabels = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT%', dodge: 'DODGE%' };
+  var statLabels = { atk: 'ATK', def: 'DEF', hp: 'HP', spd: 'SPD', crit: 'CRIT%', dodge: 'DODGE%', critDmg: 'CRIT DMG' };
   Object.keys(bonus).forEach(function(s) {
     if (!bonus[s]) return;
     bonusHtml += '<div style="font-size:10px;background:rgba(255,255,255,0.04);border:1px solid #2a2a5a;border-radius:4px;padding:2px 7px;color:#4cf;">+' +
