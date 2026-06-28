@@ -2454,7 +2454,7 @@ app.post('/api/market/buy', async (req, res) => {
     });
 
     console.log(`✅ [market] ${tg.id} купил "${listing.item.name}" у ${listing.sellerId} за ${price} PIXR`);
-    res.json({ ok: true, item: listing.item, pixr: buyer.data.pixr });
+    res.json({ ok: true, item: listing.item, pixr: buyer.data.pixr, inventory: buyer.data.inventory });
   } catch (e) {
     console.error('❌ [market/buy] error:', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });

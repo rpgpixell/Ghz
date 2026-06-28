@@ -2127,12 +2127,13 @@ function buyListing(listingId, price) {
   .then(function(d) {
     if (d.ok) {
       G.pixr = d.pixr;
-      if (d.item) { syncInventoryFromServer(G.inventory.concat([d.item])); }
+      if (d.inventory) { syncInventoryFromServer(d.inventory); }
+      else if (d.item) { syncInventoryFromServer(G.inventory.concat([d.item])); }
       updateMarketPixrBal();
       loadMarketListings();
       _taskToast('✅ Куплено: ' + (d.item && d.item.name || 'предмет'));
       if (typeof renderInventory === 'function') renderInventory();
-      window.GameSync.saveInstant();
+      // НЕ вызываем saveInstant — данные уже сохранены на сервере атомарно
     } else {
       var msgs = {
         already_sold:    '❌ Кто-то успел купить раньше!',
