@@ -218,6 +218,25 @@ const GlobalStatSchema = new mongoose.Schema({
 }, { minimize: false });
 const GlobalStat = mongoose.model('GlobalStat', GlobalStatSchema);
 
+// ── Рейтинг по времени в игре ──
+const PlaytimeRatingSchema = new mongoose.Schema({
+  tgId:         { type: String, required: true, unique: true },
+  username:     { type: String, default: '' },
+  firstName:    { type: String, default: '' },
+  charId:       { type: String, default: null },
+  level:        { type: Number, default: 1 },
+  totalSeconds: { type: Number, default: 0 },   // общее время за все дни
+  todaySeconds: { type: Number, default: 0 },   // время сегодня
+  todayDate:    { type: String, default: '' },   // YYYY-MM-DD
+  sessions:     { type: Number, default: 0 },   // кол-во сессий
+  lastSeenAt:   { type: Number, default: 0 },   // последний онлайн
+  updatedAt:    { type: Number, default: 0 },
+}, { minimize: false });
+PlaytimeRatingSchema.index({ totalSeconds: -1 });
+PlaytimeRatingSchema.index({ todaySeconds: -1 });
+PlaytimeRatingSchema.index({ lastSeenAt: -1 });
+const PlaytimeRating = mongoose.model('PlaytimeRating', PlaytimeRatingSchema);
+
 // Константы обмена
 const PIXR_EXCHANGE_THRESHOLD = 5_000_000; // после этого порога цена меняется
 const PIXR_PER_GRAM_CHEAP     = 1000;      // до порога: 1000 PIXR = 1 GRAM
@@ -546,6 +565,41 @@ app.post('/api/save', async (req, res) => {
       { upsert: true, new: false, lean: true }
     );
 
+    // ── Обновляем рейтинг по времени ──
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const dailyTasks = data.dailyTasks || {};
+      const todaySeconds = (dailyTasks.date === todayStr) ? (dailyTasks.seconds || 0) : 0;
+
+      const ptDoc = await PlaytimeRating.findOne({ tgId: tg.id }).lean();
+      const prevTodayDate    = ptDoc ? ptDoc.todayDate    : '';
+      const prevTodaySeconds = (ptDoc && prevTodayDate === todayStr) ? (ptDoc.todaySeconds || 0) : 0;
+
+      // Дельта: сколько секунд добавилось
+      const totalDelta = (prevTodayDate !== todayStr)
+        ? todaySeconds          // новый день — сегодняшние секунды целиком
+        : Math.max(0, todaySeconds - prevTodaySeconds); // тот же день — только прирост
+
+      await PlaytimeRating.findOneAndUpdate(
+        { tgId: tg.id },
+        {
+          $set: {
+            username:     tg.username,
+            firstName:    tg.firstName,
+            charId:       data.charId || null,
+            level:        Number(data.level) || 1,
+            todaySeconds: todaySeconds,
+            todayDate:    todayStr,
+            lastSeenAt:   data.updatedAt,
+            updatedAt:    data.updatedAt,
+          },
+          $inc: { totalSeconds: totalDelta },
+        },
+        { upsert: true, new: false }
+      );
+    } catch (ptErr) {
+      console.error('⚠️ [playtime] update error:', ptErr.message);
+    }
     const duration = Date.now() - startTime;
     console.log(`✅ [save] Сохранено для ${tg.id} (${duration}ms)`);
     res.json({ ok: true, updatedAt: data.updatedAt });
@@ -2154,6 +2208,45 @@ app.get('/admin/api/stats', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Админ: рейтинг по времени ──
+app.get('/admin/api/playtime', requireAdmin, async (req, res) => {
+  try {
+    const limit    = parseInt(req.query.limit) || 100;
+    const sortBy   = req.query.sort || 'total';
+    const sortField = sortBy === 'today' ? 'todaySeconds' : sortBy === 'sessions' ? 'sessions' : 'totalSeconds';
+
+    const top = await PlaytimeRating.find()
+      .sort({ [sortField]: -1 })
+      .limit(limit)
+      .lean();
+
+    const agg = await PlaytimeRating.aggregate([
+      { $group: { _id: null, total: { $sum: '$totalSeconds' } } }
+    ]);
+    const grandTotal = (agg[0] && agg[0].total) || 0;
+
+    res.json({
+      ok: true,
+      grandTotal,
+      players: top.map((p, i) => ({
+        rank:         i + 1,
+        tgId:         p.tgId,
+        name:         p.firstName || p.username || 'Игрок',
+        username:     p.username || '',
+        charId:       p.charId,
+        level:        p.level || 1,
+        totalSeconds: p.totalSeconds || 0,
+        todaySeconds: p.todaySeconds || 0,
+        sessions:     p.sessions || 0,
+        lastSeenAt:   p.lastSeenAt || 0,
+      })),
+    });
+  } catch (e) {
+    console.error('❌ [admin] playtime error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/admin/api/logs', requireAdmin, async (req, res) => {
   try {
     const logs = await AdminLog.find()
@@ -3075,6 +3168,61 @@ app.post('/api/pvp/history', async (req, res) => {
     res.json({ ok: true, battles, tgId: tg.id });
   } catch (e) {
     console.error('❌ [pvp/history]', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ═══════════════════════════════
+//  РЕЙТИНГ ПО ВРЕМЕНИ В ИГРЕ
+// ═══════════════════════════════
+
+// Топ-50 по общему времени (для игроков)
+app.post('/api/playtime/rating', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    const top = await PlaytimeRating.find(
+      { charId: { $ne: null } },
+      'tgId firstName username charId level totalSeconds todaySeconds lastSeenAt'
+    ).sort({ totalSeconds: -1 }).limit(50).lean();
+
+    const players = top.map(p => ({
+      tgId:         p.tgId,
+      name:         p.firstName || p.username || 'Игрок',
+      charId:       p.charId,
+      level:        p.level || 1,
+      totalSeconds: p.totalSeconds || 0,
+      todaySeconds: p.todaySeconds || 0,
+      lastSeenAt:   p.lastSeenAt || 0,
+    }));
+
+    const myDoc = await PlaytimeRating.findOne({ tgId: tg.id }, 'totalSeconds todaySeconds').lean();
+    res.json({
+      ok: true,
+      players,
+      myTotal: (myDoc && myDoc.totalSeconds) || 0,
+      myToday: (myDoc && myDoc.todaySeconds) || 0,
+      tgId: tg.id,
+    });
+  } catch (e) {
+    console.error('❌ [playtime/rating]', e.message);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// Счётчик сессий (вызывается при входе в игру)
+app.post('/api/playtime/session', async (req, res) => {
+  const tg = authUser(req, res);
+  if (!tg) return;
+  try {
+    await PlaytimeRating.findOneAndUpdate(
+      { tgId: tg.id },
+      { $inc: { sessions: 1 }, $set: { lastSeenAt: Date.now(), updatedAt: Date.now() } },
+      { upsert: true, new: false }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ [playtime/session]', e.message);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });

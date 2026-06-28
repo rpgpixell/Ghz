@@ -241,6 +241,46 @@ body {
 }
 .edit-btn:active { opacity: 0.7; }
 
+/* ── РЕЙТИНГ ВРЕМЕНИ ── */
+.pt-rank-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid #1a1a35;
+  border-radius: 8px;
+  margin-bottom: 5px;
+  font-size: 12px;
+}
+.pt-rank-num { color: #556; width: 22px; flex-shrink: 0; text-align: right; font-size: 11px; }
+.pt-rank-num.gold   { color: #f5c542; font-weight: bold; }
+.pt-rank-num.silver { color: #aaa;    font-weight: bold; }
+.pt-rank-num.bronze { color: #cd7f32; font-weight: bold; }
+.pt-info { flex: 1; min-width: 0; }
+.pt-name  { color: #ddd; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pt-meta  { color: #556; font-size: 10px; margin-top: 1px; }
+.pt-time  { color: #7af7a7; font-size: 13px; font-weight: bold; flex-shrink: 0; text-align: right; }
+.pt-today { color: #7ab8ff; font-size: 10px; text-align: right; }
+.pt-sort-btns { display: flex; gap: 6px; margin-bottom: 10px; }
+.pt-sort-btn {
+  padding: 6px 12px; font-size: 11px;
+  background: #1a1a35; border: 1px solid #2a2a5a; border-radius: 6px;
+  color: #778; cursor: pointer; font-family: 'Courier New', monospace;
+}
+.pt-sort-btn.active { background: #2a2a5a; color: #f5c542; border-color: #f5c542; }
+.pt-sort-btn:active { opacity: 0.7; }
+.pt-summary {
+  display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.pt-summary-card {
+  flex: 1; min-width: 100px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid #1a1a35; border-radius: 8px;
+  text-align: center;
+}
+.pt-summary-num   { font-size: 18px; font-weight: bold; color: #7af7a7; }
+.pt-summary-label { font-size: 9px; color: #556; margin-top: 2px; }
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -306,6 +346,9 @@ body {
     </button>
     <button class="tab-btn" data-tab="tasks" onclick="switchTab('tasks')">
       ✅<span class="tab-label">Задания</span>
+    </button>
+    <button class="tab-btn" data-tab="playtime" onclick="switchTab('playtime')">
+      ⏱<span class="tab-label">Время</span>
     </button>
   </div>
 
@@ -417,6 +460,26 @@ body {
         <!-- СПИСОК ЗАДАНИЙ -->
         <div id="specialTasksList">
           <div style="color:#445;padding:10px 0;font-size:12px;">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⏱ ВРЕМЯ В ИГРЕ -->
+    <div class="tab-content" id="tab-playtime">
+      <div class="pt-summary" id="ptSummary">
+        <div class="pt-summary-card"><div class="pt-summary-num" id="ptTotalPlayers">—</div><div class="pt-summary-label">Игроков в рейтинге</div></div>
+        <div class="pt-summary-card"><div class="pt-summary-num" id="ptGrandTotal">—</div><div class="pt-summary-label">Всего часов сыграно</div></div>
+        <div class="pt-summary-card"><div class="pt-summary-num" id="ptAvgTime">—</div><div class="pt-summary-label">Среднее на игрока</div></div>
+      </div>
+      <div class="stat-card full" style="margin-bottom:10px;">
+        <div class="stat-label" style="margin-bottom:8px;">Сортировка</div>
+        <div class="pt-sort-btns">
+          <button class="pt-sort-btn active" id="ptSortTotal"   onclick="loadPlaytime('total')">⏱ Всего</button>
+          <button class="pt-sort-btn"         id="ptSortToday"   onclick="loadPlaytime('today')">📅 Сегодня</button>
+          <button class="pt-sort-btn"         id="ptSortSessions" onclick="loadPlaytime('sessions')">🔄 Сессий</button>
+        </div>
+        <div id="ptList">
+          <div style="color:#445;padding:20px 0;text-align:center;font-size:12px;">Загрузка...</div>
         </div>
       </div>
     </div>
@@ -553,6 +616,7 @@ body {
     if (tab === 'economy') loadEconomy();
     if (tab === 'logs') loadLogs();
     if (tab === 'tasks') loadSpecialTasks();
+    if (tab === 'playtime') loadPlaytime('total');
   }
 
   window.switchTab = switchTab;
@@ -1266,6 +1330,112 @@ body {
   }
 
   window.massResetProgress = massResetProgress;
+
+  // ═══════════════════════════════
+  //  РЕЙТИНГ ПО ВРЕМЕНИ
+  // ═══════════════════════════════
+
+  var currentPtSort = 'total';
+
+  function fmtTime(sec) {
+    sec = Math.floor(sec || 0);
+    if (sec < 60)  return sec + 'с';
+    if (sec < 3600) return Math.floor(sec / 60) + 'м ' + (sec % 60) + 'с';
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    return h + 'ч ' + m + 'м';
+  }
+
+  function fmtHours(sec) {
+    return (sec / 3600).toFixed(1) + ' ч';
+  }
+
+  function charEmoji(charId) {
+    if (charId === 'fire')  return '🔥';
+    if (charId === 'light') return '✨';
+    if (charId === 'water') return '💧';
+    return '❓';
+  }
+
+  function loadPlaytime(sort) {
+    if (!SESSION) return;
+    currentPtSort = sort || 'total';
+
+    // Кнопки сортировки
+    ['total','today','sessions'].forEach(function(s) {
+      var btn = document.getElementById('ptSort' + s.charAt(0).toUpperCase() + s.slice(1));
+      if (btn) btn.className = 'pt-sort-btn' + (s === currentPtSort ? ' active' : '');
+    });
+
+    var list = document.getElementById('ptList');
+    list.innerHTML = '<div style="color:#445;padding:20px 0;text-align:center;font-size:12px;">Загрузка...</div>';
+
+    fetch(API + '/admin/api/playtime?session=' + SESSION + '&sort=' + currentPtSort + '&limit=100')
+      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        if (!r.ok) {
+          list.innerHTML = '<div style="color:#e74c3c;padding:10px 0;font-size:12px;">❌ Ошибка загрузки</div>';
+          return;
+        }
+
+        var players = r.players || [];
+
+        // Сводка
+        var grandTotalH = (r.grandTotal / 3600).toFixed(1);
+        var avg = players.length ? Math.floor(r.grandTotal / players.length) : 0;
+        document.getElementById('ptTotalPlayers').textContent = players.length;
+        document.getElementById('ptGrandTotal').textContent   = grandTotalH + ' ч';
+        document.getElementById('ptAvgTime').textContent      = fmtTime(avg);
+
+        if (!players.length) {
+          list.innerHTML = '<div style="color:#445;padding:20px 0;text-align:center;font-size:12px;">📭 Нет данных</div>';
+          return;
+        }
+
+        var html = '';
+        players.forEach(function(p, i) {
+          var rank    = i + 1;
+          var rankCls = rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : '';
+          var rankStr = rank <= 3 ? ['🥇','🥈','🥉'][rank-1] : rank;
+          
+          var mainVal, mainLabel;
+          if (currentPtSort === 'sessions') {
+            mainVal   = p.sessions + ' сессий';
+            mainLabel = 'Всего: ' + fmtTime(p.totalSeconds);
+          } else if (currentPtSort === 'today') {
+            mainVal   = fmtTime(p.todaySeconds);
+            mainLabel = 'Всего: ' + fmtTime(p.totalSeconds);
+          } else {
+            mainVal   = fmtTime(p.totalSeconds);
+            mainLabel = 'Сегодня: ' + fmtTime(p.todaySeconds);
+          }
+
+          var lastSeen = p.lastSeenAt
+            ? new Date(p.lastSeenAt).toLocaleString('ru')
+            : '—';
+
+          html += '<div class="pt-rank-row">' +
+            '<div class="pt-rank-num ' + rankCls + '">' + rankStr + '</div>' +
+            '<div class="pt-info">' +
+              '<div class="pt-name">' + (p.name || 'Игрок') + ' ' + charEmoji(p.charId) + ' <span style="color:#556;font-size:10px;">Lv.' + p.level + '</span></div>' +
+              '<div class="pt-meta">ID: ' + p.tgId + (p.username ? ' · @' + p.username : '') + '</div>' +
+              '<div class="pt-meta">Сессий: ' + p.sessions + ' · Посл.: ' + lastSeen + '</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="pt-time">' + mainVal + '</div>' +
+              '<div class="pt-today">' + mainLabel + '</div>' +
+            '</div>' +
+          '</div>';
+        });
+
+        list.innerHTML = html;
+      })
+      .catch(function() {
+        list.innerHTML = '<div style="color:#e74c3c;padding:10px 0;font-size:12px;">❌ Ошибка соединения</div>';
+      });
+  }
+
+  window.loadPlaytime = loadPlaytime;
 
   checkSession();
 
