@@ -2224,30 +2224,62 @@ function renderMarketListings(listings, isMy) {
 
 // ── Купить лот ──
 // ── Синхронизация инвентаря с сервера (сохраняет _equipped и G.equipped) ──
+// ui.js — найдите syncInventoryFromServer и замените
+
+// ── Синхронизация инвентаря с сервера (объединение) ──
 function syncInventoryFromServer(rawInventory) {
-  var SLOTS = ['weapon','body','legs','gloves','boots','helmet','ring','belt'];
-  // Фильтруем руду — она не должна попадать в G.inventory
-  var newInv = (rawInventory || []).filter(function(it) { return !it.isOre; }).map(function(it) {
-    var c = Object.assign({}, it);
-    c._equipped = false;
-    return c;
-  });
-  // Восстанавливаем G.equipped — ищем предметы по id
-  SLOTS.forEach(function(slot) {
-    var cur = G.equipped[slot];
-    if (!cur) return;
-    var found = newInv.find(function(i) { return i.id === cur.id; });
-    if (found) {
-      found._equipped = true;
-      G.equipped[slot] = found;
-    } else {
-      // Предмет не найден в новом инвентаре — НЕ обнуляем слот автоматически,
-      // сохраняем текущий объект чтобы saveInstant не затёр equipped на сервере
-      // Слот обнуляется только явно (unequip, sell)
+  // Создаём карту предметов с сервера
+  var serverItems = {};
+  (rawInventory || []).forEach(function(item) {
+    if (!item.isOre) {
+      var copy = Object.assign({}, item);
+      copy._equipped = false;
+      serverItems[copy.id] = copy;
     }
   });
-  G.inventory = newInv;
-  // Пересчитываем статы и CP после любого изменения инвентаря
+
+  // Сохраняем локальные предметы, которых нет на сервере
+  var merged = [];
+  G.inventory.forEach(function(localItem) {
+    if (!localItem.isOre) {
+      if (serverItems[localItem.id]) {
+        // Предмет есть на сервере — берём серверную версию, но сохраняем флаг _equipped
+        var serverItem = serverItems[localItem.id];
+        merged.push(Object.assign({}, serverItem, { _equipped: localItem._equipped || false }));
+        delete serverItems[localItem.id];
+      } else {
+        // Локального предмета нет на сервере — сохраняем его
+        merged.push(localItem);
+      }
+    }
+  });
+
+  // Добавляем новые предметы с сервера
+  Object.values(serverItems).forEach(function(item) {
+    merged.push(item);
+  });
+
+  G.inventory = merged;
+
+  // Восстанавливаем экипировку
+  var SLOTS = ['weapon', 'body', 'legs', 'gloves', 'boots', 'helmet', 'ring', 'belt'];
+  var equippedCopy = {};
+  SLOTS.forEach(function(slot) {
+    var currentEquipped = G.equipped[slot];
+    if (currentEquipped) {
+      var foundItem = G.inventory.find(function(item) { return item.id === currentEquipped.id; });
+      if (foundItem) {
+        foundItem._equipped = true;
+        equippedCopy[slot] = foundItem;
+      } else {
+        equippedCopy[slot] = null;
+      }
+    } else {
+      equippedCopy[slot] = null;
+    }
+  });
+  G.equipped = equippedCopy;
+
   if (typeof recalcStats === 'function') recalcStats();
   if (typeof updateHUD === 'function') updateHUD();
 }

@@ -129,35 +129,101 @@ function tryDropSkillBook(floor) {
 }
 
 // ── Попытка выдать предмет после убийства монстра ──
+// inventory.js — строка ~220 (найдите и замените)
+
 function tryDropItem(floor) {
+  // Проверяем соединение
+  if (!window.GameSync || !window.GameSync.state || !window.GameSync.state.online) {
+    return;
+  }
+  
   tryDropSkillBook(floor);
+  
   if (Math.random() > dropChance(floor) * premMult('drop')) return;
   if (G.inventory.length >= 40) return;
-  var item = generateItem(floor);
-  G.inventory.push(item);
-  showDropNotif(item);
+  
+  var API = window.GameSync._API;
+  var init = window.GameSync._INIT;
+  
+  fetch(API + '/api/drop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: init, floor: floor })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.ok) {
+      // Используем функцию из net.js для синхронизации
+      if (typeof window.GameSync.syncInventory === 'function') {
+        window.GameSync.syncInventory(data.inventory);
+      } else {
+        // fallback
+        G.inventory = data.inventory;
+      }
+      if (data.gold !== undefined) G.gold = data.gold;
+      if (data.pixr !== undefined) G.pixr = data.pixr;
+      showDropNotif(data.item);
+      updateHUD();
+      if (activeTab === 'inv') renderInventory();
+    }
+  })
+  .catch(function() {
+    showDmgPop('❌ Ошибка дропа', W * 0.4, GROUND * 0.4, '#e74c3c');
+  });
 }
 
 // ── Дроп руды после убийства монстра ──
+// inventory.js — строка ~240 (найдите и замените)
+
 function tryDropOre(floor) {
+  if (!window.GameSync || !window.GameSync.state || !window.GameSync.state.online) return;
+  
   if (!G.ore) G.ore = {};
   var table = ORE_DROP_TABLE[Math.min(floor, 10)] || ORE_DROP_TABLE[10];
+  
+  var droppedOres = {};
   ORE_TYPES.forEach(function(ore) {
     var chance = table[ore.id] || 0;
     if (chance <= 0 || Math.random() * 100 >= chance) return;
     var qty = 1 + Math.floor(Math.random() * 3);
-    G.ore[ore.id] = (G.ore[ore.id] || 0) + qty;
-    // Мини-нотиф о руде
-    var el = document.createElement('div');
-    el.className = 'drop-notif';
-    var r = RARITIES.find(function(x) { return x.id === ore.rarity; }) || { color: '#888' };
-    el.innerHTML =
-      '<span><img src="' + ore.icon + '" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;image-rendering:pixelated;" onerror="this.style.opacity=0"></span>' +
-      '<span style="color:' + r.color + '">' + ore.name + ' ×' + qty + '</span>';
-    document.getElementById('app').appendChild(el);
-    setTimeout(function() { el.remove(); }, 2000);
+    droppedOres[ore.id] = qty;
   });
-  if (activeTab === 'craft') renderCraft();
+  
+  if (Object.keys(droppedOres).length === 0) return;
+  
+  var API = window.GameSync._API;
+  var init = window.GameSync._INIT;
+  
+  fetch(API + '/api/drop/ore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initData: init, floor: floor, ores: droppedOres })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.ok) {
+      G.ore = data.ore;
+      if (activeTab === 'craft') renderCraft();
+      if (activeTab === 'inv') renderInventory();
+      
+      Object.keys(droppedOres).forEach(function(oreId) {
+        var ore = ORE_TYPES.find(function(o) { return o.id === oreId; });
+        if (!ore) return;
+        var qty = droppedOres[oreId];
+        var r = RARITIES.find(function(x) { return x.id === ore.rarity; }) || { color: '#888' };
+        var el = document.createElement('div');
+        el.className = 'drop-notif';
+        el.innerHTML =
+          '<span><img src="' + ore.icon + '" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;image-rendering:pixelated;" onerror="this.style.opacity=0"></span>' +
+          '<span style="color:' + r.color + '">' + ore.name + ' ×' + qty + '</span>';
+        document.getElementById('app').appendChild(el);
+        setTimeout(function() { el.remove(); }, 2000);
+      });
+    }
+  })
+  .catch(function() {
+    showDmgPop('❌ Ошибка дропа руды', W * 0.4, GROUND * 0.4, '#e74c3c');
+  });
 }
 
 // ── Уведомление о новом дропе ──

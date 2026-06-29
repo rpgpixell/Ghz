@@ -1,16 +1,5 @@
-/*
-  ══════════════════════════════════════════════════════
-  net.js — Сетевой слой: Telegram-авторизация,
-  сохранение прогресса на сервер (MongoDB)
+// net.js — удаляем или комментируем всё, что связано с офлайн-режимом
 
-  СТРАТЕГИЯ СОХРАНЕНИЯ:
-  ✅ МГНОВЕННО: inventory, equipped, upg, skills, potionLv,
-     potionThreshold, floor, level, pixr, gram, bp, prem
-  ⏱️ 10 СЕКУНД: hp, gold, xp, killCount, potions
-  🔄 ПОЛЛИНГ: каждые 9 секунд проверка уведомлений
-  📦 БАТЧ: шлёт только изменившиеся поля (дельта)
-  ══════════════════════════════════════════════════════
-*/
 (function () {
   'use strict';
 
@@ -30,7 +19,8 @@
   ];
 
   var TG_INIT = '';
-var START_PARAM = ''; // ✅ ЭТО ДОБАВИТЬ
+  var START_PARAM = '';
+
   var SYNC = {
     booted: false,
     started: false,
@@ -52,73 +42,43 @@ var START_PARAM = ''; // ✅ ЭТО ДОБАВИТЬ
     lastFloor: 0,
     lastPixr: 0,
   };
-  
-  // ✅ Добавить ПОСЛЕ SYNC
-var AUTH = {
-  authorized: false,
-  error: null
-};
 
-  function num(v, d) { v = Number(v); return isFinite(v) ? v : d; }
-  function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return Object.assign({}, o); } }
+  var AUTH = {
+    authorized: false,
+    error: null
+  };
 
-  function getTgId() {
-    try {
-      if (window.Telegram && window.Telegram.WebApp) {
-        var unsafe = window.Telegram.WebApp.initDataUnsafe;
-        if (unsafe && unsafe.user && unsafe.user.id) {
-          return String(unsafe.user.id);
-        }
-      }
-    } catch (e) {}
-    return null;
-  }
+  // ✅ УДАЛЯЕМ функции офлайн-режима
+  // _showConnOverlay, _hideConnOverlay, _onConnLost, _onConnRestored, _schedulePing, _doPing
 
-  // ═══════════════════════════════
-  //  ЭКРАН ЗАГРУЗКИ
-  // ═══════════════════════════════
-
-  var LS_MIN_MS = 800;
-  var _lsShownAt = Date.now();
-
-  function lsSetStatus(text, pct) {
-    var el = document.getElementById('lsStatus');
-    if (el) el.innerHTML = '<span class="ls-dots">' + text + '</span>';
-    var bar = document.getElementById('lsBar');
-    if (bar && pct != null) bar.style.width = pct + '%';
-  }
-
-  function lsHide() {
-    var el = document.getElementById('loadingScreen');
-    if (!el || el.classList.contains('fade-out')) return;
-    el.style.pointerEvents = 'none';
-    var elapsed = Date.now() - _lsShownAt;
-    var delay = Math.max(0, LS_MIN_MS - elapsed);
-    setTimeout(function () {
-      lsSetStatus('Готово', 100);
-      setTimeout(function () {
-        el.classList.add('fade-out');
-        setTimeout(function () {
-          el.style.display = 'none';
-          el.classList.add('hidden-done');
-        }, 520);
-      }, 300);
-    }, delay);
-  }
-
-  function lsInitStars() {
-    var wrap = document.getElementById('lsStars');
-    if (!wrap) return;
-    var html = '';
-    for (var i = 0; i < 60; i++) {
-      var x = (Math.random() * 100).toFixed(1);
-      var y = (Math.random() * 100).toFixed(1);
-      var dur = (1.5 + Math.random() * 2.5).toFixed(1);
-      var del = (Math.random() * 3).toFixed(1);
-      var op = (0.1 + Math.random() * 0.4).toFixed(2);
-      html += '<div class="ls-star" style="left:' + x + '%;top:' + y + '%;opacity:' + op + ';--dur:' + dur + 's;--delay:-' + del + 's;"></div>';
+  // ✅ Новая функция: проверка соединения (простая, без офлайн-режима)
+  function checkConnection() {
+    if (!SYNC.online) {
+      console.warn('⚠️ Нет соединения с сервером');
+      showNoConnectionError();
+      return false;
     }
-    wrap.innerHTML = html;
+    return true;
+  }
+
+  function showNoConnectionError() {
+    var overlay = document.getElementById('connOverlay');
+    if (overlay) overlay.classList.remove('hidden');
+    // Блокируем игру
+    if (typeof window.gameActive !== 'undefined') window.gameActive = false;
+    if (typeof window._loopRunning !== 'undefined') window._loopRunning = false;
+  }
+
+  function hideConnectionError() {
+    var overlay = document.getElementById('connOverlay');
+    if (overlay) overlay.classList.add('hidden');
+    // Возобновляем игру
+    if (SYNC.started) {
+      if (typeof window.gameActive !== 'undefined') window.gameActive = true;
+      if (typeof window._loopRunning !== 'undefined' && !window._loopRunning) {
+        if (typeof startGame === 'function') startGame();
+      }
+    }
   }
 
   // ═══════════════════════════════
@@ -244,8 +204,6 @@ var AUTH = {
     G.killCount = num(d.killCount, G.killCount);
     G.potions = num(d.potions, G.potions);
 
-    console.log(`✅ [applySnapshot] gram=${G.gram}, gold=${G.gold}, pixr=${G.pixr}`);
-
     G.bp = d.bp || { active: false, claimed: [] };
     if (!G.bp.claimed) G.bp.claimed = [];
     G.prem = d.prem || { tier: null, expiresAt: 0 };
@@ -276,17 +234,16 @@ var AUTH = {
       if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
     });
 
-    // ✅ ПРАВИЛЬНО (полный набор слотов)
-G.equipped = { 
-  weapon: null, 
-  body: null, 
-  legs: null, 
-  gloves: null, 
-  belt: null, 
-  ring: null, 
-  boots: null, 
-  helmet: null 
-};
+    G.equipped = { 
+      weapon: null, 
+      body: null, 
+      legs: null, 
+      gloves: null, 
+      belt: null, 
+      ring: null, 
+      boots: null, 
+      helmet: null 
+    };
     var eq = d.equipped || {};
     EQUIP_SLOTS.forEach(function (slot) {
       var id = eq[slot];
@@ -327,15 +284,15 @@ G.equipped = {
   }
 
   // ═══════════════════════════════
-  //  СЕРВЕРНЫЕ ЗАПРОСЫ
+  //  СЕРВЕРНЫЕ ЗАПРОСЫ (с проверкой соединения)
   // ═══════════════════════════════
 
-  var START_PARAM = '';
-
   function serverLoad() {
-    if (!SYNC.online) return Promise.resolve(null);
+    if (!SYNC.online) {
+      showNoConnectionError();
+      return Promise.reject(new Error('no_connection'));
+    }
 
-    // Таймаут 10 секунд — если сервер не отвечает, считаем ошибкой
     var timeoutPromise = new Promise(function(_, reject) {
       setTimeout(function() { reject(new Error('timeout')); }, 10000);
     });
@@ -356,86 +313,20 @@ G.equipped = {
     return Promise.race([fetchPromise, timeoutPromise])
       .catch(function (e) { 
         console.error('❌ [serverLoad] ошибка:', e.message);
+        showNoConnectionError();
         throw e; 
       });
   }
 
   // ═══════════════════════════════
-  //  ОФЛАЙН — СТОП ИГРЫ
+  //  СОХРАНЕНИЕ (с проверкой соединения)
   // ═══════════════════════════════
 
-  var _connDown = false;   // текущий статус соединения
-  var _pingTimer = null;   // таймер повторных попыток
-
-  function _showConnOverlay() {
-    var el = document.getElementById('connOverlay');
-    if (el) el.classList.remove('hidden');
-  }
-
-  function _hideConnOverlay() {
-    var el = document.getElementById('connOverlay');
-    if (el) el.classList.add('hidden');
-  }
-
-  function _onConnLost() {
-    if (_connDown) return;
-    _connDown = true;
-    console.warn('📵 [conn] Соединение потеряно');
-    if (typeof window.gameActive !== 'undefined') window.gameActive = false;
-    if (typeof window._loopRunning !== 'undefined') window._loopRunning = false;
-    _showConnOverlay();
-    _schedulePing();
-  }
-
-  function _onConnRestored() {
-    if (!_connDown) return;
-    _connDown = false;
-    console.log('✅ [conn] Соединение восстановлено');
-    if (_pingTimer) { clearTimeout(_pingTimer); _pingTimer = null; }
-    _hideConnOverlay();
-    // Возобновляем игру
-    if (SYNC.started) {
-      if (typeof window.gameActive !== 'undefined') window.gameActive = true;
-      if (typeof window._loopRunning !== 'undefined' && !window._loopRunning) {
-        if (typeof startGame === 'function') startGame();
-      }
-    }
-    // После восстановления — сохраняем только если serverConfirmed не был сброшен
-    if (SYNC.started && SYNC.serverConfirmed) {
-      var snap = serializeState();
-      snap.updatedAt = Date.now();
-      fetch(API + '/api/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT, data: snap }),
-      })
-      .then(function(r) { return r.json(); })
-      .then(function(r) {
-        if (r && r.error === 'reset_detected') forceCloseApp();
-      })
-      .catch(function() {});
-    }
-  }
-
-  function _schedulePing() {
-    if (_pingTimer) return;
-    _pingTimer = setTimeout(function() {
-      _pingTimer = null;
-      _doPing();
-    }, 5000);
-  }
-
-  function _doPing() {
-    fetch(API + '/api/ping', { method: 'GET' })
-      .then(function(r) {
-        if (r.ok) _onConnRestored();
-        else _schedulePing();
-      })
-      .catch(function() { _schedulePing(); });
-  }
-
   function serverSaveInstant(data) {
-    if (!SYNC.online || !SYNC.serverConfirmed) return Promise.resolve({ ok: false });
+    if (!SYNC.online || !SYNC.serverConfirmed) {
+      showNoConnectionError();
+      return Promise.resolve({ ok: false, error: 'no_connection' });
+    }
 
     var snap = serializeState();
     Object.keys(data).forEach(function(key) { snap[key] = data[key]; });
@@ -449,7 +340,7 @@ G.equipped = {
     .then(function(r) { return r.json(); })
     .then(function(r) {
       if (r && r.ok) {
-        _onConnRestored();
+        hideConnectionError();
         if (r.updatedAt) SYNC.lastServerTs = r.updatedAt;
       } else if (r && r.error === 'reset_detected') {
         console.warn('🛑 [instant] reset_detected — закрываем приложение');
@@ -458,14 +349,16 @@ G.equipped = {
       return r;
     })
     .catch(function(e) {
-      _onConnLost();
+      showNoConnectionError();
       throw e;
     });
   }
 
-  // ⚡ БАТЧ-СОХРАНЕНИЕ — КАЖДЫЕ 10 СЕКУНД (только дельта изменений)
   function serverSaveBatch() {
-    if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) return;
+    if (!SYNC.online || !SYNC.serverConfirmed || SYNC.pushing) {
+      if (!SYNC.online) showNoConnectionError();
+      return;
+    }
     if (SYNC.rlBackoffUntil && Date.now() < SYNC.rlBackoffUntil) return;
 
     var currentHp        = G.hp;
@@ -477,7 +370,6 @@ G.equipped = {
     var currentFloor     = G.floor;
     var currentPixr      = G.pixr;
 
-    // ✅ Собираем только изменившиеся поля
     var delta = {
       tgId:      getTgId(),
       charId:    (typeof G_CHAR !== 'undefined' && G_CHAR) ? G_CHAR.id : (G.charId || null),
@@ -507,7 +399,7 @@ G.equipped = {
     }).then(function (r) { return r.json(); })
       .then(function (r) {
         if (r && r.ok) {
-          _onConnRestored();
+          hideConnectionError();
           SYNC.lastHp        = currentHp;
           SYNC.lastGold      = currentGold;
           SYNC.lastXp        = currentXp;
@@ -519,7 +411,6 @@ G.equipped = {
           SYNC.lastServerTs  = r.updatedAt || delta.updatedAt;
           SYNC.rlBackoffUntil = 0;
 
-          // ✅ Если сервер вернул sync — применяем (админские изменения)
           if (r.sync) {
             console.log('🔄 [batch] Применяем серверный sync:', Object.keys(r.sync));
             if (r.sync.gram      !== undefined) G.gram      = r.sync.gram;
@@ -531,7 +422,6 @@ G.equipped = {
             }
             if (typeof updateHUD === 'function') updateHUD();
             if (typeof renderWallet === 'function') renderWallet();
-            // Сбрасываем last-значения чтобы не перезаписать обратно
             SYNC.lastGold = G.gold;
             SYNC.lastPixr = G.pixr;
           }
@@ -541,49 +431,76 @@ G.equipped = {
         } else if (r && r.error === 'rate_limit') {
           SYNC.rlBackoffUntil = Date.now() + 6000;
           console.warn('⚠️ [save] rate limit, пауза 6s');
+        } else {
+          // Ошибка на сервере
+          console.warn('⚠️ [batch] Ошибка сохранения:', r);
+          showNoConnectionError();
         }
       })
-      .catch(function () { _onConnLost(); })
+      .catch(function () { 
+        showNoConnectionError(); 
+      })
       .then(function () { SYNC.pushing = false; });
   }
 
-  var _instantPending = {};
-var _instantTimer = null;
+  // ═══════════════════════════════
+  //  СИНХРОНИЗАЦИЯ ИНВЕНТАРЯ (объединение)
+  // ═══════════════════════════════
 
-function saveInstant(data) {
-  if (!SYNC.started || !SYNC.online) return;
-  Object.assign(_instantPending, data);
-  clearTimeout(_instantTimer);
-  _instantTimer = setTimeout(function() {
-    var d = _instantPending;
-    _instantPending = {};
-    serverSaveInstant(d).catch(function() {});
-  }, 300);
-}
+  function syncInventoryFromServer(rawInventory) {
+    var serverItems = {};
+    (rawInventory || []).forEach(function(item) {
+      if (!item.isOre) {
+        var copy = Object.assign({}, item);
+        copy._equipped = false;
+        serverItems[copy.id] = copy;
+      }
+    });
 
-  function touch() {
-    if (!SYNC.started || !SYNC.online) return;
-    clearTimeout(SYNC.dirtyTimer);
-    SYNC.dirtyTimer = setTimeout(serverSaveBatch, 500);
-  }
+    var localItems = {};
+    G.inventory.forEach(function(item) {
+      if (!item.isOre) {
+        if (serverItems[item.id]) {
+          var serverItem = serverItems[item.id];
+          localItems[item.id] = Object.assign({}, serverItem, {
+            _equipped: item._equipped || false
+          });
+          delete serverItems[item.id];
+        } else {
+          // Сохраняем локальный предмет, если его нет на сервере
+          // (это может быть оптимистичное обновление)
+          localItems[item.id] = item;
+        }
+      }
+    });
 
-  function flush() {
-    if (!SYNC.started) return;
-    if (!SYNC.online || !SYNC.serverConfirmed) return;
-    var snap = serializeState();
-    snap.updatedAt = Date.now();
-    try {
-      fetch(API + '/api/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: TG_INIT, data: snap }),
-        keepalive: true,
-      });
-    } catch (e) {}
+    var mergedInventory = Object.values(localItems).concat(Object.values(serverItems));
+    G.inventory = mergedInventory;
+
+    var SLOTS = ['weapon', 'body', 'legs', 'gloves', 'boots', 'helmet', 'ring', 'belt'];
+    var equippedCopy = {};
+    SLOTS.forEach(function(slot) {
+      var currentEquipped = G.equipped[slot];
+      if (currentEquipped) {
+        var foundItem = G.inventory.find(function(item) { return item.id === currentEquipped.id; });
+        if (foundItem) {
+          foundItem._equipped = true;
+          equippedCopy[slot] = foundItem;
+        } else {
+          equippedCopy[slot] = null;
+        }
+      } else {
+        equippedCopy[slot] = null;
+      }
+    });
+    G.equipped = equippedCopy;
+
+    if (typeof recalcStats === 'function') recalcStats();
+    if (typeof updateHUD === 'function') updateHUD();
   }
 
   // ═══════════════════════════════
-  //  ПОЛЛИНГ — простой опрос (каждые 9 секунд)
+  //  ПОЛЛИНГ (с проверкой соединения)
   // ═══════════════════════════════
 
   var pollTimer = null;
@@ -591,7 +508,10 @@ function saveInstant(data) {
   var lastEventId = 0;
 
   function startPolling() {
-    if (!SYNC.started || !SYNC.online) return;
+    if (!SYNC.started || !SYNC.online) {
+      if (!SYNC.online) showNoConnectionError();
+      return;
+    }
     if (pollTimer) {
       clearTimeout(pollTimer);
       pollTimer = null;
@@ -602,6 +522,7 @@ function saveInstant(data) {
 
   function doPoll() {
     if (!SYNC.started || !SYNC.online) {
+      if (!SYNC.online) showNoConnectionError();
       return;
     }
     if (isPolling) return;
@@ -629,6 +550,7 @@ function saveInstant(data) {
     .then(function(response) {
       isPolling = false;
       lastEventId = response.timestamp || Date.now();
+      hideConnectionError();
 
       if (response.ok && response.notifications && response.notifications.length > 0) {
         console.log('📨 [Poll] Получено ' + response.notifications.length + ' уведомлений');
@@ -664,6 +586,7 @@ function saveInstant(data) {
     .catch(function(error) {
       isPolling = false;
       console.error('❌ [Poll] Ошибка:', error.message);
+      showNoConnectionError();
       if (SYNC.started && SYNC.online) {
         pollTimer = setTimeout(doPoll, 9000);
       }
@@ -683,22 +606,18 @@ function saveInstant(data) {
   //  ПРИНУДИТЕЛЬНАЯ ПЕРЕЗАГРУЗКА
   // ═══════════════════════════════
 
-  // Закрыть приложение принудительно (после сброса прогресса админом)
   function forceCloseApp() {
     console.warn('🚪 [forceClose] Закрываем приложение по команде сервера');
-    // Останавливаем все сохранения
     SYNC.serverConfirmed = false;
     SYNC.started = false;
     if (typeof window.gameActive !== 'undefined') window.gameActive = false;
     if (typeof window._loopRunning !== 'undefined') window._loopRunning = false;
-    // Закрываем через Telegram WebApp API
     try {
       if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.close === 'function') {
         window.Telegram.WebApp.close();
         return;
       }
     } catch (e) {}
-    // Фолбэк — показываем экран с сообщением
     var ls = document.getElementById('loadingScreen');
     if (ls) {
       ls.style.display = '';
@@ -765,12 +684,10 @@ function saveInstant(data) {
     if (!applySnapshot(data)) return;
     hideCharSelect();
     SYNC.started = true;
-    // ✅ Запускаем игру только если loop ещё не запущен
     if (typeof startGame === 'function') {
       if (typeof window._loopRunning === 'undefined' || !window._loopRunning) {
         startGame();
       } else {
-        // Loop уже идёт — только обновляем HUD
         if (typeof updateHUD === 'function') updateHUD();
         if (typeof initSkillsHud === 'function') initSkillsHud();
         if (typeof updatePotionHud === 'function') updatePotionHud();
@@ -788,33 +705,56 @@ function saveInstant(data) {
   }
 
   // ═══════════════════════════════
-  //  ЦИКЛЫ СИНХРОНИЗАЦИИ — 10 СЕКУНД
+  //  СИНХРОНИЗАЦИЯ — 10 СЕКУНД
   // ═══════════════════════════════
 
   function startSyncLoops() {
     if (SYNC.booted) return;
-    SYNC.batchTimer = setInterval(serverSaveBatch, 60000);
+    SYNC.batchTimer = setInterval(serverSaveBatch, 10000);
 
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) flush();
-    });
-
-    window.addEventListener('online', function() {
-      console.log('🌐 [online] Сеть восстановлена');
-      if (_connDown) setTimeout(_doPing, 1000);
-    });
-
-    window.addEventListener('offline', function() {
-      console.log('📵 [offline] Сеть отключена');
-      _onConnLost();
+      if (document.hidden) {
+        // При сворачивании сохраняем всё
+        var snap = serializeState();
+        snap.updatedAt = Date.now();
+        try {
+          fetch(API + '/api/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ initData: TG_INIT, data: snap }),
+            keepalive: true,
+          });
+        } catch (e) {}
+      }
     });
 
     if (window.Telegram && window.Telegram.WebApp) {
-      try { window.Telegram.WebApp.onEvent('close', flush); } catch (e) {}
+      try { window.Telegram.WebApp.onEvent('close', function() {
+        var snap = serializeState();
+        snap.updatedAt = Date.now();
+        try {
+          fetch(API + '/api/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ initData: TG_INIT, data: snap }),
+            keepalive: true,
+          });
+        } catch (e) {}
+      }); } catch (e) {}
     }
 
-    window.addEventListener('pagehide', flush);
-    window.addEventListener('beforeunload', flush);
+    window.addEventListener('pagehide', function() {
+      var snap = serializeState();
+      snap.updatedAt = Date.now();
+      try {
+        fetch(API + '/api/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData: TG_INIT, data: snap }),
+          keepalive: true,
+        });
+      } catch (e) {}
+    });
   }
 
   // ═══════════════════════════════
@@ -856,196 +796,133 @@ function saveInstant(data) {
   // ═══════════════════════════════
 
   function initTelegram() {
-  if (window.Telegram && window.Telegram.WebApp) {
-    try { window.Telegram.WebApp.ready(); } catch (e) {}
-    try { window.Telegram.WebApp.expand(); } catch (e) {}
-    try { window.Telegram.WebApp.disableVerticalSwipes && window.Telegram.WebApp.disableVerticalSwipes(); } catch (e) {}
-    TG_INIT = window.Telegram.WebApp.initData || '';
-    try {
-      START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
-    } catch (e) { START_PARAM = ''; }
-    
-    // Проверяем, есть ли initData
-    if (!TG_INIT) {
-      AUTH.authorized = false;
-      AUTH.error = 'Нет данных авторизации (initData)';
-      console.warn('⚠️ [initTelegram] Нет initData');
-    } else {
-      AUTH.authorized = true;
-    }
-  } else {
-    AUTH.authorized = false;
-    AUTH.error = 'Игра запущена не через Telegram WebApp';
-    console.warn('⚠️ [initTelegram] Telegram.WebApp не найден');
-  }
-  
-  // Если есть стартовый параметр из URL
-  if (!START_PARAM) {
-    try {
-      var urlParams = new URLSearchParams(window.location.search);
-      var start = urlParams.get('start');
-      var startapp = urlParams.get('startapp');
-      var ref = urlParams.get('ref');
+    if (window.Telegram && window.Telegram.WebApp) {
+      try { window.Telegram.WebApp.ready(); } catch (e) {}
+      try { window.Telegram.WebApp.expand(); } catch (e) {}
+      try { window.Telegram.WebApp.disableVerticalSwipes && window.Telegram.WebApp.disableVerticalSwipes(); } catch (e) {}
+      TG_INIT = window.Telegram.WebApp.initData || '';
+      try {
+        START_PARAM = (window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.start_param) || '';
+      } catch (e) { START_PARAM = ''; }
       
-      if (start) START_PARAM = start;
-      else if (startapp) START_PARAM = startapp;
-      else if (ref) START_PARAM = ref;
-      
-      console.log('🔍 [initTelegram] startParam из URL:', START_PARAM || 'none');
-    } catch (e) {}
-  }
-  
-  SYNC.online = AUTH.authorized && !!TG_INIT;
-  
-  var tgId = getTgId();
-  if (tgId) {
-    SYNC.currentTgId = tgId;
-  }
-  console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online, 'startParam:', START_PARAM || 'none');
-}
-  // ═══════════════════════════════
-//  БУТ — с задержкой
-// ═══════════════════════════════
-
-function boot() {
-  lsInitStars();
-  lsSetStatus('Подключение', 10);
-  initTelegram();
-
-  // ✅ НОВОЕ: проверка авторизации
-  if (!AUTH.authorized) {
-    console.warn('⚠️ [boot] Нет авторизации в Telegram:', AUTH.error);
-
-    // Показываем ошибку через _showNoServerError чтобы барьер остался
-    lsSetStatus('', 100);
-    var barFill2 = document.getElementById('lsBar');
-    if (barFill2) {
-      barFill2.style.width = '100%';
-      barFill2.style.background = 'linear-gradient(90deg,#1a3a6a,#2a6aaa)';
-    }
-
-    var statusEl2 = document.getElementById('lsStatus');
-    if (statusEl2) {
-      statusEl2.innerHTML =
-        '<span style="color:#4a8aff;font-size:13px;">📱 Открой игру в Telegram</span>' +
-        '<br><span style="font-size:10px;color:#888;margin-top:4px;display:block;">Игра работает только через Telegram</span>';
-    }
-
-    // Кнопка "Открыть в Telegram"
-    var barWrap2 = document.querySelector('.ls-bar-wrap');
-    if (barWrap2 && !document.querySelector('.ls-telegram-btn')) {
-      var tgBtn = document.createElement('button');
-      tgBtn.className = 'ls-telegram-btn';
-      tgBtn.innerHTML = '📱 ОТКРЫТЬ В TELEGRAM';
-      tgBtn.style.cssText = [
-        'margin-top:16px',
-        'padding:10px 24px',
-        'background:linear-gradient(90deg,#1a3a6a,#2a6aaa)',
-        'border:2px solid #4a8aff',
-        'border-radius:10px',
-        'color:#fff',
-        'font-size:13px',
-        'font-weight:bold',
-        'cursor:pointer',
-        'font-family:"Courier New",monospace',
-        'letter-spacing:1px',
-        'display:block',
-        'margin-left:auto',
-        'margin-right:auto',
-        'box-shadow:0 0 12px rgba(74,138,255,0.3)',
-      ].join(';');
-      tgBtn.onclick = function() {
-        var botUsername = window.BOT_USERNAME || 'pixel_rpg_bot';
-        var link = 'https://t.me/' + botUsername + (START_PARAM ? '?start=' + START_PARAM : '');
-        window.open(link, '_blank');
-      };
-      barWrap2.parentNode.insertBefore(tgBtn, barWrap2.nextSibling);
-    }
-
-    // Экран загрузки остаётся — игра заблокирована
-    return;
-  }
-
-  // ✅ Если авторизация есть — продолжаем как обычно
-  function _bootFinalize() {
-    try {
-      startSyncLoops();
-      SYNC.booted = true;
-      if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
-        serverSaveBatch();
-      }
-    } catch (e) {
-      console.error('❌ [boot] finalize error:', e.message);
-    }
-    lsHide();
-  }
-
-  lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Офлайн режим', 30);
-
-  // Анимируем прогресс
-  var _pct = 30;
-  var _progressTimer = SYNC.online ? setInterval(function () {
-    if (_pct < 85) { _pct += 1; lsSetStatus('Загрузка с сервера', _pct); }
-  }, 300) : null;
-
-  function _stopProgress() {
-    if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null; }
-  }
-
-  serverLoad().then(function (r) {
-    _stopProgress();
-
-    // ❌ Нет ответа или сервер вернул ошибку — блокируем игру
-    if (!r || !r.ok) {
-      console.warn('⚠️ [serverLoad] ответ не ok:', r);
-      _showNoServerError();
-      // НЕ вызываем _bootFinalize() — игра остаётся заблокирована
-      return;
-    }
-
-    var server = r.save;
-    var currentTgId = getTgId();
-
-    // ❌ Данные другого пользователя — блокируем
-    if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
-      console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
-      _showNoServerError('Ошибка идентификации. Повторите попытку.');
-      return;
-    }
-
-    if (server && server.data && server.data.charId &&
-        typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
-
-      // ✅ Данные загружены — запускаем игру
-      SYNC.serverConfirmed = true;
-      lsSetStatus('Применение данных', 90);
-
-      if (!SYNC.started) {
-        bootFromSnapshot(server.data);
-        setTimeout(function () { _bootFinalize(); }, 300);
+      if (!TG_INIT) {
+        AUTH.authorized = false;
+        AUTH.error = 'Нет данных авторизации (initData)';
+        console.warn('⚠️ [initTelegram] Нет initData');
       } else {
-        hotApply(server.data);
-        setTimeout(function () { _bootFinalize(); }, 300);
+        AUTH.authorized = true;
       }
-    } else if (!server || !server.data) {
-      // ✅ Новый пользователь — персонаж не выбран, разрешаем выбор
-      _bootFinalize();
     } else {
-      // ✅ charId есть, но не найден в CHARS (старый/удалённый) — разрешаем выбор
-      _bootFinalize();
+      AUTH.authorized = false;
+      AUTH.error = 'Игра запущена не через Telegram WebApp';
+      console.warn('⚠️ [initTelegram] Telegram.WebApp не найден');
     }
-  }).catch(function (err) {
-    _stopProgress();
-    console.error('❌ [boot] serverLoad ошибка:', err.message);
-    _showNoServerError();
-    // НЕ вызываем _bootFinalize() — игра остаётся заблокирована
-  });
-}
+    
+    if (!START_PARAM) {
+      try {
+        var urlParams = new URLSearchParams(window.location.search);
+        var start = urlParams.get('start');
+        var startapp = urlParams.get('startapp');
+        var ref = urlParams.get('ref');
+        
+        if (start) START_PARAM = start;
+        else if (startapp) START_PARAM = startapp;
+        else if (ref) START_PARAM = ref;
+        
+        console.log('🔍 [initTelegram] startParam из URL:', START_PARAM || 'none');
+      } catch (e) {}
+    }
+    
+    SYNC.online = AUTH.authorized && !!TG_INIT;
+    
+    var tgId = getTgId();
+    if (tgId) {
+      SYNC.currentTgId = tgId;
+    }
+    console.log('🟢 [initTelegram] Пользователь:', tgId, 'Online:', SYNC.online, 'startParam:', START_PARAM || 'none');
+  }
+
+  function boot() {
+    lsInitStars();
+    lsSetStatus('Подключение', 10);
+    initTelegram();
+
+    if (!AUTH.authorized) {
+      console.warn('⚠️ [boot] Нет авторизации в Telegram:', AUTH.error);
+      _showNoServerError('Открой игру в Telegram');
+      return;
+    }
+
+    function _bootFinalize() {
+      try {
+        startSyncLoops();
+        SYNC.booted = true;
+        if (SYNC.online && SYNC.started && SYNC.serverConfirmed) {
+          serverSaveBatch();
+        }
+      } catch (e) {
+        console.error('❌ [boot] finalize error:', e.message);
+      }
+      lsHide();
+    }
+
+    lsSetStatus(SYNC.online ? 'Загрузка с сервера' : 'Нет соединения', 30);
+
+    var _pct = 30;
+    var _progressTimer = SYNC.online ? setInterval(function () {
+      if (_pct < 85) { _pct += 1; lsSetStatus('Загрузка с сервера', _pct); }
+    }, 300) : null;
+
+    function _stopProgress() {
+      if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null; }
+    }
+
+    serverLoad().then(function (r) {
+      _stopProgress();
+
+      if (!r || !r.ok) {
+        console.warn('⚠️ [serverLoad] ответ не ok:', r);
+        _showNoServerError('Сервер недоступен');
+        return;
+      }
+
+      var server = r.save;
+      var currentTgId = getTgId();
+
+      if (server && server.data && server.data.tgId && currentTgId && server.data.tgId !== currentTgId) {
+        console.warn('⚠️ Сервер вернул данные другого пользователя, игнорируем');
+        _showNoServerError('Ошибка идентификации. Повторите попытку.');
+        return;
+      }
+
+      if (server && server.data && server.data.charId &&
+          typeof CHARS !== 'undefined' && CHARS[server.data.charId]) {
+
+        SYNC.serverConfirmed = true;
+        lsSetStatus('Применение данных', 90);
+
+        if (!SYNC.started) {
+          bootFromSnapshot(server.data);
+          setTimeout(function () { _bootFinalize(); }, 300);
+        } else {
+          hotApply(server.data);
+          setTimeout(function () { _bootFinalize(); }, 300);
+        }
+      } else if (!server || !server.data) {
+        _bootFinalize();
+      } else {
+        _bootFinalize();
+      }
+    }).catch(function (err) {
+      _stopProgress();
+      console.error('❌ [boot] serverLoad ошибка:', err.message);
+      _showNoServerError('Нет соединения с сервером');
+    });
+  }
 
   function _showNoServerError(customMsg) {
     var msg = customMsg || 'Нет соединения с сервером';
 
-    // Обновляем статус
     var statusEl = document.getElementById('lsStatus');
     if (statusEl) {
       statusEl.innerHTML =
@@ -1053,14 +930,12 @@ function boot() {
         '<br><span style="font-size:10px;color:#888;margin-top:4px;display:block;">Проверьте интернет и повторите</span>';
     }
 
-    // Полоска — красная, показывает ошибку
     var barFill = document.getElementById('lsBar');
     if (barFill) {
       barFill.style.width = '100%';
       barFill.style.background = 'linear-gradient(90deg,#8B0000,#e74c3c)';
     }
 
-    // Кнопка "Повторить" — если ещё нет
     var barWrap = document.querySelector('.ls-bar-wrap');
     if (barWrap && !document.querySelector('.ls-retry-btn')) {
       var btn = document.createElement('button');
@@ -1087,7 +962,6 @@ function boot() {
       barWrap.parentNode.insertBefore(btn, barWrap.nextSibling);
     }
 
-    // Оставляем loadingScreen видимым — игра НЕ должна быть доступна
     var ls = document.getElementById('loadingScreen');
     if (ls) {
       ls.style.display = '';
@@ -1105,6 +979,10 @@ function boot() {
     var orig = window.confirmChar;
     if (typeof orig !== 'function') return;
     window.confirmChar = function () {
+      if (!SYNC.online) {
+        _showNoServerError('Нет соединения с сервером');
+        return;
+      }
       var r = orig.apply(this, arguments);
       if (typeof G_CHAR === 'undefined' || !G_CHAR) return r;
       G.charId = G_CHAR.id;
@@ -1141,12 +1019,6 @@ function boot() {
     };
   }
 
-  // ═══════════════════════════════
-  //  ❌ УБРАНО: сохранение при обновлении HUD
-  //  var _hudSaveTimer = null;
-  //  function saveToServerDebounced() { ... }
-  // ═══════════════════════════════
-
   function hookActions() {
     var instantActions = [
       'buyUpgrade',
@@ -1159,6 +1031,10 @@ function boot() {
       var fn = window[name];
       if (typeof fn !== 'function') return;
       window[name] = function () {
+        if (!SYNC.online) {
+          showNoConnectionError();
+          return;
+        }
         var r = fn.apply(this, arguments);
         try {
           var snap = serializeState();
@@ -1171,16 +1047,6 @@ function boot() {
         return r;
       };
     });
-
-    // ❌ УБРАНО: сохранение при обновлении HUD
-    // var origHUD = window.updateHUD;
-    // if (typeof origHUD === 'function') {
-    //   window.updateHUD = function () {
-    //     var r = origHUD.apply(this, arguments);
-    //     if (SYNC.started) saveToServerDebounced();
-    //     return r;
-    //   };
-    // }
   }
 
   // ═══════════════════════════════
@@ -1221,6 +1087,21 @@ function boot() {
     saveInstant({ floor: G.floor, maxFloor: G.maxFloor });
   };
 
+  window.GameSync = {
+    save:        serverSaveBatch,
+    flush:       function() { /* flush при закрытии */ },
+    touch:       function() { /* touch больше не нужен */ },
+    serialize:   serializeState,
+    apply:       applySnapshot,
+    state:       SYNC,
+    getTgId:     getTgId,
+    saveInstant: serverSaveInstant,
+    syncInventory: syncInventoryFromServer,
+    _API:        API,
+    get _INIT() { return TG_INIT; },
+    checkConnection: checkConnection,
+  };
+
   // ═══════════════════════════════
   //  ИНИЦИАЛИЗАЦИЯ
   // ═══════════════════════════════
@@ -1233,17 +1114,4 @@ function boot() {
   } else {
     window.addEventListener('load', boot);
   }
-
-  window.GameSync = {
-    save:        serverSaveBatch,
-    flush:       flush,
-    touch:       touch,
-    serialize:   serializeState,
-    apply:       applySnapshot,
-    state:       SYNC,
-    getTgId:     getTgId,
-    saveInstant: saveInstant,
-    _API:        API,
-    get _INIT() { return TG_INIT; },
-  };
 })();
