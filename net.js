@@ -560,7 +560,7 @@ G.equipped = {
 var _instantTimer = null;
 
 function saveInstant(data) {
-  if (!SYNC.started || !SYNC.online) return;
+  if (!SYNC.started || !SYNC.online || !SYNC.serverConfirmed) return;
   Object.assign(_instantPending, data);
   clearTimeout(_instantTimer);
   _instantTimer = setTimeout(function() {
@@ -1204,32 +1204,7 @@ function boot() {
   //  ЭКСПОРТ ДЛЯ ИГРОВЫХ СОБЫТИЙ
   // ═══════════════════════════════
 
-  window.onPixrDrop = function(amount) {
-    G.pixr = (G.pixr || 0) + amount;
-    saveInstant({ pixr: G.pixr });
-  };
-
-  window.onExchangePixr = function() {
-    saveInstant({ pixr: G.pixr, gram: G.gram });
-  };
-
-  window.onItemDrop = function(item) {
-    G.inventory.push(item);
-    saveInstant({ inventory: G.inventory });
-  };
-
-  window.onEquip = function(item) {
-    saveInstant({ equipped: G.equipped });
-  };
-
-  window.onUpgrade = function(upgId, newLevel) {
-    saveInstant({ upg: G.upg });
-  };
-
-  window.onSkillUpgrade = function(skillId, newLevel) {
-    saveInstant({ skills: G.skills });
-  };
-
+  // Хуки, вызываемые из game.js — нельзя удалять
   window.onLevelUp = function() {
     saveInstant({ level: G.level, xpNeeded: G.xpNeeded });
   };
@@ -1237,6 +1212,9 @@ function boot() {
   window.onFloorChange = function(newFloor) {
     saveInstant({ floor: G.floor, maxFloor: G.maxFloor });
   };
+
+  // onPixrDrop, onExchangePixr, onItemDrop, onEquip, onUpgrade, onSkillUpgrade — удалены,
+  // покрываются hookActions (buyUpgrade, equipItem, и т.д.) + serverSaveBatch каждые 10с
 
   // ═══════════════════════════════
   //  ИНИЦИАЛИЗАЦИЯ
