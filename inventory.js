@@ -126,11 +126,6 @@ function tryDropSkillBook(floor) {
   G.inventory.push(book);
   showDropNotif(book);
   if (activeTab === 'inv') renderInventory();
-  // ✅ Сохраняем сразу после дропа книги
-  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
-    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
-    window.GameSync.saveInstant({ inventory: inv, invIdCounter: _invIdCounter });
-  }
 }
 
 // ── Попытка выдать предмет после убийства монстра ──
@@ -141,11 +136,6 @@ function tryDropItem(floor) {
   var item = generateItem(floor);
   G.inventory.push(item);
   showDropNotif(item);
-  // ✅ Сохраняем инвентарь сразу — иначе предмет потеряется если закрыть игру
-  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
-    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
-    window.GameSync.saveInstant({ inventory: inv, invIdCounter: _invIdCounter });
-  }
 }
 
 // ── Дроп руды после убийства монстра ──
@@ -192,12 +182,6 @@ function equippedStats() {
   Object.values(G.equipped).forEach(function(item) {
     if (!item) return;
     Object.keys(item.stats).forEach(function(s) { bonus[s] = (bonus[s] || 0) + item.stats[s]; });
-    // Бонусы вставленной руны (atk/def/hp)
-    if (item.rune) {
-      ['atk','def','hp'].forEach(function(s) {
-        if (item.rune[s]) bonus[s] = (bonus[s] || 0) + item.rune[s];
-      });
-    }
   });
   // Суммарные капы с предметов
   bonus.crit    = Math.min(bonus.crit,    10);
@@ -238,11 +222,6 @@ function equipItem(itemId) {
   item._equipped = true;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  if (window.GameSync) {
-    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
-    var eq  = {}; ['weapon','body','legs','gloves','belt','ring','boots','helmet'].forEach(function(s) { var x = G.equipped[s]; eq[s] = x ? x.id : null; });
-    window.GameSync.saveInstant({ inventory: inv, equipped: eq });
-  }
 }
 
 // ── Снять предмет ──
@@ -253,11 +232,6 @@ function unequipItem(itemId) {
   item._equipped = false;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  if (window.GameSync) {
-    var inv2 = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
-    var eq2  = {}; ['weapon','body','legs','gloves','belt','ring','boots','helmet'].forEach(function(s) { var x = G.equipped[s]; eq2[s] = x ? x.id : null; });
-    window.GameSync.saveInstant({ inventory: inv2, equipped: eq2 });
-  }
 }
 
 // ── Уничтожить предмет ──
@@ -269,11 +243,6 @@ function destroyItem(itemId) {
   G.inventory.splice(idx, 1);
   updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
-  // Сохраняем немедленно — предмет удалён
-  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
-    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
-    window.GameSync.saveInstant({ inventory: inv });
-  }
 }
 
 // ═══════════════════════════════
@@ -507,10 +476,6 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
-  if (window.GameSync) {
-    var inv3 = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
-    window.GameSync.saveInstant({ inventory: inv3, skills: G.skills });
-  }
 }
 
 // ═══════════════════════════════
@@ -554,11 +519,6 @@ function deleteSelected() {
   });
   _invSelected = {};
   updateHUD(); renderInventory();
-  // Сохраняем немедленно — массовое удаление предметов
-  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
-    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
-    window.GameSync.saveInstant({ inventory: inv });
-  }
 }
 
 // ── Закрытие модалки предмета ──

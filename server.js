@@ -28,14 +28,8 @@ const REF_MILESTONE_STEP     = 5;
 const REF_DEPOSIT_BONUS      = 0.05; // 5% от депозита GRAM другу
 
 // ── CORS ──
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  // Если whitelist задан — проверяем; иначе разрешаем всё (удобно при разработке)
-  if (!ALLOWED_ORIGINS.length || ALLOWED_ORIGINS.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin || '*');
-  }
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS,DELETE,PATCH');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   res.header('Vary', 'Origin');
@@ -695,10 +689,10 @@ app.post('/api/save/delta', async (req, res) => {
     }
 
     // ✅ Мёржим дельту с текущими данными
-    // gold/pixr/level/cp/floor/charId исключены — меняются только через специальные эндпоинты
     const merged = Object.assign({}, srv);
     const ALLOWED_DELTA_FIELDS = [
-      'hp', 'xp', 'xpNeeded', 'killCount', 'potions', 'maxFloor'
+      'hp', 'gold', 'xp', 'xpNeeded', 'killCount', 'potions',
+      'level', 'floor', 'maxFloor', 'pixr', 'cp', 'charId'
     ];
     ALLOWED_DELTA_FIELDS.forEach(function(field) {
       if (delta[field] !== undefined) merged[field] = delta[field];
@@ -1259,14 +1253,10 @@ app.post('/api/wallet/exchange', async (req, res) => {
     }
 
     const gramEarned = amount / rate;
-    const exchNow1 = Date.now();
 
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.pixr': { $gte: amount } },
-      {
-        $inc: { 'data.pixr': -amount, 'data.gram': gramEarned },
-        $set: { 'data.updatedAt': exchNow1, updatedAt: exchNow1 }
-      },
+      { $inc: { 'data.pixr': -amount, 'data.gram': gramEarned } },
       { new: true }
     );
 
@@ -1307,14 +1297,10 @@ app.post('/api/wallet/exchange-gram', async (req, res) => {
 
   try {
     const pixrEarned = amount * GRAM_PER_PIXR_RATE;
-    const exchNow2 = Date.now();
 
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.gram': { $gte: amount } },
-      {
-        $inc: { 'data.gram': -amount, 'data.pixr': pixrEarned },
-        $set: { 'data.updatedAt': exchNow2, updatedAt: exchNow2 }
-      },
+      { $inc: { 'data.gram': -amount, 'data.pixr': pixrEarned } },
       { new: true }
     );
 
@@ -1634,13 +1620,9 @@ initBot();
 // ═══════════════════════════════
 
 // ── Конфиг админов ──
-if (!process.env.ADMIN_PASSWORD) {
-  console.error('❌ ADMIN_PASSWORD не задан в .env! Сервер не может запуститься безопасно.');
-  process.exit(1);
-}
 const ADMIN_CREDENTIALS = {
   admin: {
-    password: process.env.ADMIN_PASSWORD,
+    password: process.env.ADMIN_PASSWORD || 'pixel2024',
     role: 'superadmin'
   }
 };
@@ -2503,12 +2485,11 @@ app.post('/api/market/claim', async (req, res) => {
     if (!listing) return res.status(400).json({ ok: false, error: 'not_found' });
 
     const earned = listing.pendingPixr;
-    const claimNow = Date.now();
 
     // Начисляем PIXR продавцу
     const updated = await Save.findOneAndUpdate(
       { tgId: tg.id },
-      { $inc: { 'data.pixr': earned }, $set: { 'data.updatedAt': claimNow, updatedAt: claimNow } },
+      { $inc: { 'data.pixr': earned }, $set: { updatedAt: Date.now() } },
       { new: true }
     );
     if (!updated) return res.status(404).json({ ok: false, error: 'user_not_found' });
@@ -2865,15 +2846,9 @@ app.post('/api/upgrade', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
   
-  const { upgId } = req.body;
-  if (!upgId) {
+  const { upgId, cost, stat, bonus } = req.body;
+  if (!upgId || !cost) {
     return res.status(400).json({ ok: false, error: 'missing_fields' });
-  }
-
-  // ✅ Берём все параметры из серверной таблицы — клиентские cost/stat/bonus игнорируем
-  const upgDef = UPG_DEFS_SRV.find(u => u.id === upgId);
-  if (!upgDef) {
-    return res.status(400).json({ ok: false, error: 'invalid_upgId' });
   }
   
   try {
@@ -2886,51 +2861,50 @@ app.post('/api/upgrade', async (req, res) => {
     if (!user.data.upg) user.data.upg = {};
     if (!user.data.baseStats) user.data.baseStats = {};
     
-    const currentLv = user.data.upg[upgId] || 0;
-
-    // ✅ maxLv из серверной таблицы (не захардкоженный 60)
-    if (currentLv >= upgDef.maxLv) {
-      return res.status(400).json({ ok: false, error: 'max_level' });
-    }
-
-    // ✅ Стоимость золота вычисляем на сервере (зеркало upgCost на клиенте)
-    let goldCost = 0;
-    let pixrCost = 0;
-
-    if (upgDef.currency === 'pixr') {
-      pixrCost = 50; // baseCost для pixr-апгрейдов
-    } else {
-      const effectiveLv = Math.min(currentLv, 20);
-      goldCost = Math.floor({ atk: 80, def: 70, hp: 60, spd: 100, atkSpd: 150 }[upgId] || 80 * Math.pow(1.6, effectiveLv));
-      // Прогрессивная шкала PIXR с 20 уровня (зеркало ui.js upgCost)
-      if (currentLv >= 20 && currentLv < 30) pixrCost = 15;
-      else if (currentLv >= 30 && currentLv < 40) pixrCost = 30;
-      else if (currentLv >= 40 && currentLv < 50) pixrCost = 60;
-      else if (currentLv >= 50) pixrCost = 100;
-    }
-
-    // Проверяем ресурсы
     const currentGold = user.data.gold || 0;
-    const currentPixr = user.data.pixr || 0;
-    if (currentGold < goldCost) {
+    if (currentGold < cost) {
       return res.status(400).json({ ok: false, error: 'not_enough_gold' });
     }
+    
+    const currentLv = user.data.upg[upgId] || 0;
+    const maxLv = 60;
+    if (currentLv >= maxLv) {
+      return res.status(400).json({ ok: false, error: 'max_level' });
+    }
+    
+    // ✅ Вычисляем стоимость PIXR на сервере (синхронизация с клиентом)
+    let pixrCost = 0;
+    if (currentLv >= 20 && currentLv < 30) {
+      pixrCost = 15;
+    } else if (currentLv >= 30 && currentLv < 40) {
+      pixrCost = 30;
+    } else if (currentLv >= 40 && currentLv < 50) {
+      pixrCost = 60;
+    } else if (currentLv >= 50 && currentLv < 60) {
+      pixrCost = 100;
+    } else if (currentLv >= 60) {
+      pixrCost = 100;
+    }
+    
+    // Проверяем PIXR
+    const currentPixr = user.data.pixr || 0;
     if (currentPixr < pixrCost) {
       return res.status(400).json({ ok: false, error: 'not_enough_pixr' });
     }
     
     const incObj = {
-      'data.gold': -goldCost,
+      'data.gold': -cost,
       'data.pixr': -pixrCost,
     };
     incObj['data.upg.' + upgId] = 1;
-    // ✅ stat и bonus — только из UPG_DEFS_SRV, клиентские полностью игнорируются
-    incObj['data.baseStats.' + upgDef.stat] = upgDef.bonus;
+    if (stat && bonus) {
+      incObj['data.baseStats.' + stat] = bonus;
+    }
     
     const result = await Save.findOneAndUpdate(
       { 
         tgId: tg.id,
-        'data.gold': { $gte: goldCost },
+        'data.gold': { $gte: cost },
         'data.pixr': { $gte: pixrCost }
       },
       {
@@ -2971,16 +2945,16 @@ const CHARS_BASE = {
   water: { atk: 12, def: 6,  spd: 4,  hp: 95,  crit: 22, dodge: 5, atkSpd: 1.0, critDmg: 0 },
 };
 
-// Зеркало UPG_DEFS из data.js (maxLv синхронизирован с клиентом)
+// Зеркало UPG_DEFS из data.js
 const UPG_DEFS_SRV = [
-  { id: 'atk',     stat: 'atk',     bonus: 3,    maxLv: 60, currency: 'gold' },
-  { id: 'def',     stat: 'def',     bonus: 2,    maxLv: 60, currency: 'gold' },
-  { id: 'hp',      stat: 'hp',      bonus: 15,   maxLv: 60, currency: 'gold' },
-  { id: 'spd',     stat: 'spd',     bonus: 1,    maxLv: 60, currency: 'gold' },
-  { id: 'atkSpd',  stat: 'atkSpd',  bonus: 0.15, maxLv: 60, currency: 'gold' },
-  { id: 'crit',    stat: 'crit',    bonus: 3,    maxLv: 10, currency: 'pixr' },
-  { id: 'critDmg', stat: 'critDmg', bonus: 0.15, maxLv: 10, currency: 'pixr' },
-  { id: 'dodge',   stat: 'dodge',   bonus: 2,    maxLv: 10, currency: 'pixr' },
+  { id: 'atk',     stat: 'atk',     bonus: 3    },
+  { id: 'def',     stat: 'def',     bonus: 2    },
+  { id: 'hp',      stat: 'hp',      bonus: 15   },
+  { id: 'spd',     stat: 'spd',     bonus: 1    },
+  { id: 'atkSpd',  stat: 'atkSpd',  bonus: 0.15 },
+  { id: 'crit',    stat: 'crit',    bonus: 3    },
+  { id: 'critDmg', stat: 'critDmg', bonus: 0.15 },
+  { id: 'dodge',   stat: 'dodge',   bonus: 2    },
 ];
 
 // Пересчёт полных статов игрока (база + улучшения + уровень + экипировка)
@@ -3027,12 +3001,6 @@ function calcFullStats(data) {
     Object.keys(item.stats).forEach(stat => {
       bonus[stat] = (bonus[stat] || 0) + (item.stats[stat] || 0);
     });
-    // Бонусы вставленной руны (зеркало клиентского equippedStats)
-    if (item.rune) {
-      ['atk','def','hp'].forEach(stat => {
-        if (item.rune[stat]) bonus[stat] = (bonus[stat] || 0) + item.rune[stat];
-      });
-    }
   });
 
   // 5. Итоговые статы + капы предметных бонусов (зеркало equippedStats клиента)
@@ -3117,12 +3085,6 @@ app.post('/api/pvp/opponents', async (req, res) => {
 app.post('/api/pvp/result', async (req, res) => {
   const tg = authUser(req, res);
   if (!tg) return;
-
-  // ✅ Rate limit: не чаще 1 раза в 30 секунд
-  if (rateLimit(tg.id + '_pvp', 1, 30000)) {
-    return res.status(429).json({ ok: false, error: 'rate_limit' });
-  }
-
   try {
     const { opponentId, won, myDmg, oppDmg } = req.body;
     if (!opponentId) return res.json({ ok: false, error: 'bad_params' });
@@ -3143,45 +3105,37 @@ app.post('/api/pvp/result', async (req, res) => {
       return res.json({ ok: false, error: 'no_attempts' });
     }
 
-    // ✅ Ограничение побед: не больше 10 в день (защита от накрутки рейтинга)
-    let pvpWinsToday = (pvpDate === todayStr) ? (data.pvpWinsToday || 0) : 0;
-    let effectiveWon = won;
-    if (effectiveWon && pvpWinsToday >= 10) {
-      effectiveWon = false; // победы сверх лимита не засчитываются
-    }
-
     const myRating   = data.arenaRating || 1000;
     const oppRating  = (oppDoc && oppDoc.data && oppDoc.data.arenaRating) || 1000;
 
-    // ✅ Используем effectiveWon (с учётом дневного лимита побед)
+    // Очки: победа над сильнее = +10, над слабее = +5; поражение = -5
     let ratingChange = 0;
-    if (effectiveWon) {
+    if (won) {
       ratingChange = (oppRating >= myRating) ? 10 : 5;
     } else {
       ratingChange = -5;
     }
 
-    const newMyRating = Math.max(0, myRating + ratingChange);
+    const newMyRating  = Math.max(0, myRating + ratingChange);
+    const newOppRating = oppDoc ? Math.max(0, oppRating + (won ? 0 : 0)) : oppRating;
     const now = Date.now();
-
-    // ✅ Обновляем рейтинг + счётчик побед атомарно
-    const setFields = {
-      'data.arenaRating':      newMyRating,
-      'data.pvpAttempts':      pvpAttempts + 1,
-      'data.pvpAttemptsDate':  todayStr,
-      'data.pvpWinsToday':     effectiveWon ? pvpWinsToday + 1 : pvpWinsToday,
-      'data.updatedAt':        now,
-      updatedAt:               now,
-    };
 
     // Обновляем рейтинг атакующего
     await Save.findOneAndUpdate(
       { tgId: tg.id },
-      { $set: setFields }
+      {
+        $set: {
+          'data.arenaRating':      newMyRating,
+          'data.pvpAttempts':      pvpAttempts + 1,
+          'data.pvpAttemptsDate':  todayStr,
+          'data.updatedAt':        now,
+          updatedAt:               now,
+        }
+      }
     );
 
     // Сохраняем историю боя
-    const battleId = tg.id + '_' + opponentId + '_' + now + '_' + Math.random().toString(36).slice(2, 6);
+    const battleId = tg.id + '_' + opponentId + '_' + now;
     const oppName  = (oppDoc && (oppDoc.firstName || oppDoc.username)) || 'Игрок';
     const oppChar  = (oppDoc && oppDoc.data && oppDoc.data.charId) || null;
 
@@ -3193,7 +3147,7 @@ app.post('/api/pvp/result', async (req, res) => {
       defenderName: oppName,
       attackerChar: data.charId || null,
       defenderChar: oppChar,
-      winnerId:     effectiveWon ? tg.id : opponentId,
+      winnerId:     won ? tg.id : opponentId,
       ratingChange,
       attackerRatingBefore: myRating,
       defenderRatingBefore: oppRating,
@@ -3204,7 +3158,7 @@ app.post('/api/pvp/result', async (req, res) => {
 
     res.json({
       ok: true,
-      won: effectiveWon,
+      won,
       ratingChange,
       newRating: newMyRating,
       attemptsLeft: 10 - (pvpAttempts + 1),
