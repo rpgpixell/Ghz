@@ -785,6 +785,7 @@ function upgPotion() {
   G.potionLv = lv + 1;
   updateHUD();
   openPotionModal();
+  if (window.GameSync) window.GameSync.saveInstant({ potionLv: G.potionLv, gold: G.gold });
 }
 function closePotionModal() {
   document.getElementById('potionModal').classList.add('hidden');
@@ -798,6 +799,7 @@ function buyPotions(n) {
   updatePotionHud();
   document.getElementById('pmCount').textContent = G.potions;
   document.getElementById('pmGold').textContent = G.gold;
+  if (window.GameSync) window.GameSync.saveInstant({ potions: G.potions, gold: G.gold });
 }
 function savePotionThreshold(val) {
   var v = parseInt(val);
@@ -890,6 +892,7 @@ function buyBattlePass() {
   G.gram = parseFloat(((G.gram || 0) - 10).toFixed(3));
   G.bp.active = true;
   renderBattlePass();
+  if (window.GameSync) window.GameSync.saveInstant({ bp: G.bp, gram: G.gram });
 }
 function claimBpReward(idx) {
   if (!G.bp || !G.bp.active) return;
@@ -900,6 +903,7 @@ function claimBpReward(idx) {
   r.apply();
   G.bp.claimed.push(idx);
   renderBattlePass();
+  if (window.GameSync) window.GameSync.saveInstant({ bp: G.bp, gold: G.gold, pixr: G.pixr });
 }
 function renderBattlePass() {
   if (!G.bp) G.bp = { active: false, claimed: [] };
@@ -1000,6 +1004,7 @@ function buyPrem(tier) {
   updatePremStatus();
   closePremModal();
   showDmgPop('👑 ' + t.name + ' активен!', PLAYER_SCREEN_X, player.y - 30, '#c080ff');
+  if (window.GameSync) window.GameSync.saveInstant({ prem: G.prem, gram: G.gram });
 }
 
 // ═══════════════════════════════

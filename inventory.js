@@ -238,6 +238,11 @@ function equipItem(itemId) {
   item._equipped = true;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  if (window.GameSync) {
+    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    var eq  = {}; ['weapon','body','legs','gloves','belt','ring','boots','helmet'].forEach(function(s) { var x = G.equipped[s]; eq[s] = x ? x.id : null; });
+    window.GameSync.saveInstant({ inventory: inv, equipped: eq });
+  }
 }
 
 // ── Снять предмет ──
@@ -248,6 +253,11 @@ function unequipItem(itemId) {
   item._equipped = false;
   recalcStats(); updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  if (window.GameSync) {
+    var inv2 = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    var eq2  = {}; ['weapon','body','legs','gloves','belt','ring','boots','helmet'].forEach(function(s) { var x = G.equipped[s]; eq2[s] = x ? x.id : null; });
+    window.GameSync.saveInstant({ inventory: inv2, equipped: eq2 });
+  }
 }
 
 // ── Уничтожить предмет ──
@@ -497,6 +507,10 @@ function useSkillBook(skillId) {
   updateSkillsHud();
   renderUpgrades();
   if (activeTab === 'inv') renderInventory();
+  if (window.GameSync) {
+    var inv3 = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    window.GameSync.saveInstant({ inventory: inv3, skills: G.skills });
+  }
 }
 
 // ═══════════════════════════════

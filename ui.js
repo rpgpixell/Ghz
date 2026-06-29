@@ -70,6 +70,7 @@ function buyUpgrade(u) {
   G.upg[u.id] = (G.upg[u.id] || 0) + 1;
   G.baseStats[u.stat] = parseFloat(((G.baseStats[u.stat] || 0) + u.bonus).toFixed(4));
   recalcStats(); updateHUD(); renderUpgrades();
+  if (window.GameSync) window.GameSync.saveInstant({ upg: G.upg, gold: G.gold, pixr: G.pixr });
 }
 
 function renderUpgrades() {
@@ -1380,7 +1381,7 @@ function friendsClaim(btn) {
     if (r.ok && r.goldEarned > 0) {
       G.gold += r.goldEarned;
       updateHUD();
-      if (typeof window.GameSync.touch === 'function') window.GameSync.touch();
+      if (window.GameSync) window.GameSync.saveInstant({ gold: G.gold });
       showFriendsToast('+' + r.goldEarned + ' золота получено!');
       setTimeout(function() { renderFriends(); }, 800);
     } else {
