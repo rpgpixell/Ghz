@@ -2247,6 +2247,10 @@ function syncInventoryFromServer(rawInventory) {
     }
   });
   G.inventory = newInv;
+  // ✅ ФИКС: обновляем _invIdCounter чтобы новые дропы не получили дублирующий id
+  newInv.forEach(function(i) {
+    if (typeof i.id === 'number' && i.id > _invIdCounter) _invIdCounter = i.id;
+  });
   // Пересчитываем статы и CP после любого изменения инвентаря
   if (typeof recalcStats === 'function') recalcStats();
   if (typeof updateHUD === 'function') updateHUD();
