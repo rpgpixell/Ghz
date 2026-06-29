@@ -330,8 +330,6 @@ G.equipped = {
   //  СЕРВЕРНЫЕ ЗАПРОСЫ
   // ═══════════════════════════════
 
-  var START_PARAM = '';
-
   function serverLoad() {
     if (!SYNC.online) return Promise.resolve(null);
 
@@ -450,7 +448,18 @@ G.equipped = {
     .then(function(r) {
       if (r && r.ok) {
         _onConnRestored();
-        if (r.updatedAt) SYNC.lastServerTs = r.updatedAt;
+        if (r.updatedAt) {
+          SYNC.lastServerTs = r.updatedAt;
+          // Синхронизируем last-значения — batch не будет слать устаревшее
+          SYNC.lastPixr      = G.pixr;
+          SYNC.lastGold      = G.gold;
+          SYNC.lastXp        = G.xp;
+          SYNC.lastHp        = G.hp;
+          SYNC.lastKillCount = G.killCount;
+          SYNC.lastPotions   = G.potions;
+          SYNC.lastLevel     = G.level;
+          SYNC.lastFloor     = G.floor;
+        }
       } else if (r && r.error === 'reset_detected') {
         console.warn('🛑 [instant] reset_detected — закрываем приложение');
         forceCloseApp();
@@ -793,7 +802,7 @@ function saveInstant(data) {
 
   function startSyncLoops() {
     if (SYNC.booted) return;
-    SYNC.batchTimer = setInterval(serverSaveBatch, 60000);
+    SYNC.batchTimer = setInterval(serverSaveBatch, 10000);
 
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) flush();
@@ -832,7 +841,7 @@ function saveInstant(data) {
       G.gold = 0; G.pixr = 0; G.gram = 0;
       G.level = 1; G.xp = 0; G.floor = 1; G.maxFloor = 1; G.killCount = 0;
       G.inventory = []; G.equipped = {};
-      G.upg = { atk:0, def:0, hp:0, spd:0, crit:0, dodge:0, atkSpd:0 };
+      G.upg = { atk:0, def:0, hp:0, spd:0, crit:0, dodge:0, atkSpd:0, critDmg:0 };
       G.bp = { active: false, claimed: [] };
       G.prem = { tier: null, expiresAt: 0 };
       G.skills = {};
@@ -840,6 +849,14 @@ function saveInstant(data) {
       G.potionLv = 0;
       G.dailyTasks = { date: '', seconds: 0, claimed: [] };
       G.specialTasksClaimed = {};
+      G.ore = { core:0, uore:0, rore:0, eore:0, lore:0 };
+      G.runes = { crune:0, urune:0, rrune:0, erune:0, lrune:0 };
+      G.blessStones = 0;
+      G.arenaRating = 1000;
+      G.pvpAttempts = 0; G.pvpAttemptsDate = '';
+      G.pvpRefreshes = 0; G.pvpRefreshDate = '';
+      G.boss = { floor: 1, lastFightTime: 0 };
+      G.marketUnlocked = false;
     }} catch(e) {}
     if (typeof _invIdCounter !== 'undefined') window._invIdCounter = 0;
     
@@ -1150,7 +1167,7 @@ function boot() {
   function hookActions() {
     var instantActions = [
       'buyUpgrade',
-      'equipItem', 'unequipItem', 'destroyItem', 'refineItem',
+      'equipItem', 'unequipItem', 'destroyItem',
       'useSkillBook', 'buyBattlePass', 'claimBpReward', 'buyPrem',
       'upgPotion', 'goToFloor', 'buyPotions'
     ];

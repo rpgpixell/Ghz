@@ -182,6 +182,12 @@ function equippedStats() {
   Object.values(G.equipped).forEach(function(item) {
     if (!item) return;
     Object.keys(item.stats).forEach(function(s) { bonus[s] = (bonus[s] || 0) + item.stats[s]; });
+    // Бонусы вставленной руны (atk/def/hp)
+    if (item.rune) {
+      ['atk','def','hp'].forEach(function(s) {
+        if (item.rune[s]) bonus[s] = (bonus[s] || 0) + item.rune[s];
+      });
+    }
   });
   // Суммарные капы с предметов
   bonus.crit    = Math.min(bonus.crit,    10);
@@ -243,6 +249,11 @@ function destroyItem(itemId) {
   G.inventory.splice(idx, 1);
   updateHUD(); closeItemModal();
   if (activeTab === 'inv') renderInventory();
+  // Сохраняем немедленно — предмет удалён
+  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    window.GameSync.saveInstant({ inventory: inv });
+  }
 }
 
 // ═══════════════════════════════
@@ -519,6 +530,11 @@ function deleteSelected() {
   });
   _invSelected = {};
   updateHUD(); renderInventory();
+  // Сохраняем немедленно — массовое удаление предметов
+  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    window.GameSync.saveInstant({ inventory: inv });
+  }
 }
 
 // ── Закрытие модалки предмета ──

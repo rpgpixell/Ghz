@@ -1253,10 +1253,14 @@ app.post('/api/wallet/exchange', async (req, res) => {
     }
 
     const gramEarned = amount / rate;
+    const exchNow1 = Date.now();
 
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.pixr': { $gte: amount } },
-      { $inc: { 'data.pixr': -amount, 'data.gram': gramEarned } },
+      {
+        $inc: { 'data.pixr': -amount, 'data.gram': gramEarned },
+        $set: { 'data.updatedAt': exchNow1, updatedAt: exchNow1 }
+      },
       { new: true }
     );
 
@@ -1297,10 +1301,14 @@ app.post('/api/wallet/exchange-gram', async (req, res) => {
 
   try {
     const pixrEarned = amount * GRAM_PER_PIXR_RATE;
+    const exchNow2 = Date.now();
 
     const result = await Save.findOneAndUpdate(
       { tgId: tg.id, 'data.gram': { $gte: amount } },
-      { $inc: { 'data.gram': -amount, 'data.pixr': pixrEarned } },
+      {
+        $inc: { 'data.gram': -amount, 'data.pixr': pixrEarned },
+        $set: { 'data.updatedAt': exchNow2, updatedAt: exchNow2 }
+      },
       { new: true }
     );
 
@@ -2485,11 +2493,12 @@ app.post('/api/market/claim', async (req, res) => {
     if (!listing) return res.status(400).json({ ok: false, error: 'not_found' });
 
     const earned = listing.pendingPixr;
+    const claimNow = Date.now();
 
     // Начисляем PIXR продавцу
     const updated = await Save.findOneAndUpdate(
       { tgId: tg.id },
-      { $inc: { 'data.pixr': earned }, $set: { updatedAt: Date.now() } },
+      { $inc: { 'data.pixr': earned }, $set: { 'data.updatedAt': claimNow, updatedAt: claimNow } },
       { new: true }
     );
     if (!updated) return res.status(404).json({ ok: false, error: 'user_not_found' });
@@ -3001,6 +3010,12 @@ function calcFullStats(data) {
     Object.keys(item.stats).forEach(stat => {
       bonus[stat] = (bonus[stat] || 0) + (item.stats[stat] || 0);
     });
+    // Бонусы вставленной руны (зеркало клиентского equippedStats)
+    if (item.rune) {
+      ['atk','def','hp'].forEach(stat => {
+        if (item.rune[stat]) bonus[stat] = (bonus[stat] || 0) + item.rune[stat];
+      });
+    }
   });
 
   // 5. Итоговые статы + капы предметных бонусов (зеркало equippedStats клиента)

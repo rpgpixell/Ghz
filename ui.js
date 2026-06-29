@@ -1979,8 +1979,9 @@ function claimListing(listingId, earned) {
   .then(function(d) {
     if (d.ok) {
       G.pixr = d.pixr;
+      // Синхронизируем last-значение чтобы batch не перезаписал
+      if (window.GameSync) window.GameSync.state.lastPixr = G.pixr;
       updateMarketPixrBal();
-      window.GameSync.saveInstant({ pixr: G.pixr });
       _taskToast('✅ Получено: +' + d.earned + ' 💎 PIXR');
       loadMarketListings();
     } else {
@@ -2352,7 +2353,7 @@ function confirmUnlockMarket() {
       G.marketUnlocked = true;
       if (d.pixr !== undefined) G.pixr = d.pixr;
       document.getElementById('marketUnlockModal').classList.add('hidden');
-      window.GameSync.saveInstant();
+      window.GameSync.saveInstant({ marketUnlocked: G.marketUnlocked, pixr: G.pixr });
       _taskToast('🏪 Маркет открыт!');
       openMarket();
     } else {
@@ -2453,13 +2454,23 @@ window._handleMarketNotif = function(event, data) {
     _taskToast('💰 Продано: "' + data.itemName + '" · Зайди в Мои лоты чтобы забрать ' + data.earned + ' 💎');
   } else if (event === 'market_expired') {
     _taskToast('⏰ Лот истёк, "' + (data.item && data.item.name) + '" возвращён');
-    if (data.item && !data.item.isOre) { syncInventoryFromServer(G.inventory.concat([data.item])); }
     if (data.item && data.item.isOre) {
-      if (!G.ore) G.ore = {};
-      G.ore[data.item.oreId] = (G.ore[data.item.oreId] || 0) + (data.item.qty || 1);
+      // Сервер уже вернул руду атомарно — перезагружаем данные с сервера
+      // чтобы не дублировать G.ore вручную
+      if (window.forceReload) {
+        window.forceReload().then(function() {
+          if (typeof renderInventory === 'function') renderInventory();
+          if (typeof renderCraft === 'function') renderCraft();
+        });
+      }
+    } else if (data.item && !data.item.isOre) {
+      // Предмет — добавляем в локальный инвентарь и сохраняем
+      syncInventoryFromServer(G.inventory.concat([data.item]));
+      if (typeof renderInventory === 'function') renderInventory();
+      window.GameSync.saveInstant({
+        inventory: (G.inventory || []).map(function(i) { var c = Object.assign({}, i); delete c._equipped; return c; })
+      });
     }
-    if (typeof renderInventory === 'function') renderInventory();
-    window.GameSync.saveInstant({ inventory: (G.inventory||[]).map(function(i){var c=Object.assign({},i);delete c._equipped;return c;}), ore: G.ore });
   }
 };
 
@@ -3779,7 +3790,7 @@ function doCraft(recipeId) {
   if (!success) {
     // Провал — ресурсы сгорели
     updateHUD();
-    if (typeof saveNow === 'function') saveNow();
+    if (window.GameSync) window.GameSync.saveInstant({ ore: G.ore, runes: G.runes, pixr: G.pixr, blessStones: G.blessStones });
     renderCraft();
     _showCraftMsg(false, 'Провал! Ресурсы сгорели.');
     return;
@@ -3792,7 +3803,7 @@ function doCraft(recipeId) {
     G.runes[recipe.result.runeId] = (G.runes[recipe.result.runeId] || 0) + recipe.result.qty;
   }
   updateHUD();
-  if (typeof saveNow === 'function') saveNow();
+  if (window.GameSync) window.GameSync.saveInstant({ ore: G.ore, runes: G.runes, pixr: G.pixr, blessStones: G.blessStones });
   renderCraft();
   _showCraftMsg(true, recipe.name + ' ×' + recipe.result.qty + ' готово!');
 }
@@ -3965,8 +3976,13 @@ function doInsertRune(itemId, runeTypeId) {
   selItem.rune = Object.assign({ type: runeTypeId }, runeStats);
 
   _runeSelectedItem = null;
+  if (typeof recalcStats === 'function') recalcStats();
   updateHUD();
-  if (typeof saveNow === 'function') saveNow();
+  // Сохраняем: рuna вставлена — важно сохранить inventory (предмет с руной) и расходы
+  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    window.GameSync.saveInstant({ inventory: inv, runes: G.runes, pixr: G.pixr });
+  }
   renderRune();
 
   var statTxt = Object.keys(runeStats).map(function(s) { return '+' + runeStats[s] + ' ' + s.toUpperCase(); }).join(', ');
