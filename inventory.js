@@ -126,6 +126,11 @@ function tryDropSkillBook(floor) {
   G.inventory.push(book);
   showDropNotif(book);
   if (activeTab === 'inv') renderInventory();
+  // ✅ Сохраняем сразу после дропа книги
+  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    window.GameSync.saveInstant({ inventory: inv, invIdCounter: _invIdCounter });
+  }
 }
 
 // ── Попытка выдать предмет после убийства монстра ──
@@ -136,6 +141,11 @@ function tryDropItem(floor) {
   var item = generateItem(floor);
   G.inventory.push(item);
   showDropNotif(item);
+  // ✅ Сохраняем инвентарь сразу — иначе предмет потеряется если закрыть игру
+  if (window.GameSync && typeof window.GameSync.saveInstant === 'function') {
+    var inv = G.inventory.map(function(it) { var c = Object.assign({}, it); delete c._equipped; return c; });
+    window.GameSync.saveInstant({ inventory: inv, invIdCounter: _invIdCounter });
+  }
 }
 
 // ── Дроп руды после убийства монстра ──
